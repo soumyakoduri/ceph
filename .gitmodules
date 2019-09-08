@@ -61,3 +61,6 @@
 [submodule "src/c-ares"]
 	path = src/c-ares
 	url = https://github.com/ceph/c-ares.git
+[submodule "src/rgw/backend_store/dbstore"]
+	path = src/rgw/backend_store/dbstore
+	url = git@github.com:soumyakoduri/dbstore.git
