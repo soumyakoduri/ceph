@@ -12,29 +12,27 @@ ENDIF(DEBUG_SYMS)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/modules/")
 
-find_package(fmt 5.2.1 QUIET)
+find_package(fmt REQUIRED)
 if(NOT fmt_FOUND)
-  message(STATUS "Could not find fmt, will build it")
-  add_subdirectory(src/fmt)
-  set(CMAKE_INCLUDE_DIR ${CMAKE_INCLUDE_DIR} "${CMAKE_SOURCE_DIR}/src/fmt/include")
+	message(FATAL_ERROR "Could not find fmt, will build it")
 endif()
 
-set (CMAKE_INCLUDE_DIR ${CMAKE_INCLUDE_DIR} "${CMAKE_SOURCE_DIR}/src/common")
+set (CMAKE_INCLUDE_DIR ${CMAKE_INCLUDE_DIR} "${CMAKE_SOURCE_DIR}/common")
 
 set(dbstore_srcs
-    src/common/dbstore.h
-    src/common/dbstore.cc)
+    common/dbstore.h
+    common/dbstore.cc)
 
 set(main_srcs
-    src/main.cc)
+    main.cc)
 
 add_library(dbstore_lib ${dbstore_srcs})
 target_link_libraries(dbstore_lib fmt)
 set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} dbstore_lib)
 
 IF(USE_SQLITE)
-  add_subdirectory(src/sqlite)
-  set(CMAKE_INCLUDE_DIR ${CMAKE_INCLUDE_DIR} "${CMAKE_SOURCE_DIR}/src/sqlite")
+  add_subdirectory(sqlite)
+  set(CMAKE_INCLUDE_DIR ${CMAKE_INCLUDE_DIR} "${CMAKE_SOURCE_DIR}/sqlite")
   add_compile_definitions(SQLITE_ENABLED=1)
   set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} sqlite_db)
 ENDIF()
