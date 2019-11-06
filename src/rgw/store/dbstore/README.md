@@ -3,11 +3,7 @@ DBstore for Rados Gateway (RGW)
 
 ## Build
 
-git clone git@github.com:soumyakoduri/dbstore.git
-
-cd dbstore
-
-git submodule update --init
+cd src/rgw/store/dbstore
 
 mkdir build
 
