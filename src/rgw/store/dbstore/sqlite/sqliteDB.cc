@@ -80,14 +80,15 @@ do{						\
 		goto out;			\
 	}					\
 						\
-	ret = Bind(params);			\
-	if (ret)				\
-		goto out;			\
+		ret = Bind(params);		\
+		if (ret)			\
+			goto unlock;		\
 						\
-	ret = Step(stmt, cbk);			\
+		ret = Step(stmt, cbk);		\
 						\
-	Reset(stmt);				\
+		Reset(stmt);			\
 						\
+unlock:						\
 	if (ret)				\
 		goto out;			\
 }while(0);
@@ -226,6 +227,14 @@ void *SQLiteDB::openDB()
         }
 
 	exec("PRAGMA foreign_keys=ON", NULL);
+
+	rc = LockInit();
+
+	if (rc) {
+		cout<<"Error: mutex is NULL \n";
+		closeDB();
+		return NULL;
+	}
 out:
 	return db;
 }
@@ -236,6 +245,9 @@ int SQLiteDB::closeDB()
 		sqlite3_close((sqlite3 *)db);
 
 	db = NULL;
+
+	LockDestroy();
+
 	return 0;
 }
 

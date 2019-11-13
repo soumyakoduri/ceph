@@ -275,6 +275,12 @@ class DBstore {
 	const string user_table;
 	const string bucket_table;
 	static map<string, class ObjectOp*> objectmap;
+	pthread_mutex_t mutex; // to protect objectmap and other shared
+       			       // objects if any. This mutex is taken
+			       // before processing every fop (i.e, in
+			       // ProcessOp()). If required this can be
+			       // made further granular by taking separate
+			       // locks for objectmap and db operations etc.
 
 	public:	
 	DBstore(string tenant_name) : tenant(tenant_name),
@@ -291,6 +297,11 @@ class DBstore {
 
 	struct RGWOps rgwops; // RGW operations, make it private?
 	void *db; // Backend database handle, make it private?
+
+	int LockInit();
+	int LockDestroy();
+	int Lock();
+	int Unlock();
 
 	int InitializeParams(string Op, RGWOpParams *params);
 	int ProcessOp(string Op, RGWOpParams *params);

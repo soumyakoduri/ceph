@@ -366,6 +366,50 @@ string DeleteObjectDataOp::Schema(SchemaParams *s_params) {
 		 p->object.c_str());
 }
 
+int DBstore::LockInit() {
+	int ret;
+	
+	ret = pthread_mutex_init(&mutex, NULL);
+
+	if (ret)
+		cout<<"pthread_mutex_init failed \n";
+
+	return ret;
+}
+
+int DBstore::LockDestroy() {
+	int ret;
+	
+	ret = pthread_mutex_destroy(&mutex);
+
+	if (ret)
+		cout<<"pthread_mutex_destroy failed \n";
+
+	return ret;
+}
+
+int DBstore::Lock() {
+	int ret;
+
+	ret = pthread_mutex_lock(&mutex);
+
+	if (ret)
+		cout<<"pthread_mutex_lock failed \n";
+
+	return ret;
+}
+
+int DBstore::Unlock() {
+	int ret;
+
+	ret = pthread_mutex_unlock(&mutex);
+
+	if (ret)
+		cout<<"pthread_mutex_unlock failed \n";
+
+	return ret;
+}
+
 RGWOp * DBstore::getRGWOp(string Op, struct RGWOpParams *params)
 {
 	if (!Op.compare("InsertUser"))
@@ -476,10 +520,17 @@ int DBstore::ProcessOp(string Op, struct RGWOpParams *params) {
 	int ret = -1;
 	class RGWOp *rgw_op;
 
+	Lock();
 	rgw_op = getRGWOp(Op, params);
 
+	if (!rgw_op) {
+		cout<<"No rgw_op for Op: "<<Op<<"\n";
+		Unlock();
+		return ret;
+	}
 	ret = rgw_op->Execute(params);
 
+	Unlock();
 	if (ret)
 		cout<<"In Process op Execute failed for fop : "<<Op.c_str()<<" \n";
 
