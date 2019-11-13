@@ -17,6 +17,7 @@ int InitPrepareParams(RGWOpPrepareParams *params);
 class SQLiteDB : public DBstore, public RGWOp{
 	private:
 	sqlite3 *db = NULL; // make this private again
+	sqlite3_mutex *mutex = NULL;
 
 	public:	
 	sqlite3_stmt *stmt = NULL;
