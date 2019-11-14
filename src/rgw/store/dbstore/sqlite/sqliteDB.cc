@@ -228,13 +228,6 @@ void *SQLiteDB::openDB()
 
 	exec("PRAGMA foreign_keys=ON", NULL);
 
-	rc = LockInit();
-
-	if (rc) {
-		cout<<"Error: mutex is NULL \n";
-		closeDB();
-		return NULL;
-	}
 out:
 	return db;
 }
@@ -245,8 +238,6 @@ int SQLiteDB::closeDB()
 		sqlite3_close((sqlite3 *)db);
 
 	db = NULL;
-
-	LockDestroy();
 
 	return 0;
 }

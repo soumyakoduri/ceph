@@ -294,10 +294,12 @@ class DBstore {
 	string getUserTable();
 	string getBucketTable();
 	map<string, class ObjectOp*> getObjectMap();
-
-	struct RGWOps rgwops; // RGW operations, make it private?
 	void *db; // Backend database handle, make it private?
 
+	struct RGWOps rgwops; // RGW operations, make it private?
+
+	int Initialize();
+	int Destroy();
 	int LockInit();
 	int LockDestroy();
 	int Lock();
