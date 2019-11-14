@@ -37,6 +37,9 @@ IF(USE_SQLITE)
   set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} sqlite_db)
 ENDIF()
 
+# add pthread library
+set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} pthread)
+
 include_directories(${CMAKE_INCLUDE_DIR})
 add_executable(dbstore ${main_srcs})
 target_link_libraries(dbstore ${CMAKE_LINK_LIBRARIES})

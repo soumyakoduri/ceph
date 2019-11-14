@@ -3,15 +3,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dbstore.h>
+#include <pthread.h>
 
 #ifdef SQLITE_ENABLED
 #include <sqliteDB.h>
 #endif
 
+struct thr_args {
+	class DBstore *db;
+	int thr_id;
+};
 
-int main(int argc, char *argv[])
+void* process(void *arg)
 {
-	string tenant = "Redhat";
+	struct thr_args *t_args = (struct thr_args*)arg;
+
+	class DBstore *db = t_args->db;
+	int thr_id = t_args->thr_id;
+
 
 	string user1 = "Soumya";
 	string bucketa = "rgw";
@@ -28,18 +37,6 @@ int main(int argc, char *argv[])
 
 	struct RGWOpParams params = {};
 
-	class DBstore *db;
-	int rc = 0;
-
-#ifdef SQLITE_ENABLED
-	db = new SQLiteDB(tenant);
-#else
-	db = new DBstore(tenant);
-#endif
-
-	db->db = db->openDB();
-	db->InitializeRGWOps();
-
 	db->InitializeParams("InsertUser", &params);
 	params.user_name = user1;
 	db->ProcessOp("InsertUser", &params);
@@ -48,6 +45,7 @@ int main(int argc, char *argv[])
 	db->ProcessOp("InsertBucket", &params);
 
 	params.object = objecta1;
+	
 	db->ProcessOp("InsertObject", &params);
 	params.object = objecta2;
 	db->ProcessOp("InsertObject", &params);
@@ -109,9 +107,63 @@ int main(int argc, char *argv[])
 	db->ListAllBuckets(&params);
 	db->ListAllObjects(&params);
 
-	db->closeDB();
+	cout<<"Exiting thread:"<<thr_id<<"\n";
+	return 0;
+}
 
-	db->FreeRGWOps();
+int main(int argc, char *argv[])
+{
+	string tenant = "Redhat";
+
+	class DBstore *db;
+	int rc = 0, tnum = 0;
+	void *res;
+
+	pthread_attr_t attr;
+	int num_thr = 10;
+	pthread_t threads[num_thr];
+	struct thr_args t_args[num_thr];
+
+#ifdef SQLITE_ENABLED
+	db = new SQLiteDB(tenant);
+#else
+	db = new DBstore(tenant);
+#endif
+
+	db->Initialize();
+
+        /* Initialize thread creation attributes */
+        rc = pthread_attr_init(&attr);
+        if (rc != 0)
+             cout<<" error in pthread_attr_init \n";
+
+
+	for (tnum = 0; tnum < num_thr; tnum++) {
+		t_args[tnum].db = db;
+		t_args[tnum].thr_id = tnum;
+        	rc = pthread_create((pthread_t*)&threads[tnum], &attr, &process, &t_args[tnum]);
+                if (rc != 0)
+        		cout<<" error in pthread_create \n";
+        }
+
+        /* Destroy the thread attributes object, since it is no
+           longer needed */
+
+        rc = pthread_attr_destroy(&attr);
+        if (rc != 0)
+        	cout<<"error in pthread_attr_destroy \n";
+
+        /* Now join with each thread, and display its returned value */
+
+        for (tnum = 0; tnum < num_thr; tnum++) {
+        	rc = pthread_join(threads[tnum], &res);
+                if (rc != 0)
+                	cout<<"error in pthread_join \n";
+
+               cout<<"Joined with thread "<<tnum<<"\n";// returned value was "<<(char *)res<<"\n";
+           }
+
+	db->Destroy();
 	delete db;
 
 	return 0;

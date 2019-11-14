@@ -366,6 +366,44 @@ string DeleteObjectDataOp::Schema(SchemaParams *s_params) {
 		 p->object.c_str());
 }
 
+int DBstore::Initialize()
+{
+	int ret = -1;
+
+	db = openDB();
+
+	if (!db)
+		return ret;
+
+	ret = LockInit();
+
+	if (ret) {
+        	cout<<"Error: mutex is NULL \n";
+                closeDB();
+                return ret;
+        }
+
+	ret = InitializeRGWOps();
+
+	return ret;
+}
+
+int DBstore::Destroy()
+{
+	int ret = -1;
+
+	if (!db)
+		return ret;
+
+	ret = closeDB();
+
+	ret = LockDestroy();
+
+	ret = FreeRGWOps();
+
+	return 0;
+}
+
 int DBstore::LockInit() {
 	int ret;
 	
