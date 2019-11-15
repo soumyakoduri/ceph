@@ -44,6 +44,8 @@ string RGWOp::CreateTableSchema(string type, RGWOpParams *params) {
 			           params->objectdata_table.c_str(),
 				   params->object_table.c_str());
 
+	dout(L_ERR)<<"Incorrect table type("<<type<<") specified \n";
+
 	return NULL;
 }
 
@@ -372,35 +374,49 @@ int DBstore::Initialize()
 
 	db = openDB();
 
-	if (!db)
+	if (!db) {
+		dout(L_ERR)<<"Failed to open database \n";
 		return ret;
+	}
 
 	ret = LockInit();
 
 	if (ret) {
-        	cout<<"Error: mutex is NULL \n";
+        	dout(L_ERR)<<"Error: mutex is NULL \n";
                 closeDB();
+		db = NULL;
                 return ret;
         }
 
 	ret = InitializeRGWOps();
+
+	if (ret) {
+        	dout(L_ERR)<<"InitializeRGWOps failed \n";
+		LockDestroy();
+                closeDB();
+		db = NULL;
+                return ret;
+        }
+
+	dout(L_FULLDEBUG)<<"DBstore successfully initialized for tenant:" \
+			<<tenant<<"\n";
 
 	return ret;
 }
 
 int DBstore::Destroy()
 {
-	int ret = -1;
-
 	if (!db)
-		return ret;
+		return 0;
 
-	ret = closeDB();
+	closeDB();
 
-	ret = LockDestroy();
+	LockDestroy();
 
-	ret = FreeRGWOps();
+	FreeRGWOps();
 
+	dout(L_FULLDEBUG)<<"DBstore successfully destroyed for tenant:" \
+			<<tenant<<"\n";
 	return 0;
 }
 
@@ -410,7 +426,7 @@ int DBstore::LockInit() {
 	ret = pthread_mutex_init(&mutex, NULL);
 
 	if (ret)
-		cout<<"pthread_mutex_init failed \n";
+		dout(L_ERR)<<"pthread_mutex_init failed \n";
 
 	return ret;
 }
@@ -421,7 +437,7 @@ int DBstore::LockDestroy() {
 	ret = pthread_mutex_destroy(&mutex);
 
 	if (ret)
-		cout<<"pthread_mutex_destroy failed \n";
+		dout(L_ERR)<<"pthread_mutex_destroy failed \n";
 
 	return ret;
 }
@@ -432,7 +448,7 @@ int DBstore::Lock() {
 	ret = pthread_mutex_lock(&mutex);
 
 	if (ret)
-		cout<<"pthread_mutex_lock failed \n";
+		dout(L_ERR)<<"pthread_mutex_lock failed \n";
 
 	return ret;
 }
@@ -443,7 +459,7 @@ int DBstore::Unlock() {
 	ret = pthread_mutex_unlock(&mutex);
 
 	if (ret)
-		cout<<"pthread_mutex_unlock failed \n";
+		dout(L_ERR)<<"pthread_mutex_unlock failed \n";
 
 	return ret;
 }
@@ -470,7 +486,8 @@ RGWOp * DBstore::getRGWOp(string Op, struct RGWOpParams *params)
 	iter = DBstore::objectmap.find(params->bucket_name);
 
 	if (iter == DBstore::objectmap.end()) {
-		cout<<"No objectmap found for bucket: "<<params->bucket_name<<"\n";
+		dout(L_EVENT)<<"No objectmap found for bucket: " \
+			     <<params->bucket_name<<"\n";
 		/* not found */
 		return NULL;
 	}
@@ -505,6 +522,8 @@ int DBstore::objectmapInsert(string bucket, void *ptr)
 		// return success or replace it or
 		// return error ?
 		// return success for now
+		dout(L_DEBUG)<<"Objectmap entry already exists for bucket("\
+			     <<bucket<<"). Not inserted \n";
 		return 0;
 	}
 
@@ -527,6 +546,8 @@ int DBstore::objectmapDelete(string bucket)
 		// entry doesn't exist
 		// return success or return error ?
 		// return success for now
+		dout(L_DEBUG)<<"Objectmap entry for bucket("<<bucket<<") "
+			     <<"doesnt exist to delete \n";
 		return 0;
 	}
 
@@ -562,7 +583,7 @@ int DBstore::ProcessOp(string Op, struct RGWOpParams *params) {
 	rgw_op = getRGWOp(Op, params);
 
 	if (!rgw_op) {
-		cout<<"No rgw_op for Op: "<<Op<<"\n";
+		dout(L_ERR)<<"No rgw_op found for Op("<<Op<<")\n";
 		Unlock();
 		return ret;
 	}
@@ -570,7 +591,11 @@ int DBstore::ProcessOp(string Op, struct RGWOpParams *params) {
 
 	Unlock();
 	if (ret)
-		cout<<"In Process op Execute failed for fop : "<<Op.c_str()<<" \n";
+		dout(L_ERR)<<"In Process op Execute failed for fop(" \
+			   <<Op.c_str()<<") \n";
+	else
+		dout(L_FULLDEBUG)<<"Successfully processed fop(" \
+			   <<Op.c_str()<<") \n";
 
 	return ret;
 }

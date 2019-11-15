@@ -20,6 +20,7 @@ endif()
 set (CMAKE_INCLUDE_DIR ${CMAKE_INCLUDE_DIR} "${CMAKE_SOURCE_DIR}/common")
 
 set(dbstore_srcs
+    common/dbstore-log.h
     common/dbstore.h
     common/dbstore.cc)
 
@@ -39,6 +40,7 @@ ENDIF()
 
 # add pthread library
 set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} pthread)
+
 
 include_directories(${CMAKE_INCLUDE_DIR})
 add_executable(dbstore ${main_srcs})
