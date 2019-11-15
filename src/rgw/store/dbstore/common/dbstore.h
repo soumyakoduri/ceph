@@ -11,6 +11,7 @@
 #include <iostream>
 #include <fmt/format.h>
 #include <map>
+#include <dbstore-log.h>
 
 using namespace std;
 class DBstore;

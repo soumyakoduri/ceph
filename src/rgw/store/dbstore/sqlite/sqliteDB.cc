@@ -3,20 +3,23 @@
 
 #include "sqliteDB.h"
 
-#define SQL_PREPARE(params, sdb, stmt, ret, Op) \
-do {						\
-	string schema;			   	\
-	schema = Schema(&params);	   	\
-						\
-	sqlite3_prepare_v2 (*sdb, schema.c_str(), \
-		            -1, &stmt , NULL);	\
-	if (!stmt) {				\
-	        printf("%s failed (%s) \n",	\
-			Op, sqlite3_errmsg(*sdb));\
-		ret = -1;			\
-		goto out;			\
-	}					\
-	ret = 0;				\
+#define SQL_PREPARE(params, sdb, stmt, ret, Op) 	\
+do {							\
+	string schema;			   		\
+	schema = Schema(&params);	   		\
+							\
+	sqlite3_prepare_v2 (*sdb, schema.c_str(), 	\
+		            -1, &stmt , NULL);		\
+	if (!stmt) {					\
+	        dout(L_ERR)<<"failed to prepare statement " \
+	       		   <<"for Op("<<Op<<"); Errmsg -"\
+	       		   <<sqlite3_errmsg(*sdb)<<"\n";\
+		ret = -1;				\
+		goto out;				\
+	}						\
+	dout(L_DEBUG)<<"Successfully Prepared stmt for Op("<<Op	\
+		 	 <<") schema("<<schema<<") stmt("<<stmt<<")\n";	\
+	ret = 0;					\
 } while(0);
 
 #define SQL_BIND_INDEX(stmt, index, str, sdb)	\
@@ -24,21 +27,27 @@ do {						\
 	index = sqlite3_bind_parameter_index(stmt, str);     \
 							     \
 	if (index <=0)  {				     \
-	        printf("Failed to fetch %s index (%d), error(%s) \n", \
-			str, index, sqlite3_errmsg(*sdb));   \
+	        dout(L_ERR)<<"failed to fetch bind parameter"\
+	       	  	   " index for str("<<str<<") in "   \
+			   <<"stmt("<<stmt<<"); Errmsg -"    \
+	       		   <<sqlite3_errmsg(*sdb)<<"\n"; 	     \
 		rc = -1;				     \
 		goto out;				     \
 	}						     \
+	dout(L_FULLDEBUG)<<"Bind parameter index for str("  \
+			 <<str<<") in stmt("<<stmt<<") is "  \
+       		         <<index<<"\n";			     \
 }while(0);
 
 #define SQL_BIND_TEXT(stmt, index, str, sdb)			\
 do {								\
-	rc = sqlite3_bind_text(stmt, index, str, -1, SQLITE_STATIC); \
+	rc = sqlite3_bind_text(stmt, index, str, -1, SQLITE_STATIC); 	\
 								\
-	if (rc != SQLITE_OK) {					\
-	        printf("sqlite bind text failed for text(%s)"	\
-			"index (%d) with error(%s) \n",		\
-			str, index, sqlite3_errmsg(*sdb));	\
+	if (rc != SQLITE_OK) {					      	\
+	        dout(L_ERR)<<"sqlite bind text failed for index("     	\
+			   <<index<<"), str("<<str<<") in stmt("   	\
+			   <<stmt<<"); Errmsg - "<<sqlite3_errmsg(*sdb) \
+			   <<"\n";				\
 		rc = -1;					\
 		goto out;					\
 	}							\
@@ -49,9 +58,10 @@ do {								\
 	rc = sqlite3_bind_int(stmt, index, num);		\
 								\
 	if (rc != SQLITE_OK) {					\
-	        printf("sqlite bind int failed for int(%d)"	\
-			"index (%d) with error(%s) \n",		\
-			num, index, sqlite3_errmsg(*sdb));	\
+	        dout(L_ERR)<<"sqlite bind int failed for index("     	\
+			   <<index<<"), num("<<num<<") in stmt("   	\
+			   <<stmt<<"); Errmsg - "<<sqlite3_errmsg(*sdb) \
+			   <<"\n";				\
 		rc = -1;					\
 		goto out;					\
 	}							\
@@ -62,9 +72,10 @@ do {								\
 	rc = sqlite3_bind_blob(stmt, index, blob, size, NULL);  \
 								\
 	if (rc != SQLITE_OK) {					\
-	        printf("sqlite bind blob failed for "		\
-			"index (%d) with error(%s) \n",		\
-			index, sqlite3_errmsg(*sdb));	\
+	        dout(L_ERR)<<"sqlite bind blob failed for index("     	\
+			   <<index<<"), blob("<<blob<<") in stmt("   	\
+			   <<stmt<<"); Errmsg - "<<sqlite3_errmsg(*sdb) \
+			   <<"\n";				\
 		rc = -1;					\
 		goto out;					\
 	}							\
@@ -77,27 +88,34 @@ do{						\
 	}					\
 						\
 	if (!stmt) {				\
+		dout(L_ERR)<<"No prepared statement \n";	\
 		goto out;			\
 	}					\
 						\
-		ret = Bind(params);		\
-		if (ret)			\
-			goto unlock;		\
-						\
-		ret = Step(stmt, cbk);		\
-						\
-		Reset(stmt);			\
-						\
-unlock:						\
-	if (ret)				\
+	ret = Bind(params);			\
+	if (ret) {				\
+		dout(L_ERR)<<"Bind parameters failed for stmt("	\
+			   <<stmt<<") \n";		\
 		goto out;			\
+	}					\
+						\
+	ret = Step(stmt, cbk);			\
+						\
+	Reset(stmt);				\
+						\
+	if (ret) {				\
+		dout(L_ERR)<<"Execution failed for stmt("	\
+			   <<stmt<<")\n";		\
+		goto out;			\
+	}					\
 }while(0);
 
 static int list_callback(void *None, int argc, char **argv, char **aname)
 {
         int i;
         for(i=0; i<argc; i++) {
-                printf("%s = %s \n", aname[i], argv[i]? argv[i] : "NULL");
+		string arg = argv[i] ? argv[i] : "NULL";
+                cout<<aname[i]<<" = "<<arg<<"\n";
         }
         return 0;
 }
@@ -184,8 +202,10 @@ int SQLiteDB::FreeRGWOps()
 
 int InitPrepareParams(RGWOpPrepareParams *params)
 {
-	if (!params)
+	if (!params) {
+		dout(L_ERR)<<"PrepareParams passed is NULL\n";
 		return -1;
+	}
 
 	params->tenant = ":tenant";
 	params->user_table = ":user_table";
@@ -208,8 +228,10 @@ void *SQLiteDB::openDB()
 	char *errmsg = NULL;
 
 	dbname	= getDBname();
-	if (dbname.empty())
+	if (dbname.empty()) {
+		dout(L_ERR)<<"dbname is NULL\n";
 		goto out;
+	}
 
 	rc = sqlite3_open_v2(dbname.c_str(), &db,
 			     SQLITE_OPEN_READWRITE |
@@ -218,12 +240,10 @@ void *SQLiteDB::openDB()
 			     NULL);
 
         if (rc) {
-	        fprintf(stderr, "Cant open %s: %s\n",
-			dbname.c_str(),
-                        sqlite3_errmsg(db));
+		dout(L_ERR)<<"Cant open "<<dbname<<"; Errmsg - "\
+			   <<sqlite3_errmsg(db)<<"\n";
         } else {
-                fprintf(stderr, "Opened database(%s) successfully\n",
-			dbname.c_str());
+                dout(L_DEBUG)<<"Opened database("<<dbname<<") successfully\n";
         }
 
 	exec("PRAGMA foreign_keys=ON", NULL);
@@ -266,13 +286,17 @@ again:
 		ret = sqlite3_step(stmt);
 
 		if ((ret != SQLITE_DONE) && (ret != SQLITE_ROW)) {
-		        printf("sqlite step failed (%s) \n", sqlite3_errmsg(db));
+			dout(L_ERR)<<"sqlite step failed for stmt("<<stmt \
+				   <<"); Errmsg - "<<sqlite3_errmsg(db)<<"\n";
 			return -1;
 		} else if (ret == SQLITE_ROW) {
 			if (cbk)
 				(*cbk)(stmt);
 			goto again;
 		}
+
+	dout(L_FULLDEBUG)<<"sqlite step successfully executed for stmt(" \
+			 <<stmt<<") \n";
 
 	return 0;
 }
@@ -288,11 +312,14 @@ int SQLiteDB::exec(const char *schema,
 
 	ret = sqlite3_exec(db, schema, callback, 0, &errmsg);
         if (ret != SQLITE_OK) {
-                fprintf(stderr, "SQL execution failed of schema(%s) %s\n", schema, errmsg);
+		dout(L_ERR)<<"sqlite exec failed for schema("<<schema \
+				   <<"); Errmsg - "<<errmsg<<"\n";
                 sqlite3_free(errmsg);
 		goto out;
         }
 	ret = 0;
+	dout(L_FULLDEBUG)<<"sqlite exec successfully processed for schema(" \
+			<<schema<<")\n";
 out:
 	return ret;
 }
@@ -319,6 +346,7 @@ out:
 			DeleteUserTable(&params);
 		if (cb)
 			DeleteBucketTable(&params);
+		dout(L_ERR)<<"Creation of tables failed \n";
 	}
 
 	return ret;
@@ -333,8 +361,9 @@ int SQLiteDB::createUserTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		cout<<"CreateUserTable failed \n";
+		dout(L_ERR)<<"CreateUserTable failed \n";
 
+	dout(L_FULLDEBUG)<<"CreateUserTable suceeded \n";
 out:
 	return ret;
 }
@@ -348,8 +377,9 @@ int SQLiteDB::createBucketTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		cout<<"CreateBucketTable failed \n";
+		dout(L_ERR)<<"CreateBucketTable failed \n";
 
+	dout(L_FULLDEBUG)<<"CreateBucketTable suceeded \n";
 out:
 	return ret;
 }
@@ -363,8 +393,9 @@ int SQLiteDB::createObjectTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		cout<<"CreateObjectTable failed \n";
+		dout(L_ERR)<<"CreateObjectTable failed \n";
 
+	dout(L_FULLDEBUG)<<"CreateObjectTable suceeded \n";
 out:
 	return ret;
 }
@@ -378,8 +409,9 @@ int SQLiteDB::createObjectDataTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		cout<<"CreateObjectDataTable failed \n";
+		dout(L_ERR)<<"CreateObjectDataTable failed \n";
 
+	dout(L_FULLDEBUG)<<"CreateObjectDataTable suceeded \n";
 out:
 	return ret;
 }
@@ -393,8 +425,9 @@ int SQLiteDB::DeleteUserTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		cout<<"DeleteUserTable failed \n";
+		dout(L_ERR)<<"DeleteUserTable failed \n";
 
+	dout(L_FULLDEBUG)<<"DeleteUserTable suceeded \n";
 out:
 	return ret;
 }
@@ -408,8 +441,9 @@ int SQLiteDB::DeleteBucketTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		cout<<"DeletebucketTable failed \n";
+		dout(L_ERR)<<"DeletebucketTable failed \n";
 
+	dout(L_FULLDEBUG)<<"DeletebucketTable suceeded \n";
 out:
 	return ret;
 }
@@ -423,8 +457,9 @@ int SQLiteDB::DeleteObjectTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		cout<<"DeleteObjectTable failed \n";
+		dout(L_ERR)<<"DeleteObjectTable failed \n";
 
+	dout(L_FULLDEBUG)<<"DeleteObjectTable suceeded \n";
 out:
 	return ret;
 }
@@ -438,8 +473,9 @@ int SQLiteDB::DeleteObjectDataTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		cout<<"DeleteObjectDataTable failed \n";
+		dout(L_ERR)<<"DeleteObjectDataTable failed \n";
 
+	dout(L_FULLDEBUG)<<"DeleteObjectDataTable suceeded \n";
 out:
 	return ret;
 }
@@ -453,8 +489,9 @@ int SQLiteDB::ListAllUsers(RGWOpParams *params)
 	cout<<"########### Listing all Users #############\n";
 	ret = exec(schema.c_str(), &list_callback);
 	if (ret)
-		cout<<"ListUsertable failed \n";
+		dout(L_ERR)<<"ListUsertable failed \n";
 
+	dout(L_FULLDEBUG)<<"ListUserTable suceeded \n";
 out:
 	return ret;
 }
@@ -469,8 +506,9 @@ int SQLiteDB::ListAllBuckets(RGWOpParams *params)
 	cout<<"########### Listing all Buckets #############\n";
 	ret = exec(schema.c_str(), &list_callback);
 	if (ret)
-		cout<<"Listbuckettable failed \n";
+		dout(L_ERR)<<"Listbuckettable failed \n";
 
+	dout(L_FULLDEBUG)<<"ListbucketTable suceeded \n";
 out:
 	return ret;
 }
@@ -489,7 +527,7 @@ int SQLiteDB::ListAllObjects(RGWOpParams *params)
 	objectmap = getObjectMap();
 
 	if (objectmap.empty())
-		cout<<"objectmap empty \n";
+		dout(L_DEBUG)<<"objectmap empty \n";
 
 	for (iter = objectmap.begin(); iter != objectmap.end(); ++iter) {
 		bucket = iter->first;
@@ -499,7 +537,9 @@ int SQLiteDB::ListAllObjects(RGWOpParams *params)
 
 		ret = exec(schema.c_str(), &list_callback);
 		if (ret)
-			cout<<"ListObjecttable failed \n";
+			dout(L_ERR)<<"ListObjecttable failed \n";
+
+		dout(L_FULLDEBUG)<<"ListObjectTable suceeded \n";
 	}
 
 out:
@@ -537,7 +577,7 @@ int SQLInsertUser::Prepare(struct RGWOpParams *params)
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		printf("In SQLInsertUser - no db\n");
+		dout(L_ERR)<<"In SQLInsertUser - no db\n";
 		goto out;
 	}
 
@@ -581,7 +621,7 @@ int SQLRemoveUser::Prepare(struct RGWOpParams *params)
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		printf("In SQLRemoveUser - no db\n");
+		dout(L_ERR)<<"In SQLRemoveUser - no db\n";
 		goto out;
 	}
 
@@ -625,7 +665,7 @@ int SQLListUser::Prepare(struct RGWOpParams *params)
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		printf("In SQLListUser - no db\n");
+		dout(L_ERR)<<"In SQLListUser - no db\n";
 		goto out;
 	}
 
@@ -668,7 +708,7 @@ int SQLInsertBucket::Prepare(struct RGWOpParams *params)
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		printf("In SQLInsertBucket - no db\n");
+		dout(L_ERR)<<"In SQLInsertBucket - no db\n";
 		goto out;
 	}
 
@@ -722,7 +762,7 @@ int SQLRemoveBucket::Prepare(struct RGWOpParams *params)
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		printf("In SQLRemoveBucket - no db\n");
+		dout(L_ERR)<<"In SQLRemoveBucket - no db\n";
 		goto out;
 	}
 
@@ -770,7 +810,7 @@ int SQLListBucket::Prepare(struct RGWOpParams *params)
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		printf("In SQLListBucket - no db\n");
+		dout(L_ERR)<<"In SQLListBucket - no db\n";
 		goto out;
 	}
 
@@ -817,7 +857,7 @@ int SQLInsertObject::Prepare(struct RGWOpParams *params)
 	struct RGWOpParams copy = *params;
 
 	if (!*sdb) {
-		printf("In SQLInsertObject - no db\n");
+		dout(L_ERR)<<"In SQLInsertObject - no db\n";
 		goto out;
 	}
 
@@ -873,7 +913,7 @@ int SQLRemoveObject::Prepare(struct RGWOpParams *params)
 	struct RGWOpParams copy = *params;
 
 	if (!*sdb) {
-		printf("In SQLRemoveObject - no db\n");
+		dout(L_ERR)<<"In SQLRemoveObject - no db\n";
 		goto out;
 	}
 
@@ -929,7 +969,7 @@ int SQLListObject::Prepare(struct RGWOpParams *params)
 	struct RGWOpParams copy = *params;
 
 	if (!*sdb) {
-		printf("In SQLListObject - no db\n");
+		dout(L_ERR)<<"In SQLListObject - no db\n";
 		goto out;
 	}
 
@@ -986,7 +1026,7 @@ int SQLPutObjectData::Prepare(struct RGWOpParams *params)
 	struct RGWOpParams copy = *params;
 
 	if (!*sdb) {
-		printf("In SQLPutObjectData - no db\n");
+		dout(L_ERR)<<"In SQLPutObjectData - no db\n";
 		goto out;
 	}
 
@@ -1058,7 +1098,7 @@ int SQLGetObjectData::Prepare(struct RGWOpParams *params)
 	struct RGWOpParams copy = *params;
 
 	if (!*sdb) {
-		printf("In SQLGetObjectData - no db\n");
+		dout(L_ERR)<<"In SQLGetObjectData - no db\n";
 		goto out;
 	}
 
@@ -1117,7 +1157,7 @@ int SQLDeleteObjectData::Prepare(struct RGWOpParams *params)
 	struct RGWOpParams copy = *params;
 
 	if (!*sdb) {
-		printf("In SQLDeleteObjectData - no db\n");
+		dout(L_ERR)<<"In SQLDeleteObjectData - no db\n";
 		goto out;
 	}
 
