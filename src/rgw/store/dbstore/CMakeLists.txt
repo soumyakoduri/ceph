@@ -41,6 +41,11 @@ ENDIF()
 # add pthread library
 set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} pthread)
 
+find_package(gtest QUIET)
+if(NOT gtest_FOUND)
+	message(WARNING "Could not find gtest")
+endif()
+add_subdirectory(tests)
 
 include_directories(${CMAKE_INCLUDE_DIR})
 add_executable(dbstore ${main_srcs})

@@ -571,6 +571,7 @@ int DBstore::InitializeParams(string Op, RGWOpParams *params)
 	params->user_table = user_table;
 	params->bucket_table = bucket_table;
 
+	ret = 0;
 out:
 	return ret;
 }
