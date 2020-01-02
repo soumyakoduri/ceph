@@ -28,7 +28,7 @@ namespace gtest {
 				db = new SQLiteDB(tenant);
 				ASSERT_TRUE(db != nullptr);
 
-				ret = db->Initialize();
+				ret = db->Initialize("", -1);
 				ASSERT_GE(ret, 0);
 			}
 		}
