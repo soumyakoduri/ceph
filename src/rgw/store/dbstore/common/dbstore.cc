@@ -368,9 +368,37 @@ string DeleteObjectDataOp::Schema(SchemaParams *s_params) {
 		 p->object.c_str());
 }
 
-int DBstore::Initialize()
+/* Custom Logging initialization */
+ofstream fileout;
+ostream *dbout;
+int LogLevel = L_EVENT;
+string LogFile = "dbstore.log";
+
+static void LogInit(string logfile, int loglevel) {
+        if (loglevel >= L_ERR && loglevel <= L_FULLDEBUG)
+                LogLevel = loglevel;
+
+        if (!logfile.empty()) {
+                LogFile = logfile;
+        }
+
+        fileout.open(LogFile);
+	dbout = &fileout;
+
+        return;
+}
+
+static void LogDestroy() {
+        if(dbout && (dbout != &cout))
+                fileout.close();
+        return;
+}
+
+int DBstore::Initialize(string logfile, int loglevel)
 {
 	int ret = -1;
+
+	LogInit(logfile, loglevel);
 
 	db = openDB();
 
@@ -417,6 +445,9 @@ int DBstore::Destroy()
 
 	dout(L_FULLDEBUG)<<"DBstore successfully destroyed for tenant:" \
 			<<tenant<<"\n";
+
+	LogDestroy();
+	
 	return 0;
 }
 

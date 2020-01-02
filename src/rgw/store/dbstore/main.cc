@@ -117,6 +117,8 @@ void* process(void *arg)
 int main(int argc, char *argv[])
 {
 	string tenant = "Redhat";
+	string logfile;
+	int loglevel;
 
 	class DBstore *db;
 	int rc = 0, tnum = 0;
@@ -127,16 +129,22 @@ int main(int argc, char *argv[])
 	pthread_t threads[num_thr];
 	struct thr_args t_args[num_thr];
 
+	// format: ./dbstore logfile loglevel
+	if (argc == 3) {
+		logfile = argv[1];
+		loglevel = (atoi)(argv[2]);
+	}
+
 #ifdef SQLITE_ENABLED
 	db = new SQLiteDB(tenant);
 #else
 	db = new DBstore(tenant);
 #endif
 
-	rc = db->Initialize();
+	rc = db->Initialize(logfile, loglevel);
 
 	if (rc != 0) {
-		dout(L_ERR)<<"DBstore initialization failed for tenant:" \
+		cout<<"DBstore initialization failed for tenant:" \
 			   <<tenant<<"\n";
 		goto out;
 	}

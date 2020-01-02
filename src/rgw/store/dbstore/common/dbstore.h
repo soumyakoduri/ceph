@@ -299,7 +299,7 @@ class DBstore {
 
 	struct RGWOps rgwops; // RGW operations, make it private?
 
-	int Initialize();
+	int Initialize(string logfile, int loglevel);
 	int Destroy();
 	int LockInit();
 	int LockDestroy();
