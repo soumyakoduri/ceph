@@ -12,16 +12,16 @@
 
 using namespace std;
 
-int InitPrepareParams(RGWOpPrepareParams *params);
+int InitPrepareParams(DBOpPrepareParams *params);
 
-class SQLiteDB : public DBstore, public RGWOp{
+class SQLiteDB : public DBstore, public DBOp{
 	private:
 	sqlite3 *db = NULL; // make this private again
 	sqlite3_mutex *mutex = NULL;
 
 	public:	
 	sqlite3_stmt *stmt = NULL;
-	RGWOpPrepareParams PrepareParams;
+	DBOpPrepareParams PrepareParams;
 
 	SQLiteDB(string tenant_name) : DBstore(tenant_name) {
 		InitPrepareParams(&PrepareParams);
@@ -37,23 +37,23 @@ class SQLiteDB : public DBstore, public RGWOp{
 	int closeDB();
 	int Step(sqlite3_stmt *stmt, int (*cbk)(sqlite3_stmt *stmt));
 	int Reset(sqlite3_stmt *stmt);
-	int InitializeRGWOps();
-	int FreeRGWOps();
+	int InitializeDBOps();
+	int FreeDBOps();
 
 	int createTables();
-	int createBucketTable(RGWOpParams *params);
-	int createUserTable(RGWOpParams *params);
-	int createObjectTable(RGWOpParams *params);
-	int createObjectDataTable(RGWOpParams *params);
+	int createBucketTable(DBOpParams *params);
+	int createUserTable(DBOpParams *params);
+	int createObjectTable(DBOpParams *params);
+	int createObjectDataTable(DBOpParams *params);
 
-	int DeleteBucketTable(RGWOpParams *params);
-	int DeleteUserTable(RGWOpParams *params);
-	int DeleteObjectTable(RGWOpParams *params);
-	int DeleteObjectDataTable(RGWOpParams *params);
+	int DeleteBucketTable(DBOpParams *params);
+	int DeleteUserTable(DBOpParams *params);
+	int DeleteObjectTable(DBOpParams *params);
+	int DeleteObjectDataTable(DBOpParams *params);
 
-	int ListAllBuckets(RGWOpParams *params);
-	int ListAllUsers(RGWOpParams *params);
-	int ListAllObjects(RGWOpParams *params);
+	int ListAllBuckets(DBOpParams *params);
+	int ListAllUsers(DBOpParams *params);
+	int ListAllObjects(DBOpParams *params);
 };
 
 class SQLObjectOp : public ObjectOp {
@@ -82,9 +82,9 @@ class SQLInsertUser : public SQLiteDB, public InsertUserOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLRemoveUser : public SQLiteDB, public RemoveUserOp {
@@ -99,9 +99,9 @@ class SQLRemoveUser : public SQLiteDB, public RemoveUserOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLListUser : public SQLiteDB, public ListUserOp {
@@ -116,9 +116,9 @@ class SQLListUser : public SQLiteDB, public ListUserOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLInsertBucket : public SQLiteDB, public InsertBucketOp {
@@ -133,9 +133,9 @@ class SQLInsertBucket : public SQLiteDB, public InsertBucketOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLRemoveBucket : public SQLiteDB, public RemoveBucketOp {
@@ -150,9 +150,9 @@ class SQLRemoveBucket : public SQLiteDB, public RemoveBucketOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLListBucket : public SQLiteDB, public ListBucketOp {
@@ -167,9 +167,9 @@ class SQLListBucket : public SQLiteDB, public ListBucketOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLInsertObject : public SQLiteDB, public InsertObjectOp {
@@ -187,9 +187,9 @@ class SQLInsertObject : public SQLiteDB, public InsertObjectOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLRemoveObject : public SQLiteDB, public RemoveObjectOp {
@@ -207,9 +207,9 @@ class SQLRemoveObject : public SQLiteDB, public RemoveObjectOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLListObject : public SQLiteDB, public ListObjectOp {
@@ -227,9 +227,9 @@ class SQLListObject : public SQLiteDB, public ListObjectOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLPutObjectData : public SQLiteDB, public PutObjectDataOp {
@@ -247,9 +247,9 @@ class SQLPutObjectData : public SQLiteDB, public PutObjectDataOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLGetObjectData : public SQLiteDB, public GetObjectDataOp {
@@ -267,9 +267,9 @@ class SQLGetObjectData : public SQLiteDB, public GetObjectDataOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 
 class SQLDeleteObjectData : public SQLiteDB, public DeleteObjectDataOp {
@@ -287,8 +287,8 @@ class SQLDeleteObjectData : public SQLiteDB, public DeleteObjectDataOp {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
-        int Prepare(RGWOpParams *params);
-        int Execute(RGWOpParams *params);
-        int Bind(RGWOpParams *params);
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
 };
 #endif

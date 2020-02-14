@@ -16,7 +16,7 @@
 using namespace std;
 class DBstore;
 
-struct RGWOpParams {
+struct DBOpParams {
 	string tenant;
 	string user_table;
 	string bucket_table;
@@ -35,7 +35,7 @@ struct RGWOpParams {
  * the fields are strings here to accommodate any
  * style identifiers used by backend db
  */
-struct RGWOpPrepareParams {
+struct DBOpPrepareParams {
 	string tenant;
 	string user_table;
 	string bucket_table;
@@ -52,12 +52,12 @@ struct RGWOpPrepareParams {
 struct SchemaParams {
 	bool is_prepare;
 	union {
-		struct RGWOpParams *params;
-		struct RGWOpPrepareParams *p_params;
+		struct DBOpParams *params;
+		struct DBOpPrepareParams *p_params;
 	} u;
 };
 
-struct RGWOps {
+struct DBOps {
 	class InsertUserOp *InsertUser;
 	class RemoveUserOp *RemoveUser;
 	class ListUserOp *ListUser;
@@ -83,7 +83,7 @@ class ObjectOp {
 	virtual int FreeObjectOps() { return 0; }
 };
 
-class RGWOp {
+class DBOp {
 	private:
 	const string CreateUserTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' (	\
@@ -116,17 +116,17 @@ class RGWOp {
 	const string ListAllQ = "SELECT  * from '{}'";
 
 	public:
-	RGWOp() {};
+	DBOp() {};
 
-	string CreateTableSchema(string type, RGWOpParams *params);
+	string CreateTableSchema(string type, DBOpParams *params);
 	string DeleteTableSchema(string table_name);
 	string ListTableSchema(string table_name);
 
-	virtual int Prepare(RGWOpParams *params) { return 0; }
-	virtual int Execute(RGWOpParams *params) { return 0; }
+	virtual int Prepare(DBOpParams *params) { return 0; }
+	virtual int Execute(DBOpParams *params) { return 0; }
 };
 
-class InsertUserOp : public RGWOp {
+class InsertUserOp : public DBOp {
 	private:
 	/* For existing entires, -
 	 * (1) INSERT or REPLACE - it will delete previous entry and then
@@ -147,7 +147,7 @@ class InsertUserOp : public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class RemoveUserOp: public RGWOp {
+class RemoveUserOp: public DBOp {
 	private:
 	const string Query =
 	"DELETE from '{}' where UserName = {}";
@@ -158,7 +158,7 @@ class RemoveUserOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class ListUserOp: public RGWOp {
+class ListUserOp: public DBOp {
 	private:
 	const string Query =
 	"SELECT  * from '{}' where UserName = {}";
@@ -169,7 +169,7 @@ class ListUserOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class InsertBucketOp: public RGWOp {
+class InsertBucketOp: public DBOp {
 	private:
 	const string Query =
 	"INSERT OR REPLACE INTO '{}' (BucketName, UserName) VALUES ({}, {})";
@@ -180,7 +180,7 @@ class InsertBucketOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class RemoveBucketOp: public RGWOp {
+class RemoveBucketOp: public DBOp {
 	private:
 	const string Query =
 	"DELETE from '{}' where BucketName = {}";
@@ -191,7 +191,7 @@ class RemoveBucketOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class ListBucketOp: public RGWOp {
+class ListBucketOp: public DBOp {
 	private:
 	const string Query =
 	"SELECT  * from '{}' where BucketName = {}";
@@ -202,7 +202,7 @@ class ListBucketOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class InsertObjectOp: public RGWOp {
+class InsertObjectOp: public DBOp {
 	private:
 	const string Query =
 	"INSERT OR REPLACE INTO '{}' (BucketName, ObjectName) VALUES ({}, {})";
@@ -213,7 +213,7 @@ class InsertObjectOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class RemoveObjectOp: public RGWOp {
+class RemoveObjectOp: public DBOp {
 	private:
 	const string Query =
 	"DELETE from '{}' where BucketName = {} and ObjectName = {}";
@@ -224,7 +224,7 @@ class RemoveObjectOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class ListObjectOp: public RGWOp {
+class ListObjectOp: public DBOp {
 	private:
 	const string Query =
 	"SELECT  * from '{}' where BucketName = {} and ObjectName = {}";
@@ -236,7 +236,7 @@ class ListObjectOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class PutObjectDataOp: public RGWOp {
+class PutObjectDataOp: public DBOp {
 	private:
 	const string Query =
 	"INSERT OR REPLACE INTO '{}' (BucketName, ObjectName, Offset, Data, Size) \
@@ -248,7 +248,7 @@ class PutObjectDataOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class GetObjectDataOp: public RGWOp {
+class GetObjectDataOp: public DBOp {
 	private:
 	const string Query =
 	"SELECT * from '{}' where BucketName = {} and ObjectName = {}";
@@ -259,7 +259,7 @@ class GetObjectDataOp: public RGWOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class DeleteObjectDataOp: public RGWOp {
+class DeleteObjectDataOp: public DBOp {
 	private:
 	const string Query =
 	"DELETE from '{}' where BucketName = {} and ObjectName = {}";
@@ -290,14 +290,14 @@ class DBstore {
        			        {}
 	virtual	~DBstore() {}
 
-	string getDBname();
+	 string getDBname();
 	string getTenant();
 	string getUserTable();
 	string getBucketTable();
 	map<string, class ObjectOp*> getObjectMap();
 	void *db; // Backend database handle, make it private?
 
-	struct RGWOps rgwops; // RGW operations, make it private?
+	struct DBOps dbops; // DB operations, make it private?
 
 	int Initialize(string logfile, int loglevel);
 	int Destroy();
@@ -306,21 +306,21 @@ class DBstore {
 	int Lock();
 	int Unlock();
 
-	int InitializeParams(string Op, RGWOpParams *params);
-	int ProcessOp(string Op, RGWOpParams *params);
-	RGWOp* getRGWOp(string Op, struct RGWOpParams *params);
+	int InitializeParams(string Op, DBOpParams *params);
+	int ProcessOp(string Op, DBOpParams *params);
+	DBOp* getDBOp(string Op, struct DBOpParams *params);
 	int objectmapInsert(string bucket, void *ptr);
 	int objectmapDelete(string bucket);
 
         virtual void *openDB() { return NULL; }
         virtual int closeDB() { return 0; }
 	virtual int createTables() { return 0; }
-	virtual int InitializeRGWOps() { return 0; }
-	virtual int FreeRGWOps() { return 0; }
+	virtual int InitializeDBOps() { return 0; }
+	virtual int FreeDBOps() { return 0; }
 
-        virtual int ListAllBuckets(RGWOpParams *params) = 0;
-        virtual int ListAllUsers(RGWOpParams *params) = 0;
-        virtual int ListAllObjects(RGWOpParams *params) = 0;
+        virtual int ListAllBuckets(DBOpParams *params) = 0;
+        virtual int ListAllUsers(DBOpParams *params) = 0;
+        virtual int ListAllObjects(DBOpParams *params) = 0;
 
 };
 #endif

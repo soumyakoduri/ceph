@@ -57,7 +57,7 @@ namespace {
 		string bucket1 = "bucket1";
 		string object1 = "object1";
 		string data = "Hello World";
-		RGWOpParams GlobalParams = {};
+		DBOpParams GlobalParams = {};
 
 		DBstoreBaseTest() {}
 		void SetUp() {
@@ -85,7 +85,7 @@ namespace {
 }
 
 TEST_F(DBstoreBaseTest, InsertUser) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("InsertUser", &params);
@@ -93,7 +93,7 @@ TEST_F(DBstoreBaseTest, InsertUser) {
 }
 
 TEST_F(DBstoreBaseTest, ListUser) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("ListUser", &params);
@@ -101,7 +101,7 @@ TEST_F(DBstoreBaseTest, ListUser) {
 }
 
 TEST_F(DBstoreBaseTest, ListAllUsers) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ListAllUsers(&params);
@@ -109,7 +109,7 @@ TEST_F(DBstoreBaseTest, ListAllUsers) {
 }
 
 TEST_F(DBstoreBaseTest, InsertBucket) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("InsertBucket", &params);
@@ -117,7 +117,7 @@ TEST_F(DBstoreBaseTest, InsertBucket) {
 }
 
 TEST_F(DBstoreBaseTest, ListBucket) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("ListBucket", &params);
@@ -125,7 +125,7 @@ TEST_F(DBstoreBaseTest, ListBucket) {
 }
 
 TEST_F(DBstoreBaseTest, ListAllBuckets) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ListAllBuckets(&params);
@@ -133,7 +133,7 @@ TEST_F(DBstoreBaseTest, ListAllBuckets) {
 }
 
 TEST_F(DBstoreBaseTest, InsertObject) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("InsertObject", &params);
@@ -141,7 +141,7 @@ TEST_F(DBstoreBaseTest, InsertObject) {
 }
 
 TEST_F(DBstoreBaseTest, ListObject) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("ListObject", &params);
@@ -149,7 +149,7 @@ TEST_F(DBstoreBaseTest, ListObject) {
 }
 
 TEST_F(DBstoreBaseTest, ListAllObjects) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ListAllObjects(&params);
@@ -157,7 +157,7 @@ TEST_F(DBstoreBaseTest, ListAllObjects) {
 }
 
 TEST_F(DBstoreBaseTest, PutObjectData) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("PutObjectData", &params);
@@ -165,7 +165,7 @@ TEST_F(DBstoreBaseTest, PutObjectData) {
 }
 
 TEST_F(DBstoreBaseTest, GetObjectData) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("GetObjectData", &params);
@@ -173,7 +173,7 @@ TEST_F(DBstoreBaseTest, GetObjectData) {
 }
 
 TEST_F(DBstoreBaseTest, DeleteObjectData) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("DeleteObjectData", &params);
@@ -181,7 +181,7 @@ TEST_F(DBstoreBaseTest, DeleteObjectData) {
 }
 
 TEST_F(DBstoreBaseTest, RemoveObject) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("RemoveObject", &params);
@@ -189,7 +189,7 @@ TEST_F(DBstoreBaseTest, RemoveObject) {
 }
 
 TEST_F(DBstoreBaseTest, RemoveBucket) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("RemoveBucket", &params);
@@ -197,7 +197,7 @@ TEST_F(DBstoreBaseTest, RemoveBucket) {
 }
 
 TEST_F(DBstoreBaseTest, RemoveUser) {
-	struct RGWOpParams params = GlobalParams;
+	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ProcessOp("RemoveUser", &params);
