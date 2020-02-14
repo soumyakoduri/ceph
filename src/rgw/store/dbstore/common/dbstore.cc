@@ -27,7 +27,7 @@ map<string, class ObjectOp*> DBstore::getObjectMap() {
 	return DBstore::objectmap;
 }
 
-string RGWOp::CreateTableSchema(string type, RGWOpParams *params) {
+string DBOp::CreateTableSchema(string type, DBOpParams *params) {
 	if (!type.compare("User"))
 		return fmt::format(CreateUserTableQ.c_str(),
 			           params->user_table.c_str());
@@ -44,22 +44,22 @@ string RGWOp::CreateTableSchema(string type, RGWOpParams *params) {
 			           params->objectdata_table.c_str(),
 				   params->object_table.c_str());
 
-	dout(L_ERR)<<"Incorrect table type("<<type<<") specified \n";
+	dbout(L_ERR)<<"Incorrect table type("<<type<<") specified \n";
 
 	return NULL;
 }
 
-string RGWOp::DeleteTableSchema(string table) {
+string DBOp::DeleteTableSchema(string table) {
 	return fmt::format(DropQ.c_str(), table.c_str());
 }
 
-string RGWOp::ListTableSchema(string table) {
+string DBOp::ListTableSchema(string table) {
 	return fmt::format(ListAllQ.c_str(), table.c_str());
 }
 
 string InsertUserOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -75,7 +75,7 @@ string InsertUserOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(), p->user_table.c_str(),
@@ -83,8 +83,8 @@ string InsertUserOp::Schema(SchemaParams *s_params) {
 }
 
 string RemoveUserOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -100,7 +100,7 @@ string RemoveUserOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(), p->user_table.c_str(),
@@ -108,8 +108,8 @@ string RemoveUserOp::Schema(SchemaParams *s_params) {
 }
 
 string ListUserOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -125,7 +125,7 @@ string ListUserOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(), p->user_table.c_str(),
@@ -133,8 +133,8 @@ string ListUserOp::Schema(SchemaParams *s_params) {
 }
 
 string InsertBucketOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -150,7 +150,7 @@ string InsertBucketOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(), p->bucket_table.c_str(),
@@ -158,8 +158,8 @@ string InsertBucketOp::Schema(SchemaParams *s_params) {
 }
 
 string RemoveBucketOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -175,7 +175,7 @@ string RemoveBucketOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(), p->bucket_table.c_str(),
@@ -183,8 +183,8 @@ string RemoveBucketOp::Schema(SchemaParams *s_params) {
 }
 
 string ListBucketOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -200,7 +200,7 @@ string ListBucketOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(), p->bucket_table.c_str(),
@@ -208,8 +208,8 @@ string ListBucketOp::Schema(SchemaParams *s_params) {
 }
 
 string InsertObjectOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -226,7 +226,7 @@ string InsertObjectOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(),
@@ -235,8 +235,8 @@ string InsertObjectOp::Schema(SchemaParams *s_params) {
 }
 
 string RemoveObjectOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -252,7 +252,7 @@ string RemoveObjectOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(), p->object_table.c_str(),
@@ -260,8 +260,8 @@ string RemoveObjectOp::Schema(SchemaParams *s_params) {
 }
 
 string ListObjectOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 
 	if (!s_params)
@@ -278,7 +278,7 @@ string ListObjectOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(), p->object_table.c_str(),
@@ -286,8 +286,8 @@ string ListObjectOp::Schema(SchemaParams *s_params) {
 }
 
 string PutObjectDataOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -306,7 +306,7 @@ string PutObjectDataOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(),
@@ -315,8 +315,8 @@ string PutObjectDataOp::Schema(SchemaParams *s_params) {
 }
 
 string GetObjectDataOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -333,7 +333,7 @@ string GetObjectDataOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(),
@@ -342,8 +342,8 @@ string GetObjectDataOp::Schema(SchemaParams *s_params) {
 }
 
 string DeleteObjectDataOp::Schema(SchemaParams *s_params) {
-	struct RGWOpParams *p;
-	struct RGWOpPrepareParams *pp;
+	struct DBOpParams *p;
+	struct DBOpPrepareParams *pp;
 
 	if (!s_params)
 		return NULL;
@@ -360,7 +360,7 @@ string DeleteObjectDataOp::Schema(SchemaParams *s_params) {
 	}
 
 	p = s_params->u.params;
-	if (!p) /* RGWOpParams */
+	if (!p) /* DBOpParams */
 		return NULL;
 
 	return fmt::format(Query.c_str(),
@@ -403,30 +403,30 @@ int DBstore::Initialize(string logfile, int loglevel)
 	db = openDB();
 
 	if (!db) {
-		dout(L_ERR)<<"Failed to open database \n";
+		dbout(L_ERR)<<"Failed to open database \n";
 		return ret;
 	}
 
 	ret = LockInit();
 
 	if (ret) {
-        	dout(L_ERR)<<"Error: mutex is NULL \n";
+        	dbout(L_ERR)<<"Error: mutex is NULL \n";
                 closeDB();
 		db = NULL;
                 return ret;
         }
 
-	ret = InitializeRGWOps();
+	ret = InitializeDBOps();
 
 	if (ret) {
-        	dout(L_ERR)<<"InitializeRGWOps failed \n";
+        	dbout(L_ERR)<<"InitializeDBOps failed \n";
 		LockDestroy();
                 closeDB();
 		db = NULL;
                 return ret;
         }
 
-	dout(L_FULLDEBUG)<<"DBstore successfully initialized for tenant:" \
+	dbout(L_FULLDEBUG)<<"DBstore successfully initialized for tenant:" \
 			<<tenant<<"\n";
 
 	return ret;
@@ -441,9 +441,9 @@ int DBstore::Destroy()
 
 	LockDestroy();
 
-	FreeRGWOps();
+	FreeDBOps();
 
-	dout(L_FULLDEBUG)<<"DBstore successfully destroyed for tenant:" \
+	dbout(L_FULLDEBUG)<<"DBstore successfully destroyed for tenant:" \
 			<<tenant<<"\n";
 
 	LogDestroy();
@@ -457,7 +457,7 @@ int DBstore::LockInit() {
 	ret = pthread_mutex_init(&mutex, NULL);
 
 	if (ret)
-		dout(L_ERR)<<"pthread_mutex_init failed \n";
+		dbout(L_ERR)<<"pthread_mutex_init failed \n";
 
 	return ret;
 }
@@ -468,7 +468,7 @@ int DBstore::LockDestroy() {
 	ret = pthread_mutex_destroy(&mutex);
 
 	if (ret)
-		dout(L_ERR)<<"pthread_mutex_destroy failed \n";
+		dbout(L_ERR)<<"pthread_mutex_destroy failed \n";
 
 	return ret;
 }
@@ -479,7 +479,7 @@ int DBstore::Lock() {
 	ret = pthread_mutex_lock(&mutex);
 
 	if (ret)
-		dout(L_ERR)<<"pthread_mutex_lock failed \n";
+		dbout(L_ERR)<<"pthread_mutex_lock failed \n";
 
 	return ret;
 }
@@ -490,25 +490,25 @@ int DBstore::Unlock() {
 	ret = pthread_mutex_unlock(&mutex);
 
 	if (ret)
-		dout(L_ERR)<<"pthread_mutex_unlock failed \n";
+		dbout(L_ERR)<<"pthread_mutex_unlock failed \n";
 
 	return ret;
 }
 
-RGWOp * DBstore::getRGWOp(string Op, struct RGWOpParams *params)
+DBOp * DBstore::getDBOp(string Op, struct DBOpParams *params)
 {
 	if (!Op.compare("InsertUser"))
-		return rgwops.InsertUser;
+		return dbops.InsertUser;
 	if (!Op.compare("RemoveUser"))
-		return rgwops.RemoveUser;
+		return dbops.RemoveUser;
 	if (!Op.compare("ListUser"))
-		return rgwops.ListUser;
+		return dbops.ListUser;
 	if (!Op.compare("InsertBucket"))
-		return rgwops.InsertBucket;
+		return dbops.InsertBucket;
 	if (!Op.compare("RemoveBucket"))
-		return rgwops.RemoveBucket;
+		return dbops.RemoveBucket;
 	if (!Op.compare("ListBucket"))
-		return rgwops.ListBucket;
+		return dbops.ListBucket;
 
 	/* Object Operations */
 	map<string, class ObjectOp*>::iterator iter;
@@ -517,7 +517,7 @@ RGWOp * DBstore::getRGWOp(string Op, struct RGWOpParams *params)
 	iter = DBstore::objectmap.find(params->bucket_name);
 
 	if (iter == DBstore::objectmap.end()) {
-		dout(L_EVENT)<<"No objectmap found for bucket: " \
+		dbout(L_EVENT)<<"No objectmap found for bucket: " \
 			     <<params->bucket_name<<"\n";
 		/* not found */
 		return NULL;
@@ -553,7 +553,7 @@ int DBstore::objectmapInsert(string bucket, void *ptr)
 		// return success or replace it or
 		// return error ?
 		// return success for now
-		dout(L_DEBUG)<<"Objectmap entry already exists for bucket("\
+		dbout(L_DEBUG)<<"Objectmap entry already exists for bucket("\
 			     <<bucket<<"). Not inserted \n";
 		return 0;
 	}
@@ -577,7 +577,7 @@ int DBstore::objectmapDelete(string bucket)
 		// entry doesn't exist
 		// return success or return error ?
 		// return success for now
-		dout(L_DEBUG)<<"Objectmap entry for bucket("<<bucket<<") "
+		dbout(L_DEBUG)<<"Objectmap entry for bucket("<<bucket<<") "
 			     <<"doesnt exist to delete \n";
 		return 0;
 	}
@@ -590,7 +590,7 @@ int DBstore::objectmapDelete(string bucket)
 	return 0;
 }
 
-int DBstore::InitializeParams(string Op, RGWOpParams *params)
+int DBstore::InitializeParams(string Op, DBOpParams *params)
 {
 	int ret = -1;
 
@@ -607,26 +607,26 @@ out:
 	return ret;
 }
 
-int DBstore::ProcessOp(string Op, struct RGWOpParams *params) {
+int DBstore::ProcessOp(string Op, struct DBOpParams *params) {
 	int ret = -1;
-	class RGWOp *rgw_op;
+	class DBOp *db_op;
 
 	Lock();
-	rgw_op = getRGWOp(Op, params);
+	db_op = getDBOp(Op, params);
 
-	if (!rgw_op) {
-		dout(L_ERR)<<"No rgw_op found for Op("<<Op<<")\n";
+	if (!db_op) {
+		dbout(L_ERR)<<"No db_op found for Op("<<Op<<")\n";
 		Unlock();
 		return ret;
 	}
-	ret = rgw_op->Execute(params);
+	ret = db_op->Execute(params);
 
 	Unlock();
 	if (ret)
-		dout(L_ERR)<<"In Process op Execute failed for fop(" \
+		dbout(L_ERR)<<"In Process op Execute failed for fop(" \
 			   <<Op.c_str()<<") \n";
 	else
-		dout(L_FULLDEBUG)<<"Successfully processed fop(" \
+		dbout(L_FULLDEBUG)<<"Successfully processed fop(" \
 			   <<Op.c_str()<<") \n";
 
 	return ret;

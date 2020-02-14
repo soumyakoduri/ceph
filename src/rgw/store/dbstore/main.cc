@@ -22,7 +22,7 @@ void* process(void *arg)
 	class DBstore *db = t_args->db;
 	int thr_id = t_args->thr_id;
 
-	dout(L_EVENT)<<"Entered thread:"<<thr_id<<"\n";
+	dbout(L_EVENT)<<"Entered thread:"<<thr_id<<"\n";
 
 	string user1 = "Soumya";
 	string bucketa = "rgw";
@@ -37,7 +37,7 @@ void* process(void *arg)
 	string objectc1 = "rhhi";
 	string objectc2 = "cns";
 
-	struct RGWOpParams params = {};
+	struct DBOpParams params = {};
 
 	db->InitializeParams("InsertUser", &params);
 	params.user_name = user1;
@@ -109,7 +109,7 @@ void* process(void *arg)
 	db->ListAllBuckets(&params);
 	db->ListAllObjects(&params);
 
-	dout(L_EVENT)<<"Exiting thread:"<<thr_id<<"\n";
+	dbout(L_EVENT)<<"Exiting thread:"<<thr_id<<"\n";
 
 	return 0;
 }
@@ -149,13 +149,13 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	dout(L_EVENT)<<"No. of threads being created = "<<num_thr<<"\n";
+	dbout(L_EVENT)<<"No. of threads being created = "<<num_thr<<"\n";
 
         /* Initialize thread creation attributes */
         rc = pthread_attr_init(&attr);
 
         if (rc != 0) {
-             dout(L_ERR)<<" error in pthread_attr_init \n";
+             dbout(L_ERR)<<" error in pthread_attr_init \n";
 	     goto out;
 	}
 
@@ -166,11 +166,11 @@ int main(int argc, char *argv[])
         	rc = pthread_create((pthread_t*)&threads[tnum], &attr, &process,
 			             &t_args[tnum]);
                 if (rc != 0) {
-        		dout(L_ERR)<<" error in pthread_create \n";
+        		dbout(L_ERR)<<" error in pthread_create \n";
 			goto out;
 		}
 
-		dout(L_FULLDEBUG)<<"Created thread (thread-id:"<<tnum<<")\n";
+		dbout(L_FULLDEBUG)<<"Created thread (thread-id:"<<tnum<<")\n";
         }
 
         /* Destroy the thread attributes object, since it is no
@@ -178,7 +178,7 @@ int main(int argc, char *argv[])
 
         rc = pthread_attr_destroy(&attr);
         if (rc != 0) {
-        	dout(L_EVENT)<<"error in pthread_attr_destroy \n";
+        	dbout(L_EVENT)<<"error in pthread_attr_destroy \n";
 	}
 
         /* Now join with each thread, and display its returned value */
@@ -186,9 +186,9 @@ int main(int argc, char *argv[])
         for (tnum = 0; tnum < num_thr; tnum++) {
         	rc = pthread_join(threads[tnum], &res);
                 if (rc != 0)
-                	dout(L_ERR)<<"error in pthread_join \n";
+                	dbout(L_ERR)<<"error in pthread_join \n";
 		else
-               		dout(L_EVENT)<<"Joined with thread "<<tnum<<"\n";
+               		dbout(L_EVENT)<<"Joined with thread "<<tnum<<"\n";
          }
 
 out:

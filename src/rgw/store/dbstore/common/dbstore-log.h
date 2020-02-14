@@ -25,6 +25,6 @@ extern ostream *dbout;
 
 #define dbout_prefix *dbout<<__PRETTY_FUNCTION__<<":-"
 
-#define dout(n) if (n <= LogLevel) dbout_prefix
+#define dbout(n) if (n <= LogLevel) dbout_prefix
 
 #endif

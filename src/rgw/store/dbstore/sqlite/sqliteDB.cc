@@ -11,13 +11,13 @@ do {							\
 	sqlite3_prepare_v2 (*sdb, schema.c_str(), 	\
 		            -1, &stmt , NULL);		\
 	if (!stmt) {					\
-	        dout(L_ERR)<<"failed to prepare statement " \
+	        dbout(L_ERR)<<"failed to prepare statement " \
 	       		   <<"for Op("<<Op<<"); Errmsg -"\
 	       		   <<sqlite3_errmsg(*sdb)<<"\n";\
 		ret = -1;				\
 		goto out;				\
 	}						\
-	dout(L_DEBUG)<<"Successfully Prepared stmt for Op("<<Op	\
+	dbout(L_DEBUG)<<"Successfully Prepared stmt for Op("<<Op	\
 		 	 <<") schema("<<schema<<") stmt("<<stmt<<")\n";	\
 	ret = 0;					\
 } while(0);
@@ -27,14 +27,14 @@ do {						\
 	index = sqlite3_bind_parameter_index(stmt, str);     \
 							     \
 	if (index <=0)  {				     \
-	        dout(L_ERR)<<"failed to fetch bind parameter"\
+	        dbout(L_ERR)<<"failed to fetch bind parameter"\
 	       	  	   " index for str("<<str<<") in "   \
 			   <<"stmt("<<stmt<<"); Errmsg -"    \
 	       		   <<sqlite3_errmsg(*sdb)<<"\n"; 	     \
 		rc = -1;				     \
 		goto out;				     \
 	}						     \
-	dout(L_FULLDEBUG)<<"Bind parameter index for str("  \
+	dbout(L_FULLDEBUG)<<"Bind parameter index for str("  \
 			 <<str<<") in stmt("<<stmt<<") is "  \
        		         <<index<<"\n";			     \
 }while(0);
@@ -44,7 +44,7 @@ do {								\
 	rc = sqlite3_bind_text(stmt, index, str, -1, SQLITE_STATIC); 	\
 								\
 	if (rc != SQLITE_OK) {					      	\
-	        dout(L_ERR)<<"sqlite bind text failed for index("     	\
+	        dbout(L_ERR)<<"sqlite bind text failed for index("     	\
 			   <<index<<"), str("<<str<<") in stmt("   	\
 			   <<stmt<<"); Errmsg - "<<sqlite3_errmsg(*sdb) \
 			   <<"\n";				\
@@ -58,7 +58,7 @@ do {								\
 	rc = sqlite3_bind_int(stmt, index, num);		\
 								\
 	if (rc != SQLITE_OK) {					\
-	        dout(L_ERR)<<"sqlite bind int failed for index("     	\
+	        dbout(L_ERR)<<"sqlite bind int failed for index("     	\
 			   <<index<<"), num("<<num<<") in stmt("   	\
 			   <<stmt<<"); Errmsg - "<<sqlite3_errmsg(*sdb) \
 			   <<"\n";				\
@@ -72,7 +72,7 @@ do {								\
 	rc = sqlite3_bind_blob(stmt, index, blob, size, NULL);  \
 								\
 	if (rc != SQLITE_OK) {					\
-	        dout(L_ERR)<<"sqlite bind blob failed for index("     	\
+	        dbout(L_ERR)<<"sqlite bind blob failed for index("     	\
 			   <<index<<"), blob("<<blob<<") in stmt("   	\
 			   <<stmt<<"); Errmsg - "<<sqlite3_errmsg(*sdb) \
 			   <<"\n";				\
@@ -88,13 +88,13 @@ do{						\
 	}					\
 						\
 	if (!stmt) {				\
-		dout(L_ERR)<<"No prepared statement \n";	\
+		dbout(L_ERR)<<"No prepared statement \n";	\
 		goto out;			\
 	}					\
 						\
 	ret = Bind(params);			\
 	if (ret) {				\
-		dout(L_ERR)<<"Bind parameters failed for stmt("	\
+		dbout(L_ERR)<<"Bind parameters failed for stmt("	\
 			   <<stmt<<") \n";		\
 		goto out;			\
 	}					\
@@ -104,7 +104,7 @@ do{						\
 	Reset(stmt);				\
 						\
 	if (ret) {				\
-		dout(L_ERR)<<"Execution failed for stmt("	\
+		dbout(L_ERR)<<"Execution failed for stmt("	\
 			   <<stmt<<")\n";		\
 		goto out;			\
 	}					\
@@ -173,37 +173,37 @@ static int get_objectdata(sqlite3_stmt *stmt) {
 	return 0;
 }
 
-int SQLiteDB::InitializeRGWOps()
+int SQLiteDB::InitializeDBOps()
 {
 	string tenant = getTenant();
 
         (void)createTables();
-        rgwops.InsertUser = new SQLInsertUser(tenant, this);
-        rgwops.RemoveUser = new SQLRemoveUser(tenant, this);
-        rgwops.ListUser = new SQLListUser(tenant, this);
-        rgwops.InsertBucket = new SQLInsertBucket(tenant, this);
-        rgwops.RemoveBucket = new SQLRemoveBucket(tenant, this);
-        rgwops.ListBucket = new SQLListBucket(tenant, this);
+        dbops.InsertUser = new SQLInsertUser(tenant, this);
+        dbops.RemoveUser = new SQLRemoveUser(tenant, this);
+        dbops.ListUser = new SQLListUser(tenant, this);
+        dbops.InsertBucket = new SQLInsertBucket(tenant, this);
+        dbops.RemoveBucket = new SQLRemoveBucket(tenant, this);
+        dbops.ListBucket = new SQLListBucket(tenant, this);
 
 	return 0;
 }
 
-int SQLiteDB::FreeRGWOps()
+int SQLiteDB::FreeDBOps()
 {
-        delete rgwops.InsertUser;
-        delete rgwops.RemoveUser;
-        delete rgwops.ListUser;
-        delete rgwops.InsertBucket;
-        delete rgwops.RemoveBucket;
-        delete rgwops.ListBucket;
+        delete dbops.InsertUser;
+        delete dbops.RemoveUser;
+        delete dbops.ListUser;
+        delete dbops.InsertBucket;
+        delete dbops.RemoveBucket;
+        delete dbops.ListBucket;
 
 	return 0;
 }
 
-int InitPrepareParams(RGWOpPrepareParams *params)
+int InitPrepareParams(DBOpPrepareParams *params)
 {
 	if (!params) {
-		dout(L_ERR)<<"PrepareParams passed is NULL\n";
+		dbout(L_ERR)<<"PrepareParams passed is NULL\n";
 		return -1;
 	}
 
@@ -229,7 +229,7 @@ void *SQLiteDB::openDB()
 
 	dbname	= getDBname();
 	if (dbname.empty()) {
-		dout(L_ERR)<<"dbname is NULL\n";
+		dbout(L_ERR)<<"dbname is NULL\n";
 		goto out;
 	}
 
@@ -240,10 +240,10 @@ void *SQLiteDB::openDB()
 			     NULL);
 
         if (rc) {
-		dout(L_ERR)<<"Cant open "<<dbname<<"; Errmsg - "\
+		dbout(L_ERR)<<"Cant open "<<dbname<<"; Errmsg - "\
 			   <<sqlite3_errmsg(db)<<"\n";
         } else {
-                dout(L_DEBUG)<<"Opened database("<<dbname<<") successfully\n";
+                dbout(L_DEBUG)<<"Opened database("<<dbname<<") successfully\n";
         }
 
 	exec("PRAGMA foreign_keys=ON", NULL);
@@ -286,7 +286,7 @@ again:
 		ret = sqlite3_step(stmt);
 
 		if ((ret != SQLITE_DONE) && (ret != SQLITE_ROW)) {
-			dout(L_ERR)<<"sqlite step failed for stmt("<<stmt \
+			dbout(L_ERR)<<"sqlite step failed for stmt("<<stmt \
 				   <<"); Errmsg - "<<sqlite3_errmsg(db)<<"\n";
 			return -1;
 		} else if (ret == SQLITE_ROW) {
@@ -295,7 +295,7 @@ again:
 			goto again;
 		}
 
-	dout(L_FULLDEBUG)<<"sqlite step successfully executed for stmt(" \
+	dbout(L_FULLDEBUG)<<"sqlite step successfully executed for stmt(" \
 			 <<stmt<<") \n";
 
 	return 0;
@@ -312,13 +312,13 @@ int SQLiteDB::exec(const char *schema,
 
 	ret = sqlite3_exec(db, schema, callback, 0, &errmsg);
         if (ret != SQLITE_OK) {
-		dout(L_ERR)<<"sqlite exec failed for schema("<<schema \
+		dbout(L_ERR)<<"sqlite exec failed for schema("<<schema \
 				   <<"); Errmsg - "<<errmsg<<"\n";
                 sqlite3_free(errmsg);
 		goto out;
         }
 	ret = 0;
-	dout(L_FULLDEBUG)<<"sqlite exec successfully processed for schema(" \
+	dbout(L_FULLDEBUG)<<"sqlite exec successfully processed for schema(" \
 			<<schema<<")\n";
 out:
 	return ret;
@@ -328,7 +328,7 @@ int SQLiteDB::createTables()
 {
 	int ret = -1;
 	int cu, cb = -1;
-	RGWOpParams params = {};
+	DBOpParams params = {};
 
 	params.user_table = getUserTable();
 	params.bucket_table = getBucketTable();
@@ -346,13 +346,13 @@ out:
 			DeleteUserTable(&params);
 		if (cb)
 			DeleteBucketTable(&params);
-		dout(L_ERR)<<"Creation of tables failed \n";
+		dbout(L_ERR)<<"Creation of tables failed \n";
 	}
 
 	return ret;
 }
 
-int SQLiteDB::createUserTable(RGWOpParams *params)
+int SQLiteDB::createUserTable(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -361,14 +361,14 @@ int SQLiteDB::createUserTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		dout(L_ERR)<<"CreateUserTable failed \n";
+		dbout(L_ERR)<<"CreateUserTable failed \n";
 
-	dout(L_FULLDEBUG)<<"CreateUserTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"CreateUserTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::createBucketTable(RGWOpParams *params)
+int SQLiteDB::createBucketTable(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -377,14 +377,14 @@ int SQLiteDB::createBucketTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		dout(L_ERR)<<"CreateBucketTable failed \n";
+		dbout(L_ERR)<<"CreateBucketTable failed \n";
 
-	dout(L_FULLDEBUG)<<"CreateBucketTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"CreateBucketTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::createObjectTable(RGWOpParams *params)
+int SQLiteDB::createObjectTable(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -393,14 +393,14 @@ int SQLiteDB::createObjectTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		dout(L_ERR)<<"CreateObjectTable failed \n";
+		dbout(L_ERR)<<"CreateObjectTable failed \n";
 
-	dout(L_FULLDEBUG)<<"CreateObjectTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"CreateObjectTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::createObjectDataTable(RGWOpParams *params)
+int SQLiteDB::createObjectDataTable(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -409,14 +409,14 @@ int SQLiteDB::createObjectDataTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		dout(L_ERR)<<"CreateObjectDataTable failed \n";
+		dbout(L_ERR)<<"CreateObjectDataTable failed \n";
 
-	dout(L_FULLDEBUG)<<"CreateObjectDataTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"CreateObjectDataTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::DeleteUserTable(RGWOpParams *params)
+int SQLiteDB::DeleteUserTable(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -425,14 +425,14 @@ int SQLiteDB::DeleteUserTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		dout(L_ERR)<<"DeleteUserTable failed \n";
+		dbout(L_ERR)<<"DeleteUserTable failed \n";
 
-	dout(L_FULLDEBUG)<<"DeleteUserTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"DeleteUserTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::DeleteBucketTable(RGWOpParams *params)
+int SQLiteDB::DeleteBucketTable(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -441,14 +441,14 @@ int SQLiteDB::DeleteBucketTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		dout(L_ERR)<<"DeletebucketTable failed \n";
+		dbout(L_ERR)<<"DeletebucketTable failed \n";
 
-	dout(L_FULLDEBUG)<<"DeletebucketTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"DeletebucketTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::DeleteObjectTable(RGWOpParams *params)
+int SQLiteDB::DeleteObjectTable(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -457,14 +457,14 @@ int SQLiteDB::DeleteObjectTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		dout(L_ERR)<<"DeleteObjectTable failed \n";
+		dbout(L_ERR)<<"DeleteObjectTable failed \n";
 
-	dout(L_FULLDEBUG)<<"DeleteObjectTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"DeleteObjectTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::DeleteObjectDataTable(RGWOpParams *params)
+int SQLiteDB::DeleteObjectDataTable(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -473,14 +473,14 @@ int SQLiteDB::DeleteObjectDataTable(RGWOpParams *params)
 
 	ret = exec(schema.c_str(), NULL);
 	if (ret)
-		dout(L_ERR)<<"DeleteObjectDataTable failed \n";
+		dbout(L_ERR)<<"DeleteObjectDataTable failed \n";
 
-	dout(L_FULLDEBUG)<<"DeleteObjectDataTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"DeleteObjectDataTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::ListAllUsers(RGWOpParams *params)
+int SQLiteDB::ListAllUsers(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -489,14 +489,14 @@ int SQLiteDB::ListAllUsers(RGWOpParams *params)
 	cout<<"########### Listing all Users #############\n";
 	ret = exec(schema.c_str(), &list_callback);
 	if (ret)
-		dout(L_ERR)<<"ListUsertable failed \n";
+		dbout(L_ERR)<<"ListUsertable failed \n";
 
-	dout(L_FULLDEBUG)<<"ListUserTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"ListUserTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::ListAllBuckets(RGWOpParams *params)
+int SQLiteDB::ListAllBuckets(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -506,14 +506,14 @@ int SQLiteDB::ListAllBuckets(RGWOpParams *params)
 	cout<<"########### Listing all Buckets #############\n";
 	ret = exec(schema.c_str(), &list_callback);
 	if (ret)
-		dout(L_ERR)<<"Listbuckettable failed \n";
+		dbout(L_ERR)<<"Listbuckettable failed \n";
 
-	dout(L_FULLDEBUG)<<"ListbucketTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"ListbucketTable suceeded \n";
 out:
 	return ret;
 }
 
-int SQLiteDB::ListAllObjects(RGWOpParams *params)
+int SQLiteDB::ListAllObjects(DBOpParams *params)
 {
 	int ret = -1;
 	string schema;
@@ -527,7 +527,7 @@ int SQLiteDB::ListAllObjects(RGWOpParams *params)
 	objectmap = getObjectMap();
 
 	if (objectmap.empty())
-		dout(L_DEBUG)<<"objectmap empty \n";
+		dbout(L_DEBUG)<<"objectmap empty \n";
 
 	for (iter = objectmap.begin(); iter != objectmap.end(); ++iter) {
 		bucket = iter->first;
@@ -537,9 +537,9 @@ int SQLiteDB::ListAllObjects(RGWOpParams *params)
 
 		ret = exec(schema.c_str(), &list_callback);
 		if (ret)
-			dout(L_ERR)<<"ListObjecttable failed \n";
+			dbout(L_ERR)<<"ListObjecttable failed \n";
 
-		dout(L_FULLDEBUG)<<"ListObjectTable suceeded \n";
+		dbout(L_FULLDEBUG)<<"ListObjectTable suceeded \n";
 	}
 
 out:
@@ -570,14 +570,14 @@ int SQLObjectOp::FreeObjectOps()
 	return 0;
 }
 
-int SQLInsertUser::Prepare(struct RGWOpParams *params)
+int SQLInsertUser::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLInsertUser - no db\n";
+		dbout(L_ERR)<<"In SQLInsertUser - no db\n";
 		goto out;
 	}
 
@@ -591,11 +591,11 @@ out:
 	return ret;
 }
 
-int SQLInsertUser::Bind(struct RGWOpParams *params)
+int SQLInsertUser::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.user_name.c_str(), sdb);
 
@@ -605,7 +605,7 @@ out:
 	return rc;
 }
 
-int SQLInsertUser::Execute(struct RGWOpParams *params)
+int SQLInsertUser::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
@@ -614,14 +614,14 @@ out:
 	return ret;
 }
 
-int SQLRemoveUser::Prepare(struct RGWOpParams *params)
+int SQLRemoveUser::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLRemoveUser - no db\n";
+		dbout(L_ERR)<<"In SQLRemoveUser - no db\n";
 		goto out;
 	}
 
@@ -635,11 +635,11 @@ out:
 	return ret;
 }
 
-int SQLRemoveUser::Bind(struct RGWOpParams *params)
+int SQLRemoveUser::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.user_name.c_str(), sdb);
 
@@ -649,7 +649,7 @@ out:
 	return rc;
 }
 
-int SQLRemoveUser::Execute(struct RGWOpParams *params)
+int SQLRemoveUser::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
@@ -658,14 +658,14 @@ out:
 	return ret;
 }
 
-int SQLListUser::Prepare(struct RGWOpParams *params)
+int SQLListUser::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLListUser - no db\n";
+		dbout(L_ERR)<<"In SQLListUser - no db\n";
 		goto out;
 	}
 
@@ -679,11 +679,11 @@ out:
 	return ret;
 }
 
-int SQLListUser::Bind(struct RGWOpParams *params)
+int SQLListUser::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.user_name.c_str(), sdb);
 
@@ -692,7 +692,7 @@ out:
 	return rc;
 }
 
-int SQLListUser::Execute(struct RGWOpParams *params)
+int SQLListUser::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
@@ -701,14 +701,14 @@ out:
 	return ret;
 }
 
-int SQLInsertBucket::Prepare(struct RGWOpParams *params)
+int SQLInsertBucket::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLInsertBucket - no db\n";
+		dbout(L_ERR)<<"In SQLInsertBucket - no db\n";
 		goto out;
 	}
 
@@ -723,11 +723,11 @@ out:
 	return ret;
 }
 
-int SQLInsertBucket::Bind(struct RGWOpParams *params)
+int SQLInsertBucket::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.user_name.c_str(), sdb);
 
@@ -741,7 +741,7 @@ out:
 	return rc;
 }
 
-int SQLInsertBucket::Execute(struct RGWOpParams *params)
+int SQLInsertBucket::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 	class SQLObjectOp *ObPtr = NULL;
@@ -755,14 +755,14 @@ out:
 	return ret;
 }
 
-int SQLRemoveBucket::Prepare(struct RGWOpParams *params)
+int SQLRemoveBucket::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLRemoveBucket - no db\n";
+		dbout(L_ERR)<<"In SQLRemoveBucket - no db\n";
 		goto out;
 	}
 
@@ -777,11 +777,11 @@ out:
 	return ret;
 }
 
-int SQLRemoveBucket::Bind(struct RGWOpParams *params)
+int SQLRemoveBucket::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.bucket_name.c_str(), sdb);
 
@@ -791,7 +791,7 @@ out:
 	return rc;
 }
 
-int SQLRemoveBucket::Execute(struct RGWOpParams *params)
+int SQLRemoveBucket::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 	class SQLObjectOp *ObPtr = NULL;
@@ -803,14 +803,14 @@ out:
 	return ret;
 }
 
-int SQLListBucket::Prepare(struct RGWOpParams *params)
+int SQLListBucket::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLListBucket - no db\n";
+		dbout(L_ERR)<<"In SQLListBucket - no db\n";
 		goto out;
 	}
 
@@ -825,11 +825,11 @@ out:
 	return ret;
 }
 
-int SQLListBucket::Bind(struct RGWOpParams *params)
+int SQLListBucket::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.bucket_name.c_str(), sdb);
 
@@ -839,7 +839,7 @@ out:
 	return rc;
 }
 
-int SQLListBucket::Execute(struct RGWOpParams *params)
+int SQLListBucket::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
@@ -848,16 +848,16 @@ out:
 	return ret;
 }
 
-int SQLInsertObject::Prepare(struct RGWOpParams *params)
+int SQLInsertObject::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 	string tenant_name = getTenant();
-	struct RGWOpParams copy = *params;
+	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLInsertObject - no db\n";
+		dbout(L_ERR)<<"In SQLInsertObject - no db\n";
 		goto out;
 	}
 
@@ -877,11 +877,11 @@ out:
 	return ret;
 }
 
-int SQLInsertObject::Bind(struct RGWOpParams *params)
+int SQLInsertObject::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
 
@@ -895,7 +895,7 @@ out:
 	return rc;
 }
 
-int SQLInsertObject::Execute(struct RGWOpParams *params)
+int SQLInsertObject::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
@@ -904,16 +904,16 @@ out:
 	return ret;
 }
 
-int SQLRemoveObject::Prepare(struct RGWOpParams *params)
+int SQLRemoveObject::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 	string tenant_name = getTenant();
-	struct RGWOpParams copy = *params;
+	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLRemoveObject - no db\n";
+		dbout(L_ERR)<<"In SQLRemoveObject - no db\n";
 		goto out;
 	}
 
@@ -933,11 +933,11 @@ out:
 	return ret;
 }
 
-int SQLRemoveObject::Bind(struct RGWOpParams *params)
+int SQLRemoveObject::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
 
@@ -951,7 +951,7 @@ out:
 	return rc;
 }
 
-int SQLRemoveObject::Execute(struct RGWOpParams *params)
+int SQLRemoveObject::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
@@ -960,16 +960,16 @@ out:
 	return ret;
 }
 
-int SQLListObject::Prepare(struct RGWOpParams *params)
+int SQLListObject::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 	string tenant_name = getTenant();
-	struct RGWOpParams copy = *params;
+	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLListObject - no db\n";
+		dbout(L_ERR)<<"In SQLListObject - no db\n";
 		goto out;
 	}
 
@@ -990,11 +990,11 @@ out:
 	return ret;
 }
 
-int SQLListObject::Bind(struct RGWOpParams *params)
+int SQLListObject::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
 
@@ -1008,7 +1008,7 @@ out:
 	return rc;
 }
 
-int SQLListObject::Execute(struct RGWOpParams *params)
+int SQLListObject::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
@@ -1017,16 +1017,16 @@ out:
 	return ret;
 }
 
-int SQLPutObjectData::Prepare(struct RGWOpParams *params)
+int SQLPutObjectData::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 	string tenant_name = getTenant();
-	struct RGWOpParams copy = *params;
+	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLPutObjectData - no db\n";
+		dbout(L_ERR)<<"In SQLPutObjectData - no db\n";
 		goto out;
 	}
 
@@ -1050,11 +1050,11 @@ out:
 	return ret;
 }
 
-int SQLPutObjectData::Bind(struct RGWOpParams *params)
+int SQLPutObjectData::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
 
@@ -1080,7 +1080,7 @@ out:
 	return rc;
 }
 
-int SQLPutObjectData::Execute(struct RGWOpParams *params)
+int SQLPutObjectData::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
@@ -1089,16 +1089,16 @@ out:
 	return ret;
 }
 
-int SQLGetObjectData::Prepare(struct RGWOpParams *params)
+int SQLGetObjectData::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 	string tenant_name = getTenant();
-	struct RGWOpParams copy = *params;
+	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLGetObjectData - no db\n";
+		dbout(L_ERR)<<"In SQLGetObjectData - no db\n";
 		goto out;
 	}
 
@@ -1122,11 +1122,11 @@ out:
 	return ret;
 }
 
-int SQLGetObjectData::Bind(struct RGWOpParams *params)
+int SQLGetObjectData::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
 
@@ -1139,7 +1139,7 @@ out:
 	return rc;
 }
 
-int SQLGetObjectData::Execute(struct RGWOpParams *params)
+int SQLGetObjectData::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
@@ -1148,16 +1148,16 @@ out:
 	return ret;
 }
 
-int SQLDeleteObjectData::Prepare(struct RGWOpParams *params)
+int SQLDeleteObjectData::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 	string tenant_name = getTenant();
-	struct RGWOpParams copy = *params;
+	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
-		dout(L_ERR)<<"In SQLDeleteObjectData - no db\n";
+		dbout(L_ERR)<<"In SQLDeleteObjectData - no db\n";
 		goto out;
 	}
 
@@ -1181,11 +1181,11 @@ out:
 	return ret;
 }
 
-int SQLDeleteObjectData::Bind(struct RGWOpParams *params)
+int SQLDeleteObjectData::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
-	struct RGWOpPrepareParams p_params = PrepareParams;
+	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
 
@@ -1198,7 +1198,7 @@ out:
 	return rc;
 }
 
-int SQLDeleteObjectData::Execute(struct RGWOpParams *params)
+int SQLDeleteObjectData::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
