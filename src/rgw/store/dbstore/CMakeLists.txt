@@ -25,6 +25,8 @@ set(dbstore_srcs
     common/dbstore.cc)
 
 set(main_srcs
+    dbstore_mgr.h
+    dbstore_mgr.cc
     main.cc)
 
 add_library(dbstore_lib ${dbstore_srcs})
