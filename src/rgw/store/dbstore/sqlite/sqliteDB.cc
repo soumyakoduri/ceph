@@ -178,12 +178,12 @@ int SQLiteDB::InitializeDBOps()
 	string tenant = getTenant();
 
         (void)createTables();
-        dbops.InsertUser = new SQLInsertUser(tenant, this);
-        dbops.RemoveUser = new SQLRemoveUser(tenant, this);
-        dbops.ListUser = new SQLListUser(tenant, this);
-        dbops.InsertBucket = new SQLInsertBucket(tenant, this);
-        dbops.RemoveBucket = new SQLRemoveBucket(tenant, this);
-        dbops.ListBucket = new SQLListBucket(tenant, this);
+        dbops.InsertUser = new SQLInsertUser(tenant, &this->db);
+        dbops.RemoveUser = new SQLRemoveUser(tenant, &this->db);
+        dbops.ListUser = new SQLListUser(tenant, &this->db);
+        dbops.InsertBucket = new SQLInsertBucket(tenant, &this->db);
+        dbops.RemoveBucket = new SQLRemoveBucket(tenant, &this->db);
+        dbops.ListBucket = new SQLListBucket(tenant, &this->db);
 
 	return 0;
 }
@@ -233,7 +233,7 @@ void *SQLiteDB::openDB()
 		goto out;
 	}
 
-	rc = sqlite3_open_v2(dbname.c_str(), &db,
+	rc = sqlite3_open_v2(dbname.c_str(), (sqlite3**)&db,
 			     SQLITE_OPEN_READWRITE |
 			     SQLITE_OPEN_CREATE |
 			     SQLITE_OPEN_FULLMUTEX,
@@ -241,7 +241,7 @@ void *SQLiteDB::openDB()
 
         if (rc) {
 		dbout(L_ERR)<<"Cant open "<<dbname<<"; Errmsg - "\
-			   <<sqlite3_errmsg(db)<<"\n";
+			   <<sqlite3_errmsg((sqlite3*)db)<<"\n";
         } else {
                 dbout(L_DEBUG)<<"Opened database("<<dbname<<") successfully\n";
         }
@@ -287,7 +287,7 @@ again:
 
 		if ((ret != SQLITE_DONE) && (ret != SQLITE_ROW)) {
 			dbout(L_ERR)<<"sqlite step failed for stmt("<<stmt \
-				   <<"); Errmsg - "<<sqlite3_errmsg(db)<<"\n";
+				   <<"); Errmsg - "<<sqlite3_errmsg((sqlite3*)db)<<"\n";
 			return -1;
 		} else if (ret == SQLITE_ROW) {
 			if (cbk)
@@ -310,7 +310,7 @@ int SQLiteDB::exec(const char *schema,
 	if (!db)
 		goto out;
 
-	ret = sqlite3_exec(db, schema, callback, 0, &errmsg);
+	ret = sqlite3_exec((sqlite3*)db, schema, callback, 0, &errmsg);
         if (ret != SQLITE_OK) {
 		dbout(L_ERR)<<"sqlite exec failed for schema("<<schema \
 				   <<"); Errmsg - "<<errmsg<<"\n";

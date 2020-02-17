@@ -283,6 +283,9 @@ class DBstore {
 			       // made further granular by taking separate
 			       // locks for objectmap and db operations etc.
 
+        protected:
+	void *db;
+
 	public:	
 	DBstore(string tenant_name) : tenant(tenant_name),
        				user_table(tenant_name+".user.table"),
@@ -295,7 +298,6 @@ class DBstore {
 	string getUserTable();
 	string getBucketTable();
 	map<string, class ObjectOp*> getObjectMap();
-	void *db; // Backend database handle, make it private?
 
 	struct DBOps dbops; // DB operations, make it private?
 
