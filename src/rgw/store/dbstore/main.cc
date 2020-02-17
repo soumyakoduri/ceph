@@ -2,16 +2,12 @@
 #include <sqlite3.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dbstore.h>
 #include <pthread.h>
-#include <dbstore-log.h>
 
-#ifdef SQLITE_ENABLED
-#include <sqliteDB.h>
-#endif
+#include "dbstore_mgr.h"
 
 struct thr_args {
-	class DBstore *db;
+	class DBstore *dbs;
 	int thr_id;
 };
 
@@ -19,7 +15,7 @@ void* process(void *arg)
 {
 	struct thr_args *t_args = (struct thr_args*)arg;
 
-	class DBstore *db = t_args->db;
+	class DBstore *db = t_args->dbs;
 	int thr_id = t_args->thr_id;
 
 	dbout(L_EVENT)<<"Entered thread:"<<thr_id<<"\n";
@@ -120,12 +116,13 @@ int main(int argc, char *argv[])
 	string logfile;
 	int loglevel;
 
-	class DBstore *db;
+	class DBstoreManager dbsm;
+        class DBstore *dbs;
 	int rc = 0, tnum = 0;
 	void *res;
 
 	pthread_attr_t attr;
-	int num_thr = 2;
+	int num_thr = 10;
 	pthread_t threads[num_thr];
 	struct thr_args t_args[num_thr];
 
@@ -135,19 +132,7 @@ int main(int argc, char *argv[])
 		loglevel = (atoi)(argv[2]);
 	}
 
-#ifdef SQLITE_ENABLED
-	db = new SQLiteDB(tenant);
-#else
-	db = new DBstore(tenant);
-#endif
-
-	rc = db->Initialize(logfile, loglevel);
-
-	if (rc != 0) {
-		cout<<"DBstore initialization failed for tenant:" \
-			   <<tenant<<"\n";
-		goto out;
-	}
+        dbs = dbsm.getDBstore(tenant, true);
 
 	dbout(L_EVENT)<<"No. of threads being created = "<<num_thr<<"\n";
 
@@ -161,7 +146,7 @@ int main(int argc, char *argv[])
 
 
 	for (tnum = 0; tnum < num_thr; tnum++) {
-		t_args[tnum].db = db;
+		t_args[tnum].dbs = dbs;
 		t_args[tnum].thr_id = tnum;
         	rc = pthread_create((pthread_t*)&threads[tnum], &attr, &process,
 			             &t_args[tnum]);
@@ -192,8 +177,7 @@ int main(int argc, char *argv[])
          }
 
 out:
-	db->Destroy();
-	delete db;
+        dbsm.destroyAllHandles();
 
 	return 0;
 }
