@@ -9,9 +9,13 @@
 #include <string>
 #include <stdio.h>
 #include <iostream>
-#include <fmt/format.h>
+// this seems safe to use, at least for now--arguably, we should
+// prefer header-only fmt, in general
+#undef FMT_HEADER_ONLY
+#define FMT_HEADER_ONLY 1
+#include "fmt/format.h"
 #include <map>
-#include <dbstore-log.h>
+#include "dbstore-log.h"
 
 using namespace std;
 class DBstore;
@@ -117,6 +121,7 @@ class DBOp {
 
 	public:
 	DBOp() {};
+        virtual ~DBOp() {};
 
 	string CreateTableSchema(string type, DBOpParams *params);
 	string DeleteTableSchema(string table_name);

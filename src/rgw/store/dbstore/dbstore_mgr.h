@@ -3,15 +3,22 @@
 
 #pragma once
 
-#include <dbstore.h>
-#include <sqliteDB.h>
+#include <map>
+#include <errno.h>
+#include <stdlib.h>
+#include <string>
+#include <stdio.h>
+#include <iostream>
+
+using namespace std;
+class DBstore;
 
 class DBstoreManager {
 private:
   map<string, DBstore*> DBstoreHandles;
 
 public:
-  DBstoreManager(): DBstoreHandles() {}
+  DBstoreManager(): DBstoreHandles() {};
   ~DBstoreManager() { destroyAllHandles(); };
 
   /* XXX: TBD based on testing

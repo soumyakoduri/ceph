@@ -125,6 +125,7 @@ set(librgw_common_srcs
   rgw_role.cc
   rgw_sal.cc
   rgw_sal_rados.cc
+  rgw_sal_dbstore.cc
   rgw_string.cc
   rgw_tag.cc
   rgw_tag_s3.cc
@@ -197,6 +198,10 @@ endif()
 
 if(WITH_JAEGER)
   add_dependencies(rgw_common jaegertracing::libjaegertracing)
+endif()
+
+if(WITH_RADOSGW_DBSTORE)
+  add_subdirectory(store/dbstore)
 endif()
 
 set(rgw_a_srcs
@@ -282,6 +287,10 @@ list(APPEND rgw_libs ${LUA_LIBRARIES})
 
 if(WITH_RADOSGW_LUA_PACKAGES)
   list(APPEND rgw_libs Boost::filesystem)
+endif()
+
+if(WITH_RADOSGW_DBSTORE)
+  target_link_libraries(rgw_a PRIVATE dbstore)
 endif()
 
 set(rgw_schedulers_srcs
