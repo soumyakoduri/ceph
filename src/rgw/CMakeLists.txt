@@ -160,6 +160,10 @@ if(WITH_LTTNG)
   add_dependencies(rgw_common rgw_op-tp rgw_rados-tp)
 endif()
 
+if(WITH_RADOSGW_DBSTORE)
+  add_subdirectory(store/dbstore)
+endif()
+
 set(rgw_a_srcs
   rgw_auth_keystone.cc
   rgw_client_io.cc
@@ -234,6 +238,10 @@ set(rgw_libs rgw_a)
 if(WITH_RADOSGW_AMQP_ENDPOINT)
   # used by rgw_amqp.cc
   list(APPEND rgw_libs RabbitMQ::RabbitMQ)
+endif()
+
+if(WITH_RADOSGW_DBSTORE)
+  target_link_libraries(rgw_a PRIVATE dbstore)
 endif()
 
 set(rgw_schedulers_srcs

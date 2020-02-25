@@ -5,6 +5,7 @@
 #include <pthread.h>
 
 #include "dbstore_mgr.h"
+#include "dbstore.h"
 
 struct thr_args {
 	class DBstore *dbs;
@@ -170,10 +171,11 @@ int main(int argc, char *argv[])
 
         for (tnum = 0; tnum < num_thr; tnum++) {
         	rc = pthread_join(threads[tnum], &res);
-                if (rc != 0)
+                if (rc != 0) {
                 	dbout(L_ERR)<<"error in pthread_join \n";
-		else
+                } else {
                		dbout(L_EVENT)<<"Joined with thread "<<tnum<<"\n";
+                }
          }
 
 out:

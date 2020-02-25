@@ -18,6 +18,10 @@
 #include "rgw_rados.h"
 #include "rgw_user.h"
 
+#ifdef WITH_RADOSGW_DBSTORE
+#include "store/dbstore/dbstore_mgr.h"
+#endif
+
 namespace rgw { namespace sal {
 
 #define RGW_SAL_VERSION 1
@@ -286,6 +290,20 @@ class RGWRadosStore : public RGWStore {
 
     virtual CephContext *ctx(void) { return rados->ctx(); }
 };
+
+#ifdef WITH_RADOSGW_DBSTORE
+
+class RGWDBStoreManager : public RGWStore {
+private:
+    class DBstoreManager *dbsm;
+public:
+    RGWDBStoreManager(): dbsm(nullptr) {}
+    ~RGWDBStoreManager() { delete dbsm; }
+    
+    void finalize(void) override;
+};
+
+#endif
 
 } } // namespace rgw::sal
 

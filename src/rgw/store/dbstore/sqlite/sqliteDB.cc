@@ -156,7 +156,6 @@ static int get_objectdata(sqlite3_stmt *stmt) {
 
 	int datalen = 0;
 	const void *blob = NULL;
-	int i = 0;
 
 	blob = sqlite3_column_blob(stmt, 3);
 	datalen = sqlite3_column_bytes(stmt, 3);
@@ -225,7 +224,6 @@ void *SQLiteDB::openDB()
 {
 	string dbname;
         int rc = 0;
-	char *errmsg = NULL;
 
 	dbname	= getDBname();
 	if (dbname.empty()) {
@@ -271,7 +269,7 @@ int SQLiteDB::Reset(sqlite3_stmt *stmt)
 	}
 	sqlite3_clear_bindings(stmt);
 	ret = sqlite3_reset(stmt);
-out:
+
 	return ret;
 }
 
@@ -333,10 +331,10 @@ int SQLiteDB::createTables()
 	params.user_table = getUserTable();
 	params.bucket_table = getBucketTable();
 
-	if (cu = createUserTable(&params))
+	if ((cu = createUserTable(&params)))
 		goto out;
 
-	if (cb = createBucketTable(&params))
+	if ((cb = createBucketTable(&params)))
 		goto out;
 
 	ret = 0;
@@ -364,7 +362,7 @@ int SQLiteDB::createUserTable(DBOpParams *params)
 		dbout(L_ERR)<<"CreateUserTable failed \n";
 
 	dbout(L_FULLDEBUG)<<"CreateUserTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -380,7 +378,7 @@ int SQLiteDB::createBucketTable(DBOpParams *params)
 		dbout(L_ERR)<<"CreateBucketTable failed \n";
 
 	dbout(L_FULLDEBUG)<<"CreateBucketTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -396,7 +394,7 @@ int SQLiteDB::createObjectTable(DBOpParams *params)
 		dbout(L_ERR)<<"CreateObjectTable failed \n";
 
 	dbout(L_FULLDEBUG)<<"CreateObjectTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -412,7 +410,7 @@ int SQLiteDB::createObjectDataTable(DBOpParams *params)
 		dbout(L_ERR)<<"CreateObjectDataTable failed \n";
 
 	dbout(L_FULLDEBUG)<<"CreateObjectDataTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -428,7 +426,7 @@ int SQLiteDB::DeleteUserTable(DBOpParams *params)
 		dbout(L_ERR)<<"DeleteUserTable failed \n";
 
 	dbout(L_FULLDEBUG)<<"DeleteUserTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -444,7 +442,7 @@ int SQLiteDB::DeleteBucketTable(DBOpParams *params)
 		dbout(L_ERR)<<"DeletebucketTable failed \n";
 
 	dbout(L_FULLDEBUG)<<"DeletebucketTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -460,7 +458,7 @@ int SQLiteDB::DeleteObjectTable(DBOpParams *params)
 		dbout(L_ERR)<<"DeleteObjectTable failed \n";
 
 	dbout(L_FULLDEBUG)<<"DeleteObjectTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -476,7 +474,7 @@ int SQLiteDB::DeleteObjectDataTable(DBOpParams *params)
 		dbout(L_ERR)<<"DeleteObjectDataTable failed \n";
 
 	dbout(L_FULLDEBUG)<<"DeleteObjectDataTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -492,7 +490,7 @@ int SQLiteDB::ListAllUsers(DBOpParams *params)
 		dbout(L_ERR)<<"ListUsertable failed \n";
 
 	dbout(L_FULLDEBUG)<<"ListUserTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -509,7 +507,7 @@ int SQLiteDB::ListAllBuckets(DBOpParams *params)
 		dbout(L_ERR)<<"Listbuckettable failed \n";
 
 	dbout(L_FULLDEBUG)<<"ListbucketTable suceeded \n";
-out:
+
 	return ret;
 }
 
@@ -542,7 +540,6 @@ int SQLiteDB::ListAllObjects(DBOpParams *params)
 		dbout(L_FULLDEBUG)<<"ListObjectTable suceeded \n";
 	}
 
-out:
 	return ret;
 }
 
@@ -794,7 +791,6 @@ out:
 int SQLRemoveBucket::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
-	class SQLObjectOp *ObPtr = NULL;
 
 	objectmapDelete(params->bucket_name);
 

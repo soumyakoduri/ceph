@@ -223,6 +223,13 @@ void RGWRadosStore::finalize(void) {
     rados->finalize();
 }
 
+#ifdef WITH_RADOSGW_DBSTORE
+void RGWDBStoreManager::finalize(void)
+{
+    if (dbsm)
+        dbsm->destroyAllHandles();
+}
+#endif
 } // namespace rgw::sal
 
 rgw::sal::RGWRadosStore *RGWStoreManager::init_storage_provider(CephContext *cct, bool use_gc_thread, bool use_lc_thread, bool quota_threads, bool run_sync_thread, bool run_reshard_thread, bool use_cache)

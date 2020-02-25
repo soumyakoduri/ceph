@@ -321,6 +321,9 @@
 /* Defined if rabbitmq-c is available for rgw amqp push endpoint */
 #cmakedefine WITH_RADOSGW_AMQP_ENDPOINT
 
+/* Backend dbstore for Rados Gateway */
+#cmakedefine WITH_RADOSGW_DBSTORE
+
 /* Defined if std::map::merge() is supported */
 #cmakedefine HAVE_STDLIB_MAP_SPLICING
 
