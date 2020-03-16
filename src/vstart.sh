@@ -164,7 +164,7 @@ else
     objectstore="bluestore"
 fi
 ceph_osd=ceph-osd
-rgw_frontend="beast"
+rgw_frontend="civetweb"
 rgw_compression=""
 lockdep=${LOCKDEP:-1}
 spdk_enabled=0 #disable SPDK by default

@@ -292,14 +292,122 @@ class RGWRadosStore : public RGWStore {
 };
 
 #ifdef WITH_RADOSGW_DBSTORE
+class RGWDBStoreManager;
+
+class RGWDBStoreUser : public RGWUser {
+  private:
+    RGWDBStoreManager *store;
+
+  public:
+    RGWDBStoreUser(RGWDBStoreManager *_st, const rgw_user &_u) : RGWUser(_u), store(_st) { }
+    RGWDBStoreUser() {}
+
+    int list_buckets(const string& marker, const string& end_marker,
+				uint64_t max, bool need_stats, RGWBucketList &buckets);
+    RGWSalBucket* add_bucket(rgw_bucket& bucket, ceph::real_time creation_time);
+
+    friend class RGWDBStoreBucket;
+};
+
+class RGWDBStoreObject : public RGWObject {
+  private:
+    RGWDBStoreManager *store;
+    RGWAttrs attrs;
+    RGWAccessControlPolicy acls;
+
+  public:
+    RGWDBStoreObject()
+      : attrs(),
+        acls() {
+    }
+
+    RGWDBStoreObject(RGWDBStoreManager *_st, const rgw_obj_key &_k)
+      : RGWObject(_k),
+	store(_st),
+	attrs(),
+        acls() {
+    }
+
+    int read(off_t offset, off_t length, std::iostream &stream) { return length; }
+    int write(off_t offset, off_t length, std::iostream &stream) { return length; }
+    RGWAttrs& get_attrs(void) { return attrs; }
+    int set_attrs(RGWAttrs &a) { attrs = a; return 0; }
+    int delete_object(void) { return 0; }
+    RGWAccessControlPolicy& get_acl(void) { return acls; }
+    int set_acl(const RGWAccessControlPolicy &acl) { acls = acl; return 0; }
+};
+
+class RGWDBStoreBucket : public RGWSalBucket {
+  private:
+    RGWDBStoreManager *store;
+    RGWDBStoreObject *object;
+    RGWAttrs attrs;
+    RGWAccessControlPolicy acls;
+    RGWDBStoreUser user;
+
+  public:
+    RGWDBStoreBucket()
+      : store(nullptr),
+        object(nullptr),
+        attrs(),
+        acls(),
+	user() {
+    }
+
+    RGWDBStoreBucket(RGWDBStoreManager *_st, RGWUser &_u, const rgw_bucket &_b)
+      : RGWSalBucket(_b),
+	store(_st),
+	object(nullptr),
+        attrs(),
+        acls(),
+	user(dynamic_cast<RGWDBStoreUser&>(_u)) {
+    }
+
+    RGWDBStoreBucket(RGWDBStoreManager *_st, RGWUser &_u, const RGWBucketEnt &_e)
+      : RGWSalBucket(_e),
+	store(_st),
+	object(nullptr),
+        attrs(),
+        acls(),
+	user(dynamic_cast<RGWDBStoreUser&>(_u)) {
+    }
+
+    ~RGWDBStoreBucket() { }
+
+    RGWObject* get_object(const rgw_obj_key &key) { return object; }
+    RGWBucketList* list(void) { return new RGWBucketList(); }
+    RGWObject* create_object(const rgw_obj_key &key /* Attributes */) override;
+    RGWAttrs& get_attrs(void) { return attrs; }
+    int set_attrs(RGWAttrs &a) { attrs = a; return 0; }
+    virtual int remove_bucket(bool delete_children, optional_yield y) override;
+    RGWAccessControlPolicy& get_acl(void) { return acls; }
+    virtual int set_acl(RGWAccessControlPolicy &acl, RGWBucketInfo& bucket_info, optional_yield y) override;
+    virtual int get_bucket_info(RGWBucketInfo &info, optional_yield y) override;
+    virtual int get_bucket_stats(RGWBucketInfo& bucket_info, int shard_id,
+				 std::string *bucket_ver, std::string *master_ver,
+				 std::map<RGWObjCategory, RGWStorageStats>& stats,
+				 std::string *max_marker = nullptr,
+				 bool *syncstopped = nullptr) override;
+    virtual int sync_user_stats(RGWBucketInfo &info) override;
+    virtual int update_container_stats(void) override;
+};
 
 class RGWDBStoreManager : public RGWStore {
 private:
     class DBstoreManager *dbsm;
+    RGWDBStoreBucket *bucket;
+    RGWUserCtl *user_ctl;
 public:
     RGWDBStoreManager(): dbsm(nullptr) {}
     ~RGWDBStoreManager() { delete dbsm; }
     
+    virtual RGWUser* get_user(const rgw_user &u);
+    virtual RGWSalBucket* get_bucket(RGWUser &u, const rgw_bucket &b) { return bucket; }
+    //virtual RGWSalBucket* create_bucket(RGWUser &u, const rgw_bucket &b);
+    virtual RGWBucketList* list_buckets(void) { return new RGWBucketList(); }
+
+    void setUserCtl(RGWUserCtl *_ctl) { user_ctl = _ctl; }
+
     void finalize(void) override;
 };
 
