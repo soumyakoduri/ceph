@@ -4256,6 +4256,8 @@ int RGWRados::transition_obj(RGWObjectCtx& obj_ctx,
 
   RGWRados::Object op_target(this, bucket_info, obj_ctx, obj);
   RGWRados::Object::Read read_op(&op_target);
+  RGWObjState *s = obj_ctx.get_state(obj);
+  RGWCloudTier tier;
 
   read_op.params.attrs = &attrs;
   read_op.params.lastmod = &read_mtime;
@@ -4270,6 +4272,16 @@ int RGWRados::transition_obj(RGWObjectCtx& obj_ctx,
     /* raced */
     return -ECANCELED;
   }
+
+  //TESTING: To be removed - copy tier config ..
+  // Do we need to check if s->manifest is present?
+  // Since its transition ideally it should be present?
+  s->category = RGWObjCategory::CloudTiered;
+  tier.name = "AWS";
+  tier.endpoint = "https://s3.amazon.com:8000";
+  tier.storage_class = "STANDARD";
+  s->manifest->set_cloud_tiered(true);
+  s->manifest->set_cloud_tier_config(tier);
 
   ret = copy_obj_data(obj_ctx,
                       bucket_info,

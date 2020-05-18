@@ -181,6 +181,7 @@ struct RGWObjState {
   bufferlist olh_tag;
   uint64_t pg_ver{false};
   uint32_t zone_short_id{0};
+  RGWObjCategory category{RGWObjCategory::None};
 
   /* important! don't forget to update copy constructor */
 

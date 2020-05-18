@@ -95,6 +95,13 @@ void RGWObjManifestRule::dump(Formatter *f) const
   encode_json("override_prefix", override_prefix, f);
 }
 
+void RGWCloudTier::dump(Formatter *f) const
+{
+  f->dump_string("name", name);
+  f->dump_string("endpoint", endpoint);
+  f->dump_string("storage_class", storage_class);
+}
+
 void rgw_bucket_placement::dump(Formatter *f) const
 {
   encode_json("bucket", bucket, f);
@@ -140,6 +147,8 @@ void RGWObjManifest::dump(Formatter *f) const
   ::encode_json("rules", rules, f);
   ::encode_json("tail_instance", tail_instance, f);
   ::encode_json("tail_placement", tail_placement, f);
+  ::encode_json("cloud_tiered", cloud_tiered, f);
+  ::encode_json("cloud_tier_config", cloud_tier_config, f);
 
   f->dump_object("begin_iter", begin_iter);
   f->dump_object("end_iter", end_iter);

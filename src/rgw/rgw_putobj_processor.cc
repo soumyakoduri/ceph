@@ -257,6 +257,16 @@ int AtomicObjectProcessor::prepare(optional_yield y)
     return r;
   }
 
+  RGWObjState *s = obj_ctx.get_state(head_obj);
+
+  if (s->manifest && s->manifest->get_cloud_tiered()) {
+    RGWCloudTier tier;
+
+    manifest.set_cloud_tiered(true);
+    s->manifest->get_cloud_tier_config(&tier);
+    manifest.set_cloud_tier_config(tier);
+  }
+
   rgw_raw_obj stripe_obj = manifest_gen.get_cur_obj(store->getRados());
 
   r = writer.set_stripe_obj(stripe_obj);
@@ -302,6 +312,8 @@ int AtomicObjectProcessor::complete(size_t accounted_size,
 
   RGWRados::Object::Write obj_op(&op_target);
 
+  RGWObjState *s = obj_ctx.get_state(head_obj);
+
   obj_op.meta.data = &first_chunk;
   obj_op.meta.manifest = &manifest;
   obj_op.meta.ptag = &unique_tag; /* use req_id as operation tag */
@@ -316,6 +328,9 @@ int AtomicObjectProcessor::complete(size_t accounted_size,
   obj_op.meta.user_data = user_data;
   obj_op.meta.zones_trace = zones_trace;
   obj_op.meta.modify_tail = true;
+
+  if (s->category == RGWObjCategory::CloudTiered)
+    obj_op.meta.category = s->category;
 
   r = obj_op.write_meta(actual_size, accounted_size, attrs, y);
   if (r < 0) {
@@ -383,6 +398,17 @@ int MultipartObjectProcessor::prepare_head()
   if (r < 0) {
     return r;
   }
+
+  RGWObjState *s = obj_ctx.get_state(head_obj);
+
+  if (s->manifest && s->manifest->get_cloud_tiered()) {
+    RGWCloudTier tier;
+
+    manifest.set_cloud_tiered(true);
+    s->manifest->get_cloud_tier_config(&tier);
+    manifest.set_cloud_tier_config(tier);
+  }
+
 
   rgw_raw_obj stripe_obj = manifest_gen.get_cur_obj(store->getRados());
   RGWSI_Tier_RADOS::raw_obj_to_obj(head_obj.bucket, stripe_obj, &head_obj);
@@ -570,6 +596,16 @@ int AppendObjectProcessor::prepare(optional_yield y)
   if (r < 0) {
     return r;
   }
+  RGWObjState *s = obj_ctx.get_state(head_obj);
+
+  if (s->manifest && s->manifest->get_cloud_tiered()) {
+    RGWCloudTier tier;
+
+    manifest.set_cloud_tiered(true);
+    s->manifest->get_cloud_tier_config(&tier);
+    manifest.set_cloud_tier_config(tier);
+  }
+
   rgw_raw_obj stripe_obj = manifest_gen.get_cur_obj(store->getRados());
 
   uint64_t chunk_size = 0;

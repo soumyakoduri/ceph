@@ -143,6 +143,32 @@ struct RGWObjManifestRule {
 };
 WRITE_CLASS_ENCODER(RGWObjManifestRule)
 
+struct RGWCloudTier {
+    string name;
+    string endpoint;
+    string storage_class;
+
+    RGWCloudTier(): name("none"), endpoint("none"), storage_class("none") {}
+
+    void encode(bufferlist& bl) const {
+      ENCODE_START(2, 2, bl);
+      encode(name, bl);
+      encode(endpoint, bl);
+      encode(storage_class, bl);
+      ENCODE_FINISH(bl);
+    }
+
+    void decode(bufferlist::const_iterator& bl) {
+      DECODE_START_LEGACY_COMPAT_LEN(2, 2, 2, bl);
+      decode(name, bl);
+      decode(endpoint, bl);
+      decode(storage_class, bl);
+      DECODE_FINISH(bl);
+    }
+    void dump(Formatter *f) const;
+};
+WRITE_CLASS_ENCODER(RGWCloudTier)
+
 class RGWObjManifest {
 protected:
   bool explicit_objs{false}; /* really old manifest? */
@@ -161,6 +187,9 @@ protected:
   map<uint64_t, RGWObjManifestRule> rules;
 
   string tail_instance; /* tail object's instance */
+
+  bool cloud_tiered;
+  RGWCloudTier cloud_tier_config;
 
   void convert_to_explicit(const RGWZoneGroup& zonegroup, const RGWZoneParams& zone_params);
   int append_explicit(RGWObjManifest& m, const RGWZoneGroup& zonegroup, const RGWZoneParams& zone_params);
@@ -187,6 +216,8 @@ public:
     tail_placement = rhs.tail_placement;
     rules = rhs.rules;
     tail_instance = rhs.tail_instance;
+    cloud_tiered = rhs.cloud_tiered;
+    cloud_tier_config = rhs.cloud_tier_config;
 
     begin_iter.set_manifest(this);
     end_iter.set_manifest(this);
@@ -245,6 +276,8 @@ public:
     }
     encode(head_placement_rule, bl);
     encode(tail_placement.placement_rule, bl);
+    encode(cloud_tiered, bl);
+    encode(cloud_tier_config, bl);
     ENCODE_FINISH(bl);
   }
 
@@ -316,6 +349,9 @@ public:
       decode(head_placement_rule, bl);
       decode(tail_placement.placement_rule, bl);
     }
+
+    decode(cloud_tiered, bl);
+    decode(cloud_tier_config, bl);
 
     update_iterators();
     DECODE_FINISH(bl);
@@ -416,6 +452,26 @@ public:
 
   uint64_t get_max_head_size() {
     return max_head_size;
+  }
+
+  bool get_cloud_tiered() {
+      return cloud_tiered;
+  }
+
+  void set_cloud_tiered(bool value) {
+      cloud_tiered = value;
+  }
+
+  void set_cloud_tier_config(RGWCloudTier t) {
+      cloud_tier_config.name = t.name;
+      cloud_tier_config.endpoint = t.endpoint;
+      cloud_tier_config.storage_class = t.storage_class;
+  }
+
+  void get_cloud_tier_config(RGWCloudTier* t) {
+      t->name = cloud_tier_config.name;
+      t->endpoint = cloud_tier_config.endpoint;
+      t->storage_class = cloud_tier_config.storage_class;
   }
 
   class obj_iterator {
