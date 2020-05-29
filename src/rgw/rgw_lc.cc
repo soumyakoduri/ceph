@@ -20,6 +20,13 @@
 #include "rgw_zone.h"
 #include "rgw_string.h"
 #include "rgw_multi.h"
+#include "rgw_cr_rados.h"
+#include "rgw_rest_conn.h"
+#include "rgw_cr_rest.h"
+#include "rgw_coroutine.h"
+#include "rgw_rados.h"
+
+#include <boost/asio/yield.hpp>
 
 // this seems safe to use, at least for now--arguably, we should
 // prefer header-only fmt, in general
@@ -841,6 +848,470 @@ public:
   }
 };
 
+  struct RGWRESTCloudTier {
+    std::shared_ptr<RGWRESTConn> conn;
+    string bucket_name;
+    RGWHTTPManager *http_manager;
+
+    RGWRESTCloudTier() {}
+    RGWRESTCloudTier(RGWRESTConn *_conn, string _bucket, RGWHTTPManager *_http)
+          : conn(_conn), bucket_name(_bucket), http_manager(_http) {}
+  };
+
+
+struct rgw_lc_obj_properties {
+  ceph::real_time mtime;
+  string etag;
+  uint64_t versioned_epoch{0};
+};
+
+
+
+
+static std::set<string> keep_headers = { "CONTENT_TYPE",
+                                         "CONTENT_ENCODING",
+                                         "CONTENT_DISPOSITION",
+                                         "CONTENT_LANGUAGE" };
+
+class RGWLCStreamPutCRF : public RGWStreamWriteHTTPResourceCRF
+{
+  CephContext *cct;
+  RGWHTTPManager *http_manager;
+  rgw_lc_obj_properties obj_properties;
+  std::shared_ptr<RGWRESTConn> conn;
+  rgw_obj dest_obj;
+  string etag;
+public:
+  RGWLCStreamPutCRF(CephContext *_cct,
+                               RGWCoroutinesEnv *_env,
+                               RGWCoroutine *_caller,
+                               RGWHTTPManager *_http_manager,
+                               const rgw_lc_obj_properties&  _obj_properties,
+                               std::shared_ptr<RGWRESTConn> _conn,
+                               rgw_obj& _dest_obj) :
+            RGWStreamWriteHTTPResourceCRF(_cct, _env, _caller, _http_manager),
+                               cct(_cct), http_manager(_http_manager), obj_properties(_obj_properties), conn(_conn), dest_obj(_dest_obj) {
+  }
+
+  int init() override {
+    /* init output connection */
+    RGWRESTStreamS3PutObj *out_req{nullptr};
+
+    if (multipart.is_multipart) {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%d", multipart.part_num);
+      rgw_http_param_pair params[] = { { "uploadId", multipart.upload_id.c_str() },
+                                       { "partNumber", buf },
+                                       { nullptr, nullptr } };
+      conn->put_obj_send_init(dest_obj, params, &out_req);
+    } else {
+      conn->put_obj_send_init(dest_obj, nullptr, &out_req);
+    }
+
+    set_req(out_req);
+
+    return RGWStreamWriteHTTPResourceCRF::init();
+  }
+
+  static bool keep_attr(const string& h) {
+    return (keep_headers.find(h) != keep_headers.end() ||
+            boost::algorithm::starts_with(h, "X_AMZ_"));
+  }
+
+  static void init_send_attrs(CephContext *cct,
+                              const rgw_rest_obj& rest_obj,
+                              const rgw_lc_obj_properties& obj_properties,
+                              map<string, string> *attrs) {
+    auto& new_attrs = *attrs;
+
+    new_attrs.clear();
+
+    for (auto& hi : rest_obj.attrs) {
+      if (keep_attr(hi.first)) {
+        new_attrs.insert(hi);
+      }
+    }
+
+    auto acl = rest_obj.acls.get_acl();
+
+    map<int, vector<string> > access_map;
+
+/*    if (target->acls) {
+      for (auto& grant : acl.get_grant_map()) {
+        auto& orig_grantee = grant.first;
+        auto& perm = grant.second;
+
+        string grantee;
+
+        const auto& am = target->acls->acl_mappings;
+
+        auto iter = am.find(orig_grantee);
+        if (iter == am.end()) {
+          ldout(cct, 20) << "acl_mappings: Could not find " << orig_grantee << " .. ignoring" << dendl;
+          continue;
+        }
+
+        grantee = iter->second.dest_id;
+
+        string type;
+
+        switch (iter->second.type) {
+          case ACL_TYPE_CANON_USER:
+            type = "id";
+            break;
+          case ACL_TYPE_EMAIL_USER:
+            type = "emailAddress";
+            break;
+          case ACL_TYPE_GROUP:
+            type = "uri";
+            break;
+          default:
+            continue;
+        }
+
+        string tv = type + "=" + grantee;
+
+        int flags = perm.get_permission().get_permissions();
+        if ((flags & RGW_PERM_FULL_CONTROL) == RGW_PERM_FULL_CONTROL) {
+          access_map[flags].push_back(tv);
+          continue;
+        }
+
+        for (int i = 1; i <= RGW_PERM_WRITE_ACP; i <<= 1) {
+          if (flags & i) {
+            access_map[i].push_back(tv);
+          }
+        }
+      }
+    } */
+
+    for (auto aiter : access_map) {
+      int grant_type = aiter.first;
+
+      string header_str("x-amz-grant-");
+
+      switch (grant_type) {
+        case RGW_PERM_READ:
+          header_str.append("read");
+          break;
+        case RGW_PERM_WRITE:
+          header_str.append("write");
+          break;
+        case RGW_PERM_READ_ACP:
+          header_str.append("read-acp");
+          break;
+        case RGW_PERM_WRITE_ACP:
+          header_str.append("write-acp");
+          break;
+        case RGW_PERM_FULL_CONTROL:
+          header_str.append("full-control");
+          break;
+      }
+
+      string s;
+
+      for (auto viter : aiter.second) {
+        if (!s.empty()) {
+          s.append(", ");
+        }
+        s.append(viter);
+      }
+
+      ldout(cct, 20) << "acl_mappings: set acl: " << header_str << "=" << s << dendl;
+
+      new_attrs[header_str] = s;
+    }
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%llu", (long long)obj_properties.versioned_epoch);
+    new_attrs["x-amz-meta-rgwx-versioned-epoch"] = buf;
+
+    utime_t ut(obj_properties.mtime);
+    snprintf(buf, sizeof(buf), "%lld.%09lld",
+             (long long)ut.sec(),
+             (long long)ut.nsec());
+
+    new_attrs["x-amz-meta-rgwx-source-mtime"] = buf;
+    new_attrs["x-amz-meta-rgwx-source-etag"] = obj_properties.etag;
+    new_attrs["x-amz-meta-rgwx-source-key"] = rest_obj.key.name;
+    if (!rest_obj.key.instance.empty()) {
+      new_attrs["x-amz-meta-rgwx-source-version-id"] = rest_obj.key.instance;
+    }
+  }
+
+  void send_ready(const rgw_rest_obj& rest_obj) override {
+    RGWRESTStreamS3PutObj *r = static_cast<RGWRESTStreamS3PutObj *>(req);
+
+    map<string, string> new_attrs;
+    if (!multipart.is_multipart) {
+      init_send_attrs(cct, rest_obj, obj_properties, &new_attrs);
+    }
+
+    r->set_send_length(rest_obj.content_len);
+
+    RGWAccessControlPolicy policy;
+
+    r->send_ready(conn->get_key(), new_attrs, policy, false);
+  }
+
+  void handle_headers(const map<string, string>& headers) {
+    for (auto h : headers) {
+      if (h.first == "ETAG") {
+        etag = h.second;
+      }
+    }
+  }
+
+  bool get_etag(string *petag) {
+    if (etag.empty()) {
+      return false;
+    }
+    *petag = etag;
+    return true;
+  }
+};
+
+
+
+  class RGWLCStreamObjToCloudPlainCR : public RGWCoroutine {
+    lc_op_ctx& oc;
+    RGWRESTCloudTier& tier;
+
+    public:
+      RGWLCStreamObjToCloudPlainCR(lc_op_ctx& _oc, RGWRESTCloudTier& _tier)
+          : RGWCoroutine(_oc.cct), oc(_oc), tier(_tier) {}
+
+      int operate() override {
+
+        /* Prepare Read from source */
+        RGWObjectCtx& obj_ctx = oc.rctx ;
+        RGWBucketInfo& bucket_info = oc.bucket_info;
+        rgw_obj& obj = oc.obj;
+        const real_time&  mtime = oc.o.meta.mtime;
+        uint64_t olh_epoch = oc.o.versioned_epoch;
+        optional_yield y = null_yield;
+        map<string, bufferlist> attrs;
+        real_time read_mtime;
+        uint64_t obj_size;
+
+        RGWRados::Object op_target(oc.store->getRados(), bucket_info, obj_ctx, obj);
+        RGWRados::Object::Read read_op(&op_target);
+
+        read_op.params.attrs = &attrs;
+        read_op.params.lastmod = &read_mtime;
+        read_op.params.obj_size = &obj_size;
+
+        int ret = read_op.prepare(y);
+        if (ret < 0) {
+            return set_cr_error(ret);
+        }
+
+        if (read_mtime != mtime) {
+            /* raced */
+            return set_cr_error(-ECANCELED);
+        }
+
+        /* Prepare write */
+        std::shared_ptr<RGWStreamWriteHTTPResourceCRF> out_crf;
+        rgw_lc_obj_properties obj_properties;
+        obj_properties.mtime = mtime;
+        obj_properties.etag = oc.o.meta.etag;
+        obj_properties.versioned_epoch = olh_epoch;
+       
+        rgw_bucket target_bucket;
+        target_bucket.name = tier.bucket_name;
+        string target_obj_name = obj.key.name; // cross check with aws module
+        rgw_obj dest_obj(target_bucket, target_obj_name);
+
+        out_crf.reset(new RGWLCStreamPutCRF((CephContext *)(oc.cct), get_env(), this,
+                                     (RGWHTTPManager*)(tier.http_manager),
+                                     obj_properties, tier.conn, dest_obj));
+
+
+        /* actual Read & Write */
+        off_t ofs = 0;
+        off_t end = obj_size - 1;
+        bool need_retry{false};
+        bool sent_attrs{false};
+        bufferlist bl;
+        uint64_t read_len = 0;
+
+        reenter(this) {
+        do {
+            bl.clear();
+
+            /* TODO: Instead of reading chunks,  check if it can b read
+             * in large chunks at once 
+             */
+            {
+            ret = read_op.read(ofs, end, bl, y);
+            if (ret < 0) {
+              ldout(oc.cct, 0) << "ERROR: fail to read object data, ret = " << ret << dendl;
+              return ret;
+            }
+            read_len = ret;
+            }
+ 
+           if (bl.length() == 0) {
+              break;
+           } 
+
+            if (!sent_attrs) {
+                ret = out_crf->init();
+                if (ret < 0) {
+                    return set_cr_error(ret);
+                }
+              
+               /* Initialize rgw_rest_obj. 
+                * Reference: do_decode_rest_obj
+                * Check how to copy headers content */ 
+                rgw_rest_obj rest_obj;
+                rest_obj.init(obj.key);
+                rest_obj.content_len = obj_size;
+
+                rest_obj.acls.set_ctx(cct);
+                auto aiter = attrs.find(RGW_ATTR_ACL);
+                if (aiter != attrs.end()) {
+                    bufferlist& bl = aiter->second;
+                    auto bliter = bl.cbegin();
+                    try {
+                        rest_obj.acls.decode(bliter);
+                    } catch (buffer::error& err) {
+                        ldout(cct, 0) << "ERROR: failed to decode policy off attrs" << dendl;
+                        return set_cr_error(-EIO);
+                    }
+                } else {
+                    ldout(cct, 0) << "WARNING: acl attrs not provided" << dendl;
+                }
+                
+
+                out_crf->send_ready(rest_obj);
+                ret = out_crf->send();
+                if (ret < 0) {
+                    return set_cr_error(ret);
+                }
+                sent_attrs = true;
+            }
+
+            /* TODO: try to do large chunk writes  (eg., 4MB like in 
+             * aws_sync module?
+             */
+            do {
+                /* TODO: having yield here doesn't seem to be working..
+                 * most likely need_retry always set to true..once that is
+                 * fixed yield may work too.
+                 */
+            //    yield {
+                    ldout(oc.cct, 20) << "writing " << bl.length() << " bytes" << dendl;
+                    ret = out_crf->write(bl, &need_retry);
+           //     }
+                    if (ret < 0)  {
+                        return set_cr_error(ret);
+                    }
+
+                if (retcode < 0) {
+                    ldout(oc.cct, 20) << __func__ << ": out_crf->write() retcode=" << retcode << dendl;
+                    return set_cr_error(ret);
+                }
+              } while (need_retry);
+
+
+            ofs += read_len;
+        } while (ofs <= end);
+
+        do {
+            /* TODO: Here need_retry is always being set to true sometimes.
+             * Debug and address the issue.
+             */
+          //  yield {
+                ret = out_crf->drain_writes(&need_retry);
+          //  }
+                if (ret < 0) {
+                    return set_cr_error(ret);
+                }
+        } while (need_retry);
+
+
+        return set_cr_done();
+        } //reenter
+
+        return 0;
+      }
+  };
+
+  class cloudtierCR : public RGWCoroutine {
+    lc_op_ctx& oc;
+    RGWRESTCloudTier& tier;
+    bufferlist out_bl;
+    int retcode;
+    bool bucket_created = false;
+    struct CreateBucketResult {
+      string code;
+
+      void decode_xml(XMLObj *obj) {
+         RGWXMLDecoder::decode_xml("Code", code, obj);
+      }
+    } result;
+
+    public:
+      cloudtierCR(lc_op_ctx& _oc, RGWRESTCloudTier& _tier)
+          : RGWCoroutine(_oc.cct), oc(_oc), tier(_tier) {}
+
+      int operate() override {
+        reenter(this) {
+
+          yield {
+        // xxx: find if bucket is already created
+          ldout(oc.cct,0) << "Cloud_tier: creating bucket " << tier.bucket_name << dendl;
+          bufferlist bl;
+              call(new RGWPutRawRESTResourceCR <bufferlist> (oc.cct, tier.conn.get(),
+                                                  tier.http_manager,
+                                                  tier.bucket_name, nullptr, bl, &out_bl));
+        }
+        if (retcode < 0 ) {
+          RGWXMLDecoder::XMLParser parser;
+          if (!parser.init()) {
+            ldout(oc.cct, 0) << "ERROR: failed to initialize xml parser for parsing create_bucket response from server" << dendl;
+            return set_cr_error(retcode);
+          }
+
+          if (!parser.parse(out_bl.c_str(), out_bl.length(), 1)) {
+            string str(out_bl.c_str(), out_bl.length());
+            ldout(oc.cct, 5) << "ERROR: failed to parse xml: " << str << dendl;
+            return set_cr_error(retcode);
+          }
+
+          try {
+            RGWXMLDecoder::decode_xml("Error", result, &parser, true);
+          } catch (RGWXMLDecoder::err& err) {
+            string str(out_bl.c_str(), out_bl.length());
+            ldout(oc.cct, 5) << "ERROR: unexpected xml: " << str << dendl;
+            return set_cr_error(retcode);
+          }
+
+          if ((result.code != "BucketAlreadyOwnedByYou") &&
+                 (result.code != "BucketAlreadyExists")) {
+            return set_cr_error(retcode);
+          }
+        }
+
+        bucket_created = true;
+
+        yield {
+            call (new RGWLCStreamObjToCloudPlainCR(oc, tier));
+        }
+
+        if (retcode < 0) {
+            return set_cr_error(retcode);
+        }
+
+        return set_cr_done();
+       } //reenter
+
+        return 0;
+      }
+  };
+
 class LCOpAction_Transition : public LCOpAction {
   const transition_action& transition;
   bool need_to_process{false};
@@ -886,6 +1357,54 @@ public:
     return need_to_process;
   }
 
+  int transition_obj_to_cloud(lc_op_ctx& oc) {
+    std::shared_ptr<RGWRESTConn> conn;
+
+    /* init */
+    string id = "cloudid";
+    /*string endpoint="http://10.19.54.249:8000";
+    string access_key="0555b35654ad1656d804";
+    string secret="h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="; */
+
+    string endpoint="https://10.8.152.14:30633"; 
+    string access_key="lwqBSJcbIlNTJAdYqei4";
+    string secret="wVI+7joJ/7bx8J56gv48de9Or/CJU/hnyaP8vOp7";
+    string bucket_name="cloud-bucket"; 
+
+    RGWAccessKey key;
+    HostStyle host_style = PathStyle;
+
+    key = RGWAccessKey(access_key, secret);
+
+    conn.reset(new S3RESTConn(oc.cct, oc.store->svc()->zone,
+                                id, { endpoint }, key, host_style));
+
+
+    /* http_mngr */
+    RGWCoroutinesManager crs(oc.store->ctx(), oc.store->getRados()->get_cr_registry());
+    RGWHTTPManager http_manager(oc.store->ctx(), crs.get_completion_mgr());
+    int ret = http_manager.start();
+    if (ret < 0) {
+        ldpp_dout(oc.dpp, 0) << "failed in http_manager.start() ret=" << ret << dendl;
+        return ret;
+    }
+
+    RGWRESTCloudTier cloudtier;
+    cloudtier.conn = conn;
+    cloudtier.bucket_name = bucket_name;
+    cloudtier.http_manager= &http_manager;
+
+    ret = crs.run(new cloudtierCR(oc, cloudtier));
+    http_manager.stop();
+         
+    if (ret < 0) {
+        ldpp_dout(oc.dpp, 0) << "failed in cloudtierCR() ret=" << ret << dendl;
+        return ret;
+    }
+
+    return 0;
+  }
+
   int process(lc_op_ctx& oc) {
     auto& o = oc.o;
 
@@ -900,7 +1419,14 @@ public:
       return -EINVAL;
     }
 
-    int r = oc.store->getRados()->transition_obj(oc.rctx, oc.bucket_info, oc.obj,
+    /* XXX: decision to be taken based on lc profile */
+    int r = transition_obj_to_cloud(oc);
+    if (r < 0) {
+      ldpp_dout(oc.dpp, 0) << "ERROR: failed to transition obj to cloud (r=" << r << ")"
+                           << dendl;
+    }
+
+    r = oc.store->getRados()->transition_obj(oc.rctx, oc.bucket_info, oc.obj,
                                      target_placement, o.meta.mtime, o.versioned_epoch, oc.dpp, null_yield);
     if (r < 0) {
       ldpp_dout(oc.dpp, 0) << "ERROR: failed to transition obj (r=" << r << ")" << dendl;
