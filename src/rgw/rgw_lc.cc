@@ -859,13 +859,118 @@ public:
   };
 
 
+struct rgw_lc_multipart_part_info {
+  int part_num{0};
+  uint64_t ofs{0};
+  uint64_t size{0};
+  string etag;
+
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(part_num, bl);
+    encode(ofs, bl);
+    encode(size, bl);
+    encode(etag, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::const_iterator& bl) {
+    DECODE_START(1, bl);
+    decode(part_num, bl);
+    decode(ofs, bl);
+    decode(size, bl);
+    decode(etag, bl);
+    DECODE_FINISH(bl);
+  }
+};
+WRITE_CLASS_ENCODER(rgw_lc_multipart_part_info)
+
 struct rgw_lc_obj_properties {
   ceph::real_time mtime;
   string etag;
   uint64_t versioned_epoch{0};
+
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(mtime, bl);
+    encode(etag, bl);
+    encode(versioned_epoch, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::const_iterator& bl) {
+    DECODE_START(1, bl);
+    decode(mtime, bl);
+    decode(etag, bl);
+    decode(versioned_epoch, bl);
+    DECODE_FINISH(bl);
+  }
 };
+WRITE_CLASS_ENCODER(rgw_lc_obj_properties)
 
 
+
+struct rgw_lc_multipart_upload_info {
+  string upload_id;
+  uint64_t obj_size;
+  rgw_lc_obj_properties obj_properties;
+  uint32_t part_size{0};
+  uint32_t num_parts{0};
+
+  int cur_part{0};
+  uint64_t cur_ofs{0};
+
+  std::map<int, rgw_lc_multipart_part_info> parts;
+
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(upload_id, bl);
+    encode(obj_size, bl);
+    encode(obj_properties, bl);
+    encode(part_size, bl);
+    encode(num_parts, bl);
+    encode(cur_part, bl);
+    encode(cur_ofs, bl);
+    encode(parts, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::const_iterator& bl) {
+    DECODE_START(1, bl);
+    decode(upload_id, bl);
+    decode(obj_size, bl);
+    decode(obj_properties, bl);
+    decode(part_size, bl);
+    decode(num_parts, bl);
+    decode(cur_part, bl);
+    decode(cur_ofs, bl);
+    decode(parts, bl);
+    DECODE_FINISH(bl);
+  }
+};
+WRITE_CLASS_ENCODER(rgw_lc_multipart_upload_info)
+
+
+#define DEFAULT_MULTIPART_SYNC_PART_SIZE (5 * 1024 * 1024)
+#define MULTIPART_MIN_POSSIBLE_PART_SIZE (5 * 1024 * 1024)
+
+static string get_key_oid(const rgw_obj_key& key)
+{
+  string oid = key.name;
+  if (!key.instance.empty() &&
+      !key.have_null_instance()) {
+    oid += string(":") + key.instance;
+  }
+  return oid;
+}
+
+static string obj_to_aws_path(const rgw_obj& obj)
+{
+  string path = obj.bucket.name + "/" + get_key_oid(obj.key);
+
+
+  return path;
+}
 
 
 static std::set<string> keep_headers = { "CONTENT_TYPE",
@@ -1169,7 +1274,7 @@ public:
                 rest_obj.init(obj.key);
                 rest_obj.content_len = obj_size;
 
-                rest_obj.acls.set_ctx(cct);
+                rest_obj.acls.set_ctx(oc.cct);
                 auto aiter = attrs.find(RGW_ATTR_ACL);
                 if (aiter != attrs.end()) {
                     bufferlist& bl = aiter->second;
@@ -1177,11 +1282,11 @@ public:
                     try {
                         rest_obj.acls.decode(bliter);
                     } catch (buffer::error& err) {
-                        ldout(cct, 0) << "ERROR: failed to decode policy off attrs" << dendl;
+                        ldout(oc.cct, 0) << "ERROR: failed to decode policy off attrs" << dendl;
                         return set_cr_error(-EIO);
                     }
                 } else {
-                    ldout(cct, 0) << "WARNING: acl attrs not provided" << dendl;
+                    ldout(oc.cct, 0) << "WARNING: acl attrs not provided" << dendl;
                 }
                 
 
@@ -1238,6 +1343,653 @@ public:
         return 0;
       }
   };
+
+
+class RGWLCStreamObjToCloudMultipartPartCR : public RGWCoroutine {
+    lc_op_ctx& oc;
+    RGWRESTCloudTier& tier;
+
+  string upload_id;
+
+  rgw_lc_multipart_part_info part_info;
+
+  string *petag;
+
+public:
+ RGWLCStreamObjToCloudMultipartPartCR(lc_op_ctx& _oc, RGWRESTCloudTier& _tier,
+                                const string& _upload_id,
+                                const rgw_lc_multipart_part_info& _part_info,
+                                string *_petag)
+          : RGWCoroutine(_oc.cct), oc(_oc), tier(_tier),
+                                        upload_id(_upload_id),
+                                        part_info(_part_info),
+                                        petag(_petag) {}
+
+  int operate() override {
+
+        reenter(this) {
+        /* Prepare Read from source */
+        RGWObjectCtx& obj_ctx = oc.rctx ;
+        RGWBucketInfo& bucket_info = oc.bucket_info;
+        rgw_obj& obj = oc.obj;
+        const real_time&  mtime = oc.o.meta.mtime;
+        uint64_t olh_epoch = oc.o.versioned_epoch;
+        optional_yield y = null_yield;
+        map<string, bufferlist> attrs;
+        real_time read_mtime;
+        uint64_t obj_size;
+
+        RGWRados::Object op_target(oc.store->getRados(), bucket_info, obj_ctx, obj);
+        RGWRados::Object::Read read_op(&op_target);
+
+        read_op.params.attrs = &attrs;
+        read_op.params.lastmod = &read_mtime;
+        read_op.params.obj_size = &obj_size;
+
+        int ret = read_op.prepare(y);
+        if (ret < 0) {
+            return set_cr_error(ret);
+        }
+
+        if (read_mtime != mtime) {
+            /* raced */
+            return set_cr_error(-ECANCELED);
+        }
+
+        /* Prepare write */
+        std::shared_ptr<RGWStreamWriteHTTPResourceCRF> out_crf;
+        rgw_lc_obj_properties obj_properties;
+        obj_properties.mtime = mtime;
+        obj_properties.etag = oc.o.meta.etag;
+        obj_properties.versioned_epoch = olh_epoch;
+       
+        rgw_bucket target_bucket;
+        target_bucket.name = tier.bucket_name;
+        string target_obj_name = obj.key.name; // cross check with aws module
+        rgw_obj dest_obj(target_bucket, target_obj_name);
+
+        out_crf.reset(new RGWLCStreamPutCRF((CephContext *)(oc.cct), get_env(), this,
+                                     (RGWHTTPManager*)(tier.http_manager),
+                                     obj_properties, tier.conn, dest_obj));
+
+      out_crf->set_multipart(upload_id, part_info.part_num, part_info.size);
+
+        /* actual Read & Write */
+        off_t ofs = part_info.ofs;
+        off_t end = part_info.ofs + part_info.size - 1;
+        bool need_retry{false};
+        bool sent_attrs{false};
+        bufferlist bl;
+        uint64_t read_len = 0;
+
+        do {
+            bl.clear();
+
+            /* TODO: Instead of reading chunks,  check if it can b read
+             * in large chunks at once 
+             */
+            {
+            ret = read_op.read(ofs, end, bl, y);
+            if (ret < 0) {
+              ldout(oc.cct, 0) << "XXXXXXXXX ERROR: fail to read object data, ret = " << ret << dendl;
+              return ret;
+            }
+            read_len = ret;
+            }
+ 
+           if (bl.length() == 0) {
+              break;
+           } 
+
+            if (!sent_attrs) {
+                ret = out_crf->init();
+                if (ret < 0) {
+                    return set_cr_error(ret);
+                }
+              
+               /* Initialize rgw_rest_obj. 
+                * Reference: do_decode_rest_obj
+                * Check how to copy headers content */ 
+                rgw_rest_obj rest_obj;
+                rest_obj.init(obj.key);
+                //rest_obj.content_len = obj_size;
+                rest_obj.content_len = part_info.size;
+
+                rest_obj.acls.set_ctx(oc.cct);
+                auto aiter = attrs.find(RGW_ATTR_ACL);
+                if (aiter != attrs.end()) {
+                    bufferlist& bl = aiter->second;
+                    auto bliter = bl.cbegin();
+                    try {
+                        rest_obj.acls.decode(bliter);
+                    } catch (buffer::error& err) {
+                        ldout(oc.cct, 0) << "ERROR: failed to decode policy off attrs" << dendl;
+                        return set_cr_error(-EIO);
+                    }
+                } else {
+                    ldout(oc.cct, 0) << "WARNING: acl attrs not provided" << dendl;
+                }
+                
+
+                out_crf->send_ready(rest_obj);
+                ret = out_crf->send();
+                if (ret < 0) {
+                    return set_cr_error(ret);
+                }
+                    ldout(oc.cct, 0) << " XXXXXXXXX send_ready done "<< dendl;
+                sent_attrs = true;
+            }
+
+            /* TODO: try to do large chunk writes  (eg., 4MB like in 
+             * aws_sync module?
+             */
+            do {
+                /* TODO: having yield here doesn't seem to be working..
+                 * most likely need_retry always set to true..once that is
+                 * fixed yield may work too.
+                 */
+    //            yield {
+                    ldout(oc.cct, 0) << " XXXXXXXXX writing " << bl.length() << " bytes" << dendl;
+                    ret = out_crf->write(bl, &need_retry);
+                    if (ret < 0)  {
+                        return set_cr_error(ret);
+                    }
+      //          }
+
+                if (retcode < 0) {
+                    ldout(oc.cct, 20) << __func__ << ": XXXXXXX out_crf->write() retcode=" << retcode << dendl;
+                    return set_cr_error(ret);
+                }
+              } while (need_retry);
+
+        ldout(oc.cct, 0) << "XXXXXXXXX ofs ="<<ofs<<" ,read_len = "<<read_len<<", end = "<<end<<dendl;
+            ofs += read_len;
+        } while (ofs <= end);
+
+                ldout(oc.cct, 0) << "XXXXXXXXX before drain_writes " << dendl;
+        do {
+            /* TODO: Here need_retry is always being set to true sometimes.
+             * Debug and address the issue.
+             */
+//            yield {
+   //             ldout(oc.cct, 0) << "XXXXXXXXX before drain_writes " << dendl;
+                ret = out_crf->drain_writes(&need_retry);
+                if (ret < 0) {
+                    return set_cr_error(ret);
+                }
+  //          }
+        } while (need_retry);
+
+      if (!(static_cast<RGWLCStreamPutCRF *>(out_crf.get()))->get_etag(petag)) {
+        ldout(oc.cct, 0) << "XXXXXXXXXX ERROR: failed to get etag from PUT request" << dendl;
+        return set_cr_error(-EIO);
+      }
+
+
+        return set_cr_done();
+        } //reenter
+
+    return 0;
+  }
+};
+
+class RGWLCAbortMultipartCR : public RGWCoroutine {
+  CephContext *cct;
+  RGWHTTPManager *http_manager;
+  RGWRESTConn *dest_conn;
+  rgw_obj dest_obj;
+
+  string upload_id;
+
+public:
+  RGWLCAbortMultipartCR(CephContext *_cct,
+                        RGWHTTPManager *_http_manager,
+                        RGWRESTConn *_dest_conn,
+                        const rgw_obj& _dest_obj,
+                        const string& _upload_id) : RGWCoroutine(_cct),
+                                   cct(_cct), http_manager(_http_manager),
+                                                   dest_conn(_dest_conn),
+                                                   dest_obj(_dest_obj),
+                                                   upload_id(_upload_id) {}
+
+  int operate() override {
+    reenter(this) {
+
+      yield {
+        rgw_http_param_pair params[] = { { "uploadId", upload_id.c_str() }, {nullptr, nullptr} };
+        bufferlist bl;
+        call(new RGWDeleteRESTResourceCR(cct, dest_conn, http_manager,
+                                         obj_to_aws_path(dest_obj), params));
+      }
+
+      if (retcode < 0) {
+        ldout(cct, 0) << "ERROR: failed to abort multipart upload for dest object=" << dest_obj << " (retcode=" << retcode << ")" << dendl;
+        return set_cr_error(retcode);
+      }
+
+      return set_cr_done();
+    }
+
+    return 0;
+  }
+};
+
+class RGWLCInitMultipartCR : public RGWCoroutine {
+  CephContext *cct;
+  RGWHTTPManager *http_manager;
+  RGWRESTConn *dest_conn;
+  rgw_obj dest_obj;
+
+  uint64_t obj_size;
+  map<string, string> attrs;
+
+  bufferlist out_bl;
+
+  string *upload_id;
+
+  struct InitMultipartResult {
+    string bucket;
+    string key;
+    string upload_id;
+
+    void decode_xml(XMLObj *obj) {
+      RGWXMLDecoder::decode_xml("Bucket", bucket, obj);
+      RGWXMLDecoder::decode_xml("Key", key, obj);
+      RGWXMLDecoder::decode_xml("UploadId", upload_id, obj);
+    }
+  } result;
+
+public:
+  RGWLCInitMultipartCR(CephContext *_cct,
+                        RGWHTTPManager *_http_manager,
+                        RGWRESTConn *_dest_conn,
+                        const rgw_obj& _dest_obj,
+                        uint64_t _obj_size,
+                        const map<string, string>& _attrs,
+                        string *_upload_id) : RGWCoroutine(_cct),
+                                cct(_cct),
+                                http_manager(_http_manager),
+                                                   dest_conn(_dest_conn),
+                                                   dest_obj(_dest_obj),
+                                                   obj_size(_obj_size),
+                                                   attrs(_attrs),
+                                                   upload_id(_upload_id) {}
+
+  int operate() override {
+    reenter(this) {
+
+      yield {
+        rgw_http_param_pair params[] = { { "uploads", nullptr }, {nullptr, nullptr} };
+        bufferlist bl;
+        call(new RGWPostRawRESTResourceCR <bufferlist> (cct, dest_conn, http_manager,
+                                                 obj_to_aws_path(dest_obj), params, &attrs, bl, &out_bl));
+      }
+
+      if (retcode < 0) {
+        ldout(cct, 0) << "ERROR: failed to initialize multipart upload for dest object=" << dest_obj << dendl;
+        return set_cr_error(retcode);
+      }
+      {
+        /*
+         * If one of the following fails we cannot abort upload, as we cannot
+         * extract the upload id. If one of these fail it's very likely that that's
+         * the least of our problem.
+         */
+        RGWXMLDecoder::XMLParser parser;
+        if (!parser.init()) {
+          ldout(cct, 0) << "ERROR: failed to initialize xml parser for parsing multipart init response from server" << dendl;
+          return set_cr_error(-EIO);
+        }
+
+        if (!parser.parse(out_bl.c_str(), out_bl.length(), 1)) {
+          string str(out_bl.c_str(), out_bl.length());
+          ldout(cct, 5) << "ERROR: failed to parse xml: " << str << dendl;
+          return set_cr_error(-EIO);
+        }
+
+        try {
+          RGWXMLDecoder::decode_xml("InitiateMultipartUploadResult", result, &parser, true);
+        } catch (RGWXMLDecoder::err& err) {
+          string str(out_bl.c_str(), out_bl.length());
+          ldout(cct, 5) << "ERROR: unexpected xml: " << str << dendl;
+          return set_cr_error(-EIO);
+        }
+      }
+
+      ldout(cct, 20) << "init multipart result: bucket=" << result.bucket << " key=" << result.key << " upload_id=" << result.upload_id << dendl;
+
+      *upload_id = result.upload_id;
+
+      return set_cr_done();
+    }
+
+    return 0;
+  }
+};
+
+class RGWLCCompleteMultipartCR : public RGWCoroutine {
+  CephContext *cct;
+  RGWHTTPManager *http_manager;
+  RGWRESTConn *dest_conn;
+  rgw_obj dest_obj;
+
+  bufferlist out_bl;
+
+  string upload_id;
+
+  struct CompleteMultipartReq {
+    map<int, rgw_lc_multipart_part_info> parts;
+
+    explicit CompleteMultipartReq(const map<int, rgw_lc_multipart_part_info>& _parts) : parts(_parts) {}
+
+    void dump_xml(Formatter *f) const {
+      for (auto p : parts) {
+        f->open_object_section("Part");
+        encode_xml("PartNumber", p.first, f);
+        encode_xml("ETag", p.second.etag, f);
+        f->close_section();
+      };
+    }
+  } req_enc;
+
+  struct CompleteMultipartResult {
+    string location;
+    string bucket;
+    string key;
+    string etag;
+
+    void decode_xml(XMLObj *obj) {
+      RGWXMLDecoder::decode_xml("Location", bucket, obj);
+      RGWXMLDecoder::decode_xml("Bucket", bucket, obj);
+      RGWXMLDecoder::decode_xml("Key", key, obj);
+      RGWXMLDecoder::decode_xml("ETag", etag, obj);
+    }
+  } result;
+
+public:
+  RGWLCCompleteMultipartCR(CephContext *_cct,
+                        RGWHTTPManager *_http_manager,
+                        RGWRESTConn *_dest_conn,
+                        const rgw_obj& _dest_obj,
+                        string _upload_id,
+                        const map<int, rgw_lc_multipart_part_info>& _parts) : RGWCoroutine(_cct),
+                         cct(_cct), http_manager(_http_manager),
+                                                   dest_conn(_dest_conn),
+                                                   dest_obj(_dest_obj),
+                                                   upload_id(_upload_id),
+                                                   req_enc(_parts) {}
+
+  int operate() override {
+    reenter(this) {
+
+      yield {
+        rgw_http_param_pair params[] = { { "uploadId", upload_id.c_str() }, {nullptr, nullptr} };
+        stringstream ss;
+        XMLFormatter formatter;
+
+        encode_xml("CompleteMultipartUpload", req_enc, &formatter);
+
+        formatter.flush(ss);
+
+        bufferlist bl;
+        bl.append(ss.str());
+
+        call(new RGWPostRawRESTResourceCR <bufferlist> (cct, dest_conn, http_manager,
+                                                 obj_to_aws_path(dest_obj), params, nullptr, bl, &out_bl));
+      }
+
+      if (retcode < 0) {
+        ldout(cct, 0) << "ERROR: failed to initialize multipart upload for dest object=" << dest_obj << dendl;
+        return set_cr_error(retcode);
+      }
+      {
+        /*
+         * If one of the following fails we cannot abort upload, as we cannot
+         * extract the upload id. If one of these fail it's very likely that that's
+         * the least of our problem.
+         */
+        RGWXMLDecoder::XMLParser parser;
+        if (!parser.init()) {
+          ldout(cct, 0) << "ERROR: failed to initialize xml parser for parsing multipart init response from server" << dendl;
+          return set_cr_error(-EIO);
+        }
+
+        if (!parser.parse(out_bl.c_str(), out_bl.length(), 1)) {
+          string str(out_bl.c_str(), out_bl.length());
+          ldout(cct, 5) << "ERROR: failed to parse xml: " << str << dendl;
+          return set_cr_error(-EIO);
+        }
+
+        try {
+          RGWXMLDecoder::decode_xml("CompleteMultipartUploadResult", result, &parser, true);
+        } catch (RGWXMLDecoder::err& err) {
+          string str(out_bl.c_str(), out_bl.length());
+          ldout(cct, 5) << "ERROR: unexpected xml: " << str << dendl;
+          return set_cr_error(-EIO);
+        }
+      }
+
+      ldout(cct, 20) << "complete multipart result: location=" << result.location << " bucket=" << result.bucket << " key=" << result.key << " etag=" << result.etag << dendl;
+
+      return set_cr_done();
+    }
+
+    return 0;
+  }
+};
+
+
+class RGWLCStreamAbortMultipartUploadCR : public RGWCoroutine {
+  lc_op_ctx &oc;
+  CephContext *cct;
+  RGWHTTPManager *http_manager;
+  RGWRESTConn *dest_conn;
+  const rgw_obj dest_obj;
+  const rgw_raw_obj status_obj;
+
+  string upload_id;
+
+public:
+
+  RGWLCStreamAbortMultipartUploadCR(lc_op_ctx& _oc, CephContext *_cct,
+                                RGWHTTPManager *_http_manager,
+                                RGWRESTConn *_dest_conn,
+                                const rgw_obj& _dest_obj,
+                                const rgw_raw_obj& _status_obj,
+                                const string& _upload_id) : RGWCoroutine(_cct), oc(_oc), cct(_cct), http_manager(_http_manager),
+                                                            dest_conn(_dest_conn),
+                                                            dest_obj(_dest_obj),
+                                                            status_obj(_status_obj),
+                                                            upload_id(_upload_id) {}
+
+  int operate() override {
+    reenter(this) {
+      yield call(new RGWLCAbortMultipartCR(cct, http_manager, dest_conn, dest_obj, upload_id));
+      if (retcode < 0) {
+        ldout(oc.cct, 0) << "ERROR: failed to abort multipart upload dest obj=" << dest_obj << " upload_id=" << upload_id << " retcode=" << retcode << dendl;
+        /* ignore error, best effort */
+      }
+#ifdef TODO_STATUS_OBJ
+      yield call(new RGWRadosRemoveCR(oc.store, status_obj));
+      if (retcode < 0) {
+        ldout(oc.cct, 0) << "ERROR: failed to remove sync status obj obj=" << status_obj << " retcode=" << retcode << dendl;
+        /* ignore error, best effort */
+      }
+#endif
+      return set_cr_done();
+    }
+
+    return 0;
+  }
+};
+
+class RGWLCStreamObjToCloudMultipartCR : public RGWCoroutine {
+    lc_op_ctx& oc;
+    RGWRESTCloudTier& tier;
+  RGWRESTConn *source_conn;
+  rgw_obj src_obj;
+  rgw_obj dest_obj;
+
+  uint64_t obj_size;
+  string src_etag;
+  rgw_rest_obj rest_obj;
+
+  rgw_lc_multipart_upload_info status;
+
+  map<string, string> new_attrs;
+
+  rgw_lc_multipart_part_info *pcur_part_info{nullptr};
+
+  int ret_err{0};
+
+  rgw_raw_obj status_obj;
+
+public:
+  RGWLCStreamObjToCloudMultipartCR(lc_op_ctx& _oc, RGWRESTCloudTier& _tier) : RGWCoroutine(_oc.cct), oc(_oc), tier(_tier) {
+
+  }
+
+
+  int operate() override {
+        rgw_lc_obj_properties obj_properties;
+        obj_properties.mtime = oc.o.meta.mtime;
+        obj_properties.etag = oc.o.meta.etag;
+        obj_properties.versioned_epoch = oc.o.versioned_epoch;
+        bool init_multipart{false};
+
+        rgw_obj& obj = oc.obj;
+        obj_size = oc.o.meta.size;
+
+        rgw_bucket target_bucket;
+        target_bucket.name = tier.bucket_name;
+        string target_obj_name = obj.key.name; // cross check with aws module
+        rgw_obj dest_obj(target_bucket, target_obj_name);
+
+       
+    reenter(this) {
+#ifdef TODO_STATUS_OBJ
+      yield call(new RGWSimpleRadosReadCR<rgw_lc_multipart_upload_info>(oc.async_rados, oc.store->svc()->sysobj,
+                                                                 status_obj, &status, false));
+
+      if (retcode < 0 && retcode != -ENOENT) {
+        ldout(oc.cct, 0) << "ERROR: failed to read sync status of object " << src_obj << " retcode=" << retcode << dendl;
+        return retcode;
+      }
+
+      if (retcode >= 0) {
+        /* check here that mtime and size did not change */
+        if (status.src_properties.mtime != src_properties.mtime || status.obj_size != obj_size ||
+            status.src_properties.etag != src_properties.etag) {
+          yield call(new RGWLCStreamAbortMultipartUploadCR(oc, oc.cct, tier.http_manager, tier.conn.get(), dest_obj, status_obj, status.upload_id));
+          retcode = -ENOENT;
+        }
+      }
+
+      if (retcode == -ENOENT) {
+      }
+#endif
+      if (!init_multipart) {
+               /* Initialize rgw_rest_obj. 
+                * Reference: do_decode_rest_obj
+                * Check how to copy headers content */ 
+                rest_obj.init(obj.key);
+                rest_obj.content_len = obj_size;
+
+                rest_obj.acls.set_ctx(oc.cct);
+                /*auto aiter = attrs.find(RGW_ATTR_ACL);
+                if (aiter != attrs.end()) {
+                    bufferlist& bl = aiter->second;
+                    auto bliter = bl.cbegin();
+                    try {
+                        rest_obj.acls.decode(bliter);
+                    } catch (buffer::error& err) {
+                        ldout(cct, 0) << "ERROR: failed to decode policy off attrs" << dendl;
+                        return set_cr_error(-EIO);
+                    }
+                } else {
+                    ldout(cct, 0) << "WARNING: acl attrs not provided" << dendl;
+                }*/
+                
+        RGWLCStreamPutCRF::init_send_attrs(oc.cct, rest_obj, obj_properties, &new_attrs);
+
+        yield call(new RGWLCInitMultipartCR(oc.cct, tier.http_manager, tier.conn.get(), dest_obj, obj_size, std::move(new_attrs), &status.upload_id));
+        if (retcode < 0) {
+          return set_cr_error(retcode);
+        }
+
+        init_multipart = true;
+        status.obj_size = obj_size;
+        status.obj_properties = obj_properties;
+#define MULTIPART_MAX_PARTS 10000
+//        uint64_t min_part_size = obj_size / MULTIPART_MAX_PARTS;
+        //status.part_size = std::max(conf.s3.multipart_min_part_size, min_part_size);
+        status.part_size = MULTIPART_MIN_POSSIBLE_PART_SIZE;
+        status.num_parts = (obj_size + status.part_size - 1) / status.part_size;
+        status.cur_part = 1;
+
+        ldout(oc.cct, 0) << "XXXXXXXXX InitMultipart done" << dendl;
+      }
+
+      for (; (uint32_t)status.cur_part <= status.num_parts; ++status.cur_part) {
+          ldout(oc.cct, 0) << "XXXXXXXXX before calling MultipartpartCR"<<dendl;
+
+          ldout(oc.cct, 0) << "XXXXXXXXX status.cur_part = "<<status.cur_part <<", info.ofs = "<< status.cur_ofs <<", info.size = "<< status.part_size<< ", obj size = " << status.obj_size<<dendl;
+        yield {
+          rgw_lc_multipart_part_info& cur_part_info = status.parts[status.cur_part];
+          cur_part_info.part_num = status.cur_part;
+          cur_part_info.ofs = status.cur_ofs;
+          cur_part_info.size = std::min((uint64_t)status.part_size, status.obj_size - status.cur_ofs);
+
+          pcur_part_info = &cur_part_info;
+
+          status.cur_ofs += status.part_size;
+
+          call(new RGWLCStreamObjToCloudMultipartPartCR(oc, tier,
+                                                             status.upload_id,
+                                                             cur_part_info,
+                                                             &cur_part_info.etag));
+        }
+
+        if (retcode < 0) {
+          ldout(oc.cct, 0) << "XXXXXXXXXXXXX ERROR: failed to sync obj=" << oc.obj << ", sync via multipart upload, upload_id=" << status.upload_id << " part number " << status.cur_part << " (error: " << cpp_strerror(-retcode) << ")" << dendl;
+          ret_err = retcode;
+          yield call(new RGWLCStreamAbortMultipartUploadCR(oc, oc.cct, tier.http_manager, tier.conn.get(), dest_obj, status_obj, status.upload_id));
+        ldout(oc.cct, 0) << "XXXXXXXXX AbortMultipart done" << dendl;
+          return set_cr_error(ret_err);
+        }
+
+#ifdef TODO_STATUS_OBJ
+        yield call(new RGWSimpleRadosWriteCR<rgw_lc_multipart_upload_info>(sync_env->async_rados, sync_env->store->svc()->sysobj, status_obj, status));
+        if (retcode < 0) {
+          ldout(oc.cct, 0) << "XXXXXXX ERROR: failed to store multipart upload state, retcode=" << retcode << dendl;
+          /* continue with upload anyway */
+        }
+#endif
+        ldout(oc.cct, 0) << "XXXXXXX sync of object=" << oc.obj << " via multipart upload, finished sending part #" << status.cur_part << " etag=" << pcur_part_info->etag << dendl;
+      }
+
+      yield call(new RGWLCCompleteMultipartCR(oc.cct, tier.http_manager, tier.conn.get(), dest_obj, status.upload_id, status.parts));
+      if (retcode < 0) {
+        ldout(oc.cct, 0) << "XXXXXXXXXX ERROR: failed to complete multipart upload of obj=" << oc.obj << " (error: " << cpp_strerror(-retcode) << ")" << dendl;
+        ret_err = retcode;
+        yield call(new RGWLCStreamAbortMultipartUploadCR(oc, oc.cct, tier.http_manager, tier.conn.get(), dest_obj, status_obj, status.upload_id));
+        return set_cr_error(ret_err);
+      }
+        ldout(oc.cct, 0) << "XXXXXXXXX CompleteMultipart done" << dendl;
+
+#ifdef TODO_STATUS_OBJ
+      /* remove status obj */
+      yield call(new RGWRadosRemoveCR(oc.store, status_obj));
+      if (retcode < 0) {
+        ldout(oc.cct, 0) << "ERROR: failed to abort multipart upload obj=" << oc.obj << " upload_id=" << status.upload_id << " part number " << status.cur_part << " (" << cpp_strerror(-retcode) << ")" << dendl;
+        /* ignore error, best effort */
+      }
+#endif
+      return set_cr_done();
+    }
+    return 0;
+  }
+};
 
   class cloudtierCR : public RGWCoroutine {
     lc_op_ctx& oc;
@@ -1298,7 +2050,13 @@ public:
         bucket_created = true;
 
         yield {
-            call (new RGWLCStreamObjToCloudPlainCR(oc, tier));
+            uint64_t size = oc.o.meta.size;
+            if (size < DEFAULT_MULTIPART_SYNC_PART_SIZE) {
+                call (new RGWLCStreamObjToCloudPlainCR(oc, tier));
+            } else {
+                call(new RGWLCStreamObjToCloudMultipartCR(oc, tier));
+
+            } 
         }
 
         if (retcode < 0) {
@@ -1362,13 +2120,18 @@ public:
 
     /* init */
     string id = "cloudid";
-    /*string endpoint="http://10.19.54.249:8000";
+    string endpoint="http://localhost:8002";
+    string access_key="CNV15CC2ZN44IPB24A5X";
+    string secret="W0X3NbPXNW1B7Ru79xuuUI53ftSKieEl2ouuHP8C"; 
+
+/*    string endpoint="http://10.19.54.249:8000";
     string access_key="0555b35654ad1656d804";
     string secret="h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="; */
 
-    string endpoint="https://10.8.152.14:30633"; 
+/*    string endpoint="https://10.8.152.14:30633"; 
     string access_key="lwqBSJcbIlNTJAdYqei4";
-    string secret="wVI+7joJ/7bx8J56gv48de9Or/CJU/hnyaP8vOp7";
+    string secret="wVI+7joJ/7bx8J56gv48de9Or/CJU/hnyaP8vOp7";*/
+
     string bucket_name="cloud-bucket"; 
 
     RGWAccessKey key;
