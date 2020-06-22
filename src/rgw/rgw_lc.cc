@@ -2115,14 +2115,15 @@ public:
     return need_to_process;
   }
 
-  int transition_obj_to_cloud(lc_op_ctx& oc) {
+  int transition_obj_to_cloud(lc_op_ctx& oc, RGWZoneGroupPlacementTier &tier) {
     std::shared_ptr<RGWRESTConn> conn;
 
     /* init */
     string id = "cloudid";
-    string endpoint="http://localhost:8002";
+
+/*    string endpoint="http://localhost:8002";
     string access_key="CNV15CC2ZN44IPB24A5X";
-    string secret="W0X3NbPXNW1B7Ru79xuuUI53ftSKieEl2ouuHP8C"; 
+    string secret="W0X3NbPXNW1B7Ru79xuuUI53ftSKieEl2ouuHP8C"; */
 
 /*    string endpoint="http://10.19.54.249:8000";
     string access_key="0555b35654ad1656d804";
@@ -2134,10 +2135,12 @@ public:
 
     string bucket_name="cloud-bucket"; 
 
-    RGWAccessKey key;
+    string endpoint = tier.endpoint;
+    RGWAccessKey key = tier.key;
     HostStyle host_style = PathStyle;
 
-    key = RGWAccessKey(access_key, secret);
+    ldpp_dout(oc.dpp, 0) << "Tierrrrr endpoint:" << tier.endpoint << ", key.access_key= " << key.id << ", key.secret= " << key.key<<dendl;
+//    key = RGWAccessKey(access_key, secret);
 
     conn.reset(new S3RESTConn(oc.cct, oc.store->svc()->zone,
                                 id, { endpoint }, key, host_style));
@@ -2168,12 +2171,60 @@ public:
     return 0;
   }
 
+/* find out if the the storage class is remote cloud */
+int get_tier_target(const RGWZoneGroup &zonegroup, rgw_placement_rule rule,
+        string storage_class, RGWZoneGroupPlacementTier &tier) {
+  std::map<std::string, RGWZoneGroupPlacementTarget>::const_iterator titer;
+    titer = zonegroup.placement_targets.find(rule.name);
+    if (titer == zonegroup.placement_targets.end()) {
+      //ldout(cct, 0) << "could not find requested placement id " << rule << " within zonegroup " << dendl;
+      return -1;
+    }
+
+  if (storage_class.empty()) {
+      storage_class = rule.storage_class;
+  }
+
+  const auto& target_rule = titer->second;
+  std::map<std::string, RGWZoneGroupPlacementTier>::const_iterator ttier;
+  ttier = target_rule.tier_targets.find(storage_class);
+  if (ttier != target_rule.tier_targets.end()) {
+      tier = ttier->second;
+  }
+
+  return 0;
+}
+
   int process(lc_op_ctx& oc) {
     auto& o = oc.o;
+    int r;
+    std::string tier_type = ""; 
+
+    const RGWZoneGroup& zonegroup = oc.store->svc()->zone->get_zonegroup();
+/*    r = zonegroup.init(oc.cct, oc.store->svc()->sysobj, false);
+
+    if (r < 0) {
+         ldpp_dout(oc.dpp, 0) << "ERROR: failed to init zonegroup(r=" << r << ")"
+                           << dendl;
+         return r;
+    }*/
+
+    RGWZoneGroupPlacementTier tier = {};
 
     rgw_placement_rule target_placement;
     target_placement.inherit_from(oc.bucket_info.placement_rule);
     target_placement.storage_class = transition.storage_class;
+
+    r = get_tier_target(zonegroup, target_placement, target_placement.storage_class, tier);
+
+    if (tier.tier_type == "cloud") {
+    /* XXX: decision to be taken based on lc profile */
+       r = transition_obj_to_cloud(oc, tier);
+       if (r < 0) {
+         ldpp_dout(oc.dpp, 0) << "ERROR: failed to transition obj to cloud (r=" << r << ")"
+                           << dendl;
+       }
+    } else {
 
     if (!oc.store->svc()->zone->get_zone_params().valid_placement(target_placement)) {
       ldpp_dout(oc.dpp, 0) << "ERROR: non existent dest placement: " << target_placement
@@ -2181,12 +2232,6 @@ public:
                            << " rule_id=" << oc.op.id << dendl;
       return -EINVAL;
     }
-
-    /* XXX: decision to be taken based on lc profile */
-    int r = transition_obj_to_cloud(oc);
-    if (r < 0) {
-      ldpp_dout(oc.dpp, 0) << "ERROR: failed to transition obj to cloud (r=" << r << ")"
-                           << dendl;
     }
 
     r = oc.store->getRados()->transition_obj(oc.rctx, oc.bucket_info, oc.obj,
