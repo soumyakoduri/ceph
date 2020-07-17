@@ -142,6 +142,7 @@ set(librgw_common_srcs
   rgw_perf_counters.cc
   rgw_rest_iam.cc
   rgw_object_lock.cc
+  rgw_lc_tier.cc
   rgw_kms.cc)
 
 if(WITH_RADOSGW_AMQP_ENDPOINT)
