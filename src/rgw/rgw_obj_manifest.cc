@@ -357,6 +357,8 @@ int RGWObjManifest::generator::create_begin(CephContext *cct, RGWObjManifest *_m
   // Normal object which not generated through copy operation 
   manifest->set_tail_instance(_obj.key.instance);
 
+  manifest->set_cloud_tiered(false);
+
   manifest->update_iterators();
 
   return 0;

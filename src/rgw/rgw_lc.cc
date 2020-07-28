@@ -911,6 +911,66 @@ public:
 
    return 0;
  }
+
+  int update_tier_obj(lc_op_ctx& oc, RGWLCCloudTierCtx& tier_ctx) {
+
+    map<string, bufferlist> attrs;
+    RGWRados::Object op_target(tier_ctx.store->getRados(),
+                               tier_ctx.bucket_info,
+                                tier_ctx.rctx, tier_ctx.obj);
+
+    RGWRados::Object::Read read_op(&op_target);
+
+    read_op.params.attrs = &attrs;
+
+    int r = read_op.prepare(null_yield);
+    if (r < 0) {
+      return r;
+    }
+
+    tier_ctx.rctx.set_atomic(tier_ctx.obj);
+    
+    RGWRados::Object::Write obj_op(&op_target);
+    RGWObjState *s = tier_ctx.rctx.get_state(tier_ctx.obj);
+
+    obj_op.meta.modify_tail = true;
+    obj_op.meta.category = RGWObjCategory::CloudTiered;
+    obj_op.meta.delete_at = real_time();
+    obj_op.meta.data = NULL;
+
+    
+    RGWObjManifest *pmanifest; 
+
+    pmanifest = &(*s->manifest);
+    RGWCloudTier tier;
+    tier.name = oc.tier.storage_class;
+    tier.endpoint = oc.tier.endpoint;
+    tier.storage_class = oc.tier.tier_storage_class;
+    pmanifest->set_cloud_tiered(true);
+    pmanifest->set_cloud_tier_config(tier);
+
+    /* check if its necessary */
+    rgw_placement_rule target_placement;
+    target_placement.inherit_from(tier_ctx.bucket_info.placement_rule);
+    target_placement.storage_class = oc.tier.storage_class;
+    pmanifest->set_head(tier_ctx.bucket_info.placement_rule, tier_ctx.obj, 0);
+
+    obj_op.meta.manifest = pmanifest;
+
+    /* update storage class */
+    bufferlist bl;
+    bl.append(oc.tier.storage_class);
+    attrs[RGW_ATTR_STORAGE_CLASS] = bl;
+
+
+    obj_op.write_meta(tier_ctx.o.meta.size, 0, attrs, null_yield);
+    if (r < 0) {
+      return r;
+    }
+
+    return 0;
+  }
+
   int transition_obj_to_cloud(lc_op_ctx& oc) {
     std::shared_ptr<RGWRESTConn> conn;
 
@@ -950,6 +1010,12 @@ public:
          
     if (ret < 0) {
       ldpp_dout(oc.dpp, 0) << "failed in RGWCloudTierCR() ret=" << ret << dendl;
+      return ret;
+    }
+
+    ret = update_tier_obj(oc, tier_ctx);
+    if (ret < 0) {
+      ldpp_dout(oc.dpp, 0) << "Updating tier object failed ret=" << ret << dendl;
       return ret;
     }
 
