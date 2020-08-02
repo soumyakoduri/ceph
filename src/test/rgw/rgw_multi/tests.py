@@ -215,7 +215,7 @@ def parse_data_sync_status(data_sync_status_json):
 
     markers={}
     for i in range(num_shards):
-        markers[i] = sync_markers[i]['val']['marker']
+        markers[i] = sync_markers[i]['val']['timestamp']
 
     return (num_shards, markers)
 
@@ -267,7 +267,7 @@ def data_source_log_status(source_zone):
     datalog_status_json, retcode = source_cluster.admin(cmd, read_only=True)
     datalog_status = json.loads(datalog_status_json)
 
-    markers = {i: s['marker'] for i, s in enumerate(datalog_status)}
+    markers = {i: s['last_update'] for i, s in enumerate(datalog_status)}
     log.debug('data markers for zone=%s markers=%s', source_zone.name, markers)
     return markers
 
