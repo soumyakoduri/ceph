@@ -6,6 +6,7 @@
 #include "common/errno.h"
 #include "common/safe_io.h"
 #include "librados/librados_asio.h"
+#include "common/async/blocked_completion.h"
 #include "common/async/yield_context.h"
 
 #include "include/types.h"
@@ -105,6 +106,145 @@ int rgw_init_ioctx(librados::Rados *rados, const rgw_pool& pool,
     ioctx.set_namespace(pool.ns);
   }
   return 0;
+}
+
+// Neorados
+bs::error_code rgw_rados_set_omap_heavy(R::RADOS& r, std::string_view pool,
+					optional_yield y)
+{
+  using namespace std::literals;
+  bs::error_code ec;
+  static constexpr auto pool_set =
+    "{\"prefix\": \"osd pool set\", "
+    "\"pool\": \"{}\" "
+    "\"var\": \"{}\", "
+    "\"val\": \"{}\"}"sv;
+
+  auto autoscale =
+    fmt::format(pool_set, pool, "pg_autoscale_bias"sv,
+		r.cct()->_conf.get_val<double>("rgw_rados_pool_autoscale_bias"));
+  auto num_min =
+    fmt::format(pool_set, pool, "pg_num_min"sv,
+		r.cct()->_conf.get_val<uint64_t>("rgw_rados_pool_pg_num_min"));
+#ifdef HAVE_BOOST_CONTEXT
+  if (y) {
+    auto& yield = y.get_yield_context();
+    r.mon_command({ autoscale },
+		  {}, nullptr, nullptr, yield[ec]);
+    if (ec) {
+      ldout(r.cct(), 10) << __func__ << " warning: failed to set pg_autoscale_bias on "
+			 << pool << dendl;
+      return ec;
+    }
+    r.mon_command({ num_min }, {}, nullptr, nullptr, yield[ec]);
+    if (ec) {
+      ldout(r.cct(), 10) << __func__ << " warning: failed to set pg_num_min on "
+			 << pool << dendl;
+      return ec;
+    }
+  }
+  // work on asio threads should be asynchronous, so warn when they block
+  if (is_asio_thread) {
+    ldout(r.cct(), 20) << "WARNING: blocking librados call" << dendl;
+  }
+#endif
+  r.mon_command({ autoscale }, {}, nullptr, nullptr, ca::use_blocked[ec]);
+  if (ec) {
+    ldout(r.cct(), 10) << __func__ << " warning: failed to set pg_autoscale_bias on "
+		       << pool << dendl;
+    return ec;
+  }
+  r.mon_command({ num_min }, {}, nullptr, nullptr, ca::use_blocked[ec]);
+  if (ec) {
+    ldout(r.cct(), 10) << __func__ << " warning: failed to set pg_num_min on "
+		       << pool << dendl;
+    return ec;
+  }
+  return {};
+}
+
+tl::expected<std::int64_t, bs::error_code>
+rgw_rados_acquire_pool_id(R::RADOS& r, std::string_view pool, bool mostly_omap,
+			  optional_yield y, bool create)
+{
+  bs::error_code ec;
+#ifdef HAVE_BOOST_CONTEXT
+  if (y) {
+    auto& yield = y.get_yield_context();
+    int64_t id = r.lookup_pool(std::string(pool), yield[ec]);
+    if (ec == bs::errc::no_such_file_or_directory && create) {
+      r.create_pool(pool, nullopt, yield[ec]);
+      if (ec && ec != bs::errc::file_exists) {
+        if (ec == bs::errc::result_out_of_range) {
+          ldout(r.cct(), 0)
+            << __func__
+            << " ERROR: RADOS::RADOS::create_pool returned " << ec
+            << " (this can be due to a pool or placement group misconfiguration, e.g."
+            << " pg_num < pgp_num or mon_max_pg_per_osd exceeded)"
+            << dendl;
+        }
+        return tl::unexpected(ec);
+      }
+      id = r.lookup_pool(std::string(pool), yield[ec]);
+      if (ec)
+        return tl::unexpected(ec);
+      r.enable_application(pool, pg_pool_t::APPLICATION_NAME_RGW, false,
+			   yield[ec]);
+      if (ec && ec != bs::errc::operation_not_supported) {
+        return tl::unexpected(ec);
+      }
+      if (mostly_omap)
+	rgw_rados_set_omap_heavy(r, pool, y);
+    }
+    if (ec)
+      return tl::unexpected(ec);
+    return id;
+  }
+  // work on asio threads should be asynchronous, so warn when they block
+  if (is_asio_thread) {
+    ldout(r.cct(), 20) << "WARNING: blocking librados call" << dendl;
+  }
+#endif
+  auto id = r.lookup_pool(std::string(pool), ca::use_blocked[ec]);
+  if (ec == bs::errc::no_such_file_or_directory && create) {
+    r.create_pool(pool, nullopt, ca::use_blocked[ec]);
+    if (ec && ec != bs::errc::file_exists) {
+      if (ec == bs::errc::result_out_of_range) {
+        ldout(r.cct(), 0)
+          << __func__
+          << " ERROR: RADOS::RADOS::create_pool returned " << ec
+          << " (this can be due to a pool or placement group misconfiguration, e.g."
+          << " pg_num < pgp_num or mon_max_pg_per_osd exceeded)"
+          << dendl;
+      }
+      return tl::unexpected(ec);
+    }
+    id = r.lookup_pool(std::string(pool), ca::use_blocked[ec]);
+    if (ec)
+      return tl::unexpected(ec);
+    r.enable_application(pool, pg_pool_t::APPLICATION_NAME_RGW,
+			 false, ca::use_blocked[ec]);
+    if (ec && ec != bs::errc::operation_not_supported) {
+      return tl::unexpected(ec);
+    }
+    if (mostly_omap)
+      rgw_rados_set_omap_heavy(r, pool, y);
+  }
+  if (ec)
+    return tl::unexpected(ec);
+  return id;
+}
+
+
+tl::expected<R::IOContext, bs::error_code>
+rgw_rados_acquire_pool(R::RADOS& r, rgw_pool pool, bool mostly_omap,
+		       optional_yield y, bool create)
+{
+  auto p = rgw_rados_acquire_pool_id(r, pool.name, mostly_omap, y, create);
+  if (p)
+    return R::IOContext(*p, pool.ns);
+  else
+    return tl::unexpected(p.error());
 }
 
 void rgw_shard_name(const string& prefix, unsigned max_shards, const string& key, string& name, int *shard_id)

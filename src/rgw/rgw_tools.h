@@ -6,6 +6,8 @@
 
 #include <string>
 
+#include "include/neorados/RADOS.hpp"
+
 #include "include/types.h"
 #include "include/ceph_hash.h"
 
@@ -253,5 +255,15 @@ public:
 };
 
 using RGWDataAccessRef = std::shared_ptr<RGWDataAccess>;
+
+boost::system::error_code
+rgw_rados_set_omap_heavy(neorados::RADOS& r, std::string_view pool,
+			 optional_yield y);
+tl::expected<std::int64_t, boost::system::error_code>
+rgw_rados_acquire_pool_id(neorados::RADOS& r, std::string_view pool, bool mostly_omap,
+			  optional_yield y, bool create = true);
+tl::expected<neorados::IOContext, boost::system::error_code>
+rgw_rados_acquire_pool(neorados::RADOS& r, rgw_pool pool, bool mostly_omap,
+		       optional_yield y, bool create = true);
 
 #endif
