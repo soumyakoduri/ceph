@@ -220,7 +220,7 @@ void RGWOp_MDLog_Delete::execute() {
   }
   RGWMetadataLog meta_log{s->cct, store->svc()->zone, store->svc()->cls, period};
 
-  http_ret = meta_log.trim(shard_id, {}, {}, {}, marker);
+  http_ret = meta_log.trim(shard_id, marker);
 }
 
 void RGWOp_MDLog_Lock::execute() {
