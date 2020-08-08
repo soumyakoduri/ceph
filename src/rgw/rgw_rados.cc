@@ -1324,10 +1324,10 @@ bs::error_code RGWRados::init_neo()
 int RGWRados::init_svc(bool raw)
 {
   if (raw) {
-    return svc.init_raw(cct, &*neorados, use_cache);
+    return svc.init_raw(cct, &*neorados, store, use_cache);
   }
 
-  return svc.init(cct, &*neorados, use_cache, run_sync_thread);
+  return svc.init(cct, &*neorados, store, use_cache, run_sync_thread);
 }
 
 int RGWRados::init_ctl()
