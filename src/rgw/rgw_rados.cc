@@ -1332,10 +1332,10 @@ int RGWRados::init_complete()
 int RGWRados::init_svc(bool raw)
 {
   if (raw) {
-    return svc.init_raw(cct, use_cache);
+    return svc.init_raw(cct, store, use_cache);
   }
 
-  return svc.init(cct, use_cache, run_sync_thread);
+  return svc.init(cct, store, use_cache, run_sync_thread);
 }
 
 int RGWRados::init_ctl()
