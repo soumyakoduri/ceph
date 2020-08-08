@@ -106,7 +106,8 @@ struct RGWServices_Def
   RGWServices_Def();
   ~RGWServices_Def();
 
-  int init(CephContext *cct, bool have_cache, bool raw_storage, bool run_sync);
+  int init(CephContext *cct, rgw::sal::RGWRadosStore* store,
+	   bool have_cache, bool raw_storage, bool run_sync);
   void shutdown();
 };
 
@@ -116,6 +117,7 @@ struct RGWServices
   RGWServices_Def _svc;
 
   CephContext *cct;
+  rgw::sal::RGWRadosStore* store;
 
   RGWSI_Finisher *finisher{nullptr};
   RGWSI_Bucket *bucket{nullptr};
@@ -145,14 +147,18 @@ struct RGWServices
   RGWSI_SysObj_Core *core{nullptr};
   RGWSI_User *user{nullptr};
 
-  int do_init(CephContext *cct, bool have_cache, bool raw_storage, bool run_sync);
+  int do_init(CephContext *cct,
+	      rgw::sal::RGWRadosStore* store,
+	      bool have_cache, bool raw_storage, bool run_sync);
 
-  int init(CephContext *cct, bool have_cache, bool run_sync) {
-    return do_init(cct, have_cache, false, run_sync);
+  int init(CephContext *cct, rgw::sal::RGWRadosStore* store,
+	   bool have_cache, bool run_sync) {
+    return do_init(cct, store, have_cache, false, run_sync);
   }
 
-  int init_raw(CephContext *cct, bool have_cache) {
-    return do_init(cct, have_cache, true, false);
+  int init_raw(CephContext *cct, rgw::sal::RGWRadosStore* store,
+	       bool have_cache) {
+    return do_init(cct, store, have_cache, true, false);
   }
   void shutdown() {
     _svc.shutdown();
