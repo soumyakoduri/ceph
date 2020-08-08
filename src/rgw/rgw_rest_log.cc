@@ -80,7 +80,8 @@ void RGWOp_MDLog_List::execute() {
     }
   }
 
-  RGWMetadataLog meta_log{s->cct, store->svc()->zone, store->svc()->cls, period};
+  RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls,
+      period};
 
   http_ret = meta_log.list_entries(shard_id, max_entries, marker, entries,
                                    &last_marker, &truncated);
@@ -152,7 +153,7 @@ void RGWOp_MDLog_ShardInfo::execute() {
       return;
     }
   }
-  RGWMetadataLog meta_log{s->cct, store->svc()->zone, store->svc()->cls, period};
+  RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls, period};
 
   http_ret = meta_log.get_info(shard_id, &info);
 }
@@ -218,7 +219,7 @@ void RGWOp_MDLog_Delete::execute() {
       return;
     }
   }
-  RGWMetadataLog meta_log{s->cct, store->svc()->zone, store->svc()->cls, period};
+  RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls, period};
 
   http_ret = meta_log.trim(shard_id, marker);
 }
@@ -258,7 +259,7 @@ void RGWOp_MDLog_Lock::execute() {
     return;
   }
 
-  RGWMetadataLog meta_log{s->cct, store->svc()->zone, store->svc()->cls, period};
+  RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls, period};
   unsigned dur;
   dur = (unsigned)strict_strtol(duration_str.c_str(), 10, &err);
   if (!err.empty() || dur <= 0) {
@@ -305,7 +306,7 @@ void RGWOp_MDLog_Unlock::execute() {
     return;
   }
 
-  RGWMetadataLog meta_log{s->cct, store->svc()->zone, store->svc()->cls, period};
+  RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls, period};
   http_ret = meta_log.unlock(shard_id, zone_id, locker_id);
 }
 
