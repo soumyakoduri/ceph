@@ -266,6 +266,7 @@ bool MetaMasterTrimShardCollectCR::spawn_next()
       continue;
     }
 
+#warning HERE AND NOW.
     auto oid = mdlog->get_shard_oid(shard_id);
 
     ldout(cct, 10) << "trimming log shard " << shard_id
