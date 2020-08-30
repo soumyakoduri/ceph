@@ -32,6 +32,7 @@
 
 #include "rgw_metadata.h"
 #include "rgw_mdlog_types.h"
+#include "rgw_coroutine.h"
 
 #include "services/svc_rados.h"
 
@@ -139,7 +140,10 @@ public:
 		   std::string *out_marker,
 		   bool *truncated);
 
+  int trim_master(int shard_id, std::string_view marker);
+  int trim_master(int shard_id, std::string_view marker, librados::AioCompletion* c);
   int trim(int shard_id, std::string_view marker);
+  int trim(int shard_id, std::string_view marker, librados::AioCompletion* c);
   int get_info(int shard_id, RGWMetadataLogInfo *info);
   int get_info_async(int shard_id, RGWMetadataLogInfoCompletion *completion);
   int lock_exclusive(int shard_id, ceph::timespan duration, std::string& zone_id,
@@ -151,6 +155,27 @@ public:
   RGWCoroutine* master_trim_cr(int shard_id, const std::string& marker,
 	       			std::string* last_trim);
   RGWCoroutine* peer_trim_cr(int shard_id, std::string marker);
+};
+
+class RGWMetadataLogTrimCR : public RGWSimpleCoroutine {
+  RGWMetadataLog* mdlog;
+  boost::intrusive_ptr<RGWAioCompletionNotifier> cn;
+ protected:
+  int shard_id;
+  std::string marker;
+  bool is_master{false};
+  std::string *last_trim_marker;
+
+ public:
+  static constexpr const char* max_marker = "99999999";
+
+  RGWMetadataLogTrimCR(CephContext *cct,
+		  	RGWMetadataLog *mdlog, const int shard_id,
+                        const std::string& marker, bool is_master,
+			std::string *last_trim_marker);
+
+  int send_request() override;
+  int request_complete() override;
 };
 
 struct LogStatusDump {
