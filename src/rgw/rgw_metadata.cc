@@ -105,6 +105,49 @@ void RGWMetadataLogData::decode_json(JSONObj *obj) {
 }
 
 
+RGWMetadataLogTrimCR::RGWMetadataLogTrimCR(CephContext *cct,
+					     RGWMetadataLog *_mdlog,
+                                             const int _shard_id,
+                                             const std::string& _marker,
+					     bool _is_master,
+					     std::string *_last_trim_marker)
+  : RGWSimpleCoroutine(cct), mdlog(_mdlog), shard_id(_shard_id),
+    marker(_marker), is_master(_is_master), last_trim_marker(_last_trim_marker)
+{
+  set_description() << "MetadataLog trim oid=" <<  shard_id
+      << " marker=" << marker;
+}
+
+int RGWMetadataLogTrimCR::send_request()
+{
+  set_status() << "sending request";
+
+  cn = stack->create_completion_notifier();
+
+  if (is_master) { // XXX && OMAP
+     return mdlog->trim_master(shard_id, marker, cn->completion());
+  } else { 
+     return mdlog->trim(shard_id, marker, cn->completion());
+  }
+}
+
+int RGWMetadataLogTrimCR::request_complete()
+{
+  int r = cn->completion()->get_return_value();
+
+  set_status() << "request complete; ret=" << r;
+
+  if (r != -ENODATA) {
+    return r;
+  }
+  // nothing left to trim, update last_trim_marker
+  if (last_trim_marker && *last_trim_marker < marker && marker != max_marker) {
+    *last_trim_marker = marker;
+    r = 0;
+  }
+  return r;
+}
+
 int RGWMetadataLog::add_entry(const string& hash_key, const string& section,
 			      const string& key, bufferlist& bl) {
   if (!svc.zone->need_to_log_metadata())
@@ -214,12 +257,74 @@ int RGWMetadataLog::get_info_async(int shard_id, RGWMetadataLogInfoCompletion *c
                                      completion->get_completion());
 }
 
-int RGWMetadataLog::trim(int shard_id, std::string_view marker)
+int RGWMetadataLog::trim_master(int shard_id, std::string_view marker)
 {
   auto oid = get_shard_oid(shard_id);
 
   return svc.cls->timelog.trim(oid, {}, {}, {},
                                string(marker), nullptr, null_yield);
+}
+
+int RGWMetadataLog::trim_master(int shard_id, std::string_view marker,
+	       			librados::AioCompletion* c)
+{
+  auto oid = get_shard_oid(shard_id);
+
+  return svc.cls->timelog.trim(oid, {}, {}, {},
+                               string(marker), c, null_yield);
+}
+
+int RGWMetadataLog::trim(int shard_id, std::string_view marker)
+{
+  auto oid = get_shard_oid(shard_id);
+  string m = string(marker);
+
+  // Extract timestamp from marker .. needed only for OMAP
+  ceph::real_time stable;
+  int sec, usec;
+  char keyext[256];
+
+  int ret = sscanf(m.c_str(), "1_%d.%d_%255s", &sec, &usec, keyext);
+
+  if (ret) {
+    ldout(cct, 0) << "ERROR: scanning marker ret = " << ret << dendl;
+    return -1;
+  } else {
+    stable = utime_t(sec, usec).to_real_time();
+    // can only trim -up to- master's first timestamp, so subtract a second.
+    // (this is why we use timestamps instead of markers for the peers)
+    stable -= std::chrono::seconds(1);
+  }
+
+  return svc.cls->timelog.trim(oid, {}, stable, {}, {},
+                               nullptr, null_yield);
+}
+
+int RGWMetadataLog::trim(int shard_id, std::string_view marker,
+	                 librados::AioCompletion* c)
+{
+  auto oid = get_shard_oid(shard_id);
+  string m = string(marker);
+
+  // Extract timestamp from marker .. needed only for OMAP
+  ceph::real_time stable;
+  int sec, usec;
+  char keyext[256];
+
+  int ret = sscanf(m.c_str(), "1_%d.%d_%255s", &sec, &usec, keyext);
+
+  if (ret) {
+    ldout(cct, 0) << "ERROR: scanning marker ret = " << ret << dendl;
+    return -1;
+  } else {
+    stable = utime_t(sec, usec).to_real_time();
+    // can only trim -up to- master's first timestamp, so subtract a second.
+    // (this is why we use timestamps instead of markers for the peers)
+    stable -= std::chrono::seconds(1);
+  }
+
+  return svc.cls->timelog.trim(oid, {}, stable, {}, {},
+                               c, null_yield);
 }
 
 int RGWMetadataLog::lock_exclusive(int shard_id, timespan duration, string& zone_id, string& owner_id) {
@@ -294,33 +399,12 @@ RGWCoroutine* RGWMetadataLog::purge_cr()
 RGWCoroutine* RGWMetadataLog::master_trim_cr(int shard_id, const std::string& marker,
 	       				      std::string* last_trim)
 {
-  auto oid = get_shard_oid(shard_id);
-    
-  return new RGWSyncLogTrimCR(store, oid, marker, last_trim);
+  return new RGWMetadataLogTrimCR(cct, this, shard_id, marker, true, last_trim);
 }
 
 RGWCoroutine* RGWMetadataLog::peer_trim_cr(int shard_id, std::string marker)
 {
-  // Extract timestamp from marker
-  auto oid = get_shard_oid(shard_id);
-
-  ceph::real_time stable;
-  int sec, usec;
-  char keyext[256];
-
-  int ret = sscanf(marker.c_str(), "1_%d.%d_%255s", &sec, &usec, keyext);
-
-  if (ret) {
-    ldout(cct, 0) << "ERROR: scanning marker ret = " << ret << dendl;
-    return NULL;
-  } else {
-    stable = utime_t(sec, usec).to_real_time();
-    // can only trim -up to- master's first timestamp, so subtract a second.
-    // (this is why we use timestamps instead of markers for the peers)
-    stable -= std::chrono::seconds(1);
-  }
-
-  return new RGWRadosTimelogTrimCR(store, oid, {}, stable, "", "");
+  return new RGWMetadataLogTrimCR(cct, this, shard_id, marker, false, NULL);
 }
 
 obj_version& RGWMetadataObject::get_version()
