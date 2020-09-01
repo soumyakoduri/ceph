@@ -79,6 +79,53 @@ class RGWMetadataLogInfoCompletion : public RefCountedObject {
   }
 };
 
+class RGWMetadataLogBE {
+protected:
+  CephContext* const cct;
+private:
+  std::string prefix;
+ 
+  static std::string make_prefix(const std::string& period) {
+    if (period.empty())
+      return string(META_LOG_OBJ_PREFIX);
+    return fmt::format("{}{}.", META_LOG_OBJ_PREFIX, period);
+  }
+
+public:
+  using entries = std::variant<std::list<cls_log_entry>,
+			       std::vector<ceph::buffer::list>>;
+
+  RGWMetadataLogBE(CephContext* const cct)
+    : cct(cct), prefix(get_prefix(cct)) {}
+  virtual ~RGWDataChangesBE() = default;
+
+  std::string get_shard_oid(int id) const {
+    return fmt::format("{}{}", prefix, id);
+  }
+
+  int get_shard_id(std::string_view hash_key);
+
+  virtual int push(int index, entries&& items, librados::AioCompletion *completion);
+  virtual int push(int index, ceph::real_time now,
+		   const std::string& section,
+		   const std::string& key,
+		   ceph::buffer::list&& bl);
+  virtual int list(int index, int max_entries,
+		   std::vector<cls_log_entry>& entries,
+		   std::optional<std::string_view> marker,
+		   std::string* out_marker, bool* truncated);
+  virtual int get_info(int index, RGWMetadataLogInfo *info);
+  virtual int get_info_async(int index, RGWMetadataLogInfoCompletion *completion);
+  virtual int trim_master(int index, std::string_view marker);
+  virtual int trim_master(int index, std::string_view marker,
+	                  librados::AioCompletion* c);
+  virtual int trim(int index, std::string_view marker);
+  virtual int trim(int index, std::string_view marker,
+	           librados::AioCompletion* c);
+  virtual int lock_exclusive(int index, timespan duration, string& zone_id, string& owner_id, rgw_pool log_pool);
+  virtual int unlock(int index, string& zone_id, string& owner_id, rgw_pool log_pool);
+};
+
 class RGWMetadataLog {
   CephContext *cct;
   rgw::sal::RGWRadosStore* store;
@@ -89,16 +136,11 @@ class RGWMetadataLog {
     RGWSI_Cls *cls{nullptr};
   } svc;
 
-  static std::string make_prefix(const std::string& period) {
-    if (period.empty())
-      return string(META_LOG_OBJ_PREFIX);
-    return fmt::format("{}{}.", META_LOG_OBJ_PREFIX, period);
-  }
-
   ceph::shared_mutex lock = ceph::make_shared_mutex("RGWMetaLog::lock");
   bc::flat_set<int> modified_shards;
 
   void mark_modified(int shard_id);
+  std::unique_ptr<RGWMetadataLogBE> be;
 public:
   RGWMetadataLog(CephContext *cct,
 		 rgw::sal::RGWRadosStore* store,
@@ -112,13 +154,9 @@ public:
   }
 
 
-  std::string get_shard_oid(int id) const {
-    return fmt::format("{}{}", prefix, id);
-  }
-
+  int start(R::RADOS* rados, librados::Rados* lr)
   int add_entry(const std::string& hash_key, const std::string& section,
 		const std::string& key, ceph::bufferlist& bl);
-  int get_shard_id(std::string_view hash_key);
   int store_entries_in_shard(std::vector<cls_log_entry>& entries, int shard_id,
 			     librados::AioCompletion *completion);
 

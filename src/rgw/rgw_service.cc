@@ -150,7 +150,7 @@ int RGWServices_Def::init(CephContext *cct,
       return r;
     }
 
-    r = mdlog->start();
+    r = mdlog->start(neorados, rados->get_rados_handle());
     if (r < 0) {
       ldout(cct, 0) << "ERROR: failed to start mdlog service (" << cpp_strerror(-r) << dendl;
       return r;

@@ -7139,6 +7139,18 @@ std::vector<Option> get_rgw_options() {
 	"the explicit options will cause startup to fail if the other log is "
 	"still around. 'legacyfifo' is the FIFO backend through the legacy "
 	"librados interface."),
+
+    Option("rgw_mdlog_backing", Option::TYPE_STR, Option::LEVEL_ADVANCED)
+    .set_default("auto")
+    .set_enum_allowed( { "auto", "fifo", "omap", "legacyfifo" } )
+    .set_description("Backing store for the RGW metadata sync log")
+    .set_long_description(
+        "Whether to use the older OMAP backing store or the high performance "
+	"FIFO based backing store. Auto uses whatever already exists "
+	"but will default to FIFO if there isn't an existing log. Either of "
+	"the explicit options will cause startup to fail if the other log is "
+	"still around. 'legacyfifo' is the FIFO backend through the legacy "
+	"librados interface."),
   });
 }
 
