@@ -64,13 +64,17 @@ public:
     RGWSI_SysObj *sysobj{nullptr};
     RGWSI_MDLog *mdlog{nullptr};
     RGWSI_Cls *cls{nullptr};
+    R::RADOS* r_rados{nullptr};
+    librados::Rados* lr{nullptr};
   } svc;
 
   int init(rgw::sal::RGWRadosStore* _store,
 	   RGWSI_RADOS *_rados_svc,
 	   RGWSI_Zone *_zone_svc,
            RGWSI_SysObj *_sysobj_svc,
-           RGWSI_Cls *_cls_svc);
+           RGWSI_Cls *_cls_svc,
+	   R::RADOS *_r_rados,
+	   librados::Rados *_lr);
 
   int do_start() override;
 
