@@ -79,6 +79,40 @@ class RGWMetadataLogInfoCompletion : public RefCountedObject {
   }
 };
 
+class RGWMetadataLogBE {
+protected:
+  CephContext* const cct;
+private:
+  std::string prefix;
+ 
+public:
+  using entries = std::variant<std::list<cls_log_entry>,
+			       std::vector<ceph::buffer::list>>;
+
+  RGWMetadataLogBE(CephContext* const cct, std::string prefix);
+  virtual ~RGWMetadataLogBE();
+
+  std::string get_shard_oid(int id) const {
+    return fmt::format("{}{}", prefix, id);
+  }
+
+  virtual int push(int index, entries& items, librados::AioCompletion *&completion) { return 0; };
+  virtual int push(int index, ceph::real_time now,
+		   const std::string& section,
+		   const std::string& key,
+		   bufferlist& bl) { return 0; };
+  virtual int list(int index, int max_entries,
+		   entries& items,
+		   std::string_view marker,
+		   std::string* out_marker, bool* truncated) { return 0; };
+  virtual int get_info(int index, RGWMetadataLogInfo *info) { return 0; };
+  virtual int get_info_async(int index, RGWMetadataLogInfoCompletion *completion) { return 0; };
+  virtual int trim(int shard_id, std::string_view marker, bool exclusive) { return 0; };
+  virtual int trim(int shard_id, std::string_view marker, librados::AioCompletion* c, bool exclusive) { return 0; };
+  virtual int lock_exclusive(int index, timespan duration, string& zone_id, string& owner_id, rgw_pool log_pool) { return 0; };
+  virtual int unlock(int index, string& zone_id, string& owner_id, rgw_pool log_pool) { return 0; };
+};
+
 class RGWMetadataLog {
   CephContext *cct;
   rgw::sal::RGWRadosStore* store;
@@ -99,6 +133,7 @@ class RGWMetadataLog {
   bc::flat_set<int> modified_shards;
 
   void mark_modified(int shard_id);
+  std::unique_ptr<RGWMetadataLogBE> be;
 public:
   RGWMetadataLog(CephContext *cct,
 		 rgw::sal::RGWRadosStore* store,
@@ -116,6 +151,7 @@ public:
     return fmt::format("{}{}", prefix, id);
   }
 
+  int start(librados::Rados* lr);
   int add_entry(const std::string& hash_key, const std::string& section,
 		const std::string& key, ceph::bufferlist& bl);
   int get_shard_id(std::string_view hash_key);
