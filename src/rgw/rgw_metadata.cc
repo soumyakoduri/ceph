@@ -24,9 +24,16 @@
 
 #include "include/ceph_assert.h"
 
+#include "cls_fifo_legacy.h" 
+#include "cls/fifo/cls_fifo_types.h"
+
+#include "common/async/librados_completion.h"
+
 #include <boost/asio/yield.hpp>
 
 #define dout_subsys ceph_subsys_rgw
+
+namespace bs = boost::system;
 
 const std::string RGWMetadataLogHistory::oid = "meta.history";
 
@@ -137,11 +144,467 @@ int RGWMetadataLogTrimCR::request_complete()
     return r;
   }
   // nothing left to trim, update last_trim_marker
-  if (last_trim_marker && *last_trim_marker < marker && marker != max_marker) {
+  if (last_trim_marker && *last_trim_marker < marker &&
+	 marker != mdlog->max_marker()) {
     *last_trim_marker = marker;
     r = 0;
   }
   return r;
+}
+
+RGWMetadataLogBE::RGWMetadataLogBE(CephContext* const cct, std::string prefix)
+    : cct(cct), prefix(prefix) {}
+RGWMetadataLogBE::~RGWMetadataLogBE() {}
+
+class RGWMetadataLogOmap final : public RGWMetadataLogBE {
+  using centries = std::list<cls_log_entry>;
+  RGWSI_Cls& cls;
+  std::vector<std::string> oids;
+public:
+  RGWMetadataLogOmap(CephContext* cct, std::string prefix, RGWSI_Cls& cls)
+    : RGWMetadataLogBE(cct, prefix), cls(cls) {
+    auto num_shards = cct->_conf->rgw_md_log_max_shards;
+    oids.reserve(num_shards);
+    for (auto i = 0; i < num_shards; ++i) {
+      oids.push_back(RGWMetadataLogBE::get_shard_oid(i));
+    }
+  }
+  ~RGWMetadataLogOmap() override = default;
+  static int exists(CephContext* cct, RGWSI_Cls& cls, std::string prefix) {
+    auto num_shards = cct->_conf->rgw_md_log_max_shards;
+    std::string out_marker;
+    bool truncated = false;
+    std::list<cls_log_entry> log_entries;
+    for (auto i = 0; i < num_shards; ++i) {
+      auto oid = fmt::format("{}{}", prefix, i);
+      auto r = cls.timelog.list(oid, {}, {},
+				100, log_entries,
+				"", &out_marker, &truncated, null_yield);
+      if (r < 0 && r != -ENOENT) {
+	lderr(cct) << __PRETTY_FUNCTION__
+		   << ": failed to list " << oid << ": " << cpp_strerror(-r)
+		   << dendl;
+	return r;
+      } else if (!log_entries.empty()) {
+	return 1;
+      }
+    }
+    return 0;
+  }
+  int push(int index, entries& items, librados::AioCompletion *&completion) override {
+
+    auto r = cls.timelog.add(oids[index], std::get<centries>(items),
+			     completion, false, null_yield);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": failed to push to " << oids[index] << cpp_strerror(-r)
+		 << dendl;
+    }
+    return r;
+  }
+  int push(int index, ceph::real_time now,
+	   const std::string& section,
+	   const std::string& key,
+	   ceph::buffer::list& bl) override {
+    auto r = cls.timelog.add(oids[index], now, section, key, bl, null_yield);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": failed to push to " << oids[index]
+		 << cpp_strerror(-r) << dendl;
+    }
+    return r;
+  }
+  int list(int index, int max_entries,
+	   entries& e,
+	   std::string_view marker,
+	   std::string* out_marker, bool* truncated) override {
+    std::list<cls_log_entry> log_entries;
+    auto r = cls.timelog.list(oids[index], {}, {},
+			      max_entries, (std::list<cls_log_entry> &)e,
+			      string(marker),
+			      out_marker, truncated, null_yield);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": failed to list " << oids[index]
+		 << cpp_strerror(-r) << dendl;
+      return r;
+    }
+    return 0;
+  }
+  int get_info(int index, RGWMetadataLogInfo *info) override {
+    cls_log_header header;
+    auto r = cls.timelog.info(oids[index], &header, null_yield);
+    if (r == -ENOENT) r = 0;
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": failed to get info from " << oids[index]
+		 << cpp_strerror(-r) << dendl;
+    } else {
+      info->marker = header.max_marker;
+      info->last_update = header.max_time.to_real_time();
+    }
+    return r;
+  }
+  int get_info_async(int index, RGWMetadataLogInfoCompletion *completion) override {
+    completion->get(); // hold a ref until the completion fires
+
+    return cls.timelog.info_async(completion->get_io_obj(), oids[index],
+                                       &completion->get_header(),
+                                       completion->get_completion());
+  }
+  int trim(int index, std::string_view marker, bool exclusive) override {
+    string m = string(marker);
+    int r = 0;
+
+    if (!exclusive) {
+      r = cls.timelog.trim(oids[index], {}, {},
+			      {}, m, nullptr, null_yield);
+    } else {
+      // Extract timestamp from marker .. needed only for OMAP
+      ceph::real_time stable;
+      int sec, usec;
+      char keyext[256];
+
+      int ret = sscanf(m.c_str(), "1_%d.%d_%255s", &sec, &usec, keyext);
+
+      if (ret) {
+        ldout(cct, 0) << "ERROR: scanning marker ret = " << ret << dendl;
+        return -1;
+      } else {
+        stable = utime_t(sec, usec).to_real_time();
+        // can only trim -up to- master's first timestamp, so subtract a second.
+        // (this is why we use timestamps instead of markers for the peers)
+        stable -= std::chrono::seconds(1);
+      }
+
+      r = cls.timelog.trim(oids[index], {}, stable,
+  			      {}, {}, nullptr,
+  			      null_yield);
+    }
+
+    if (r == -ENOENT) r = 0;
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": failed to trim " << oids[index]
+		 << cpp_strerror(-r) << dendl;
+    }
+    return r;
+  }
+  int trim(int index, std::string_view marker,
+	   librados::AioCompletion* c, bool exclusive) override {
+    string m = string(marker);
+
+    int r = 0;
+
+    if (!exclusive) {
+      r = cls.timelog.trim(oids[index], {}, {},
+			      {}, m, c, null_yield);
+    } else {
+      // Extract timestamp from marker .. needed only for OMAP
+      ceph::real_time stable;
+      int sec, usec;
+      char keyext[256];
+
+      int ret = sscanf(m.c_str(), "1_%d.%d_%255s", &sec, &usec, keyext);
+
+      if (ret) {
+        ldout(cct, 0) << "ERROR: scanning marker ret = " << ret << dendl;
+        return -1;
+      } else {
+        stable = utime_t(sec, usec).to_real_time();
+        // can only trim -up to- master's first timestamp, so subtract a second.
+        // (this is why we use timestamps instead of markers for the peers)
+        stable -= std::chrono::seconds(1);
+      }
+
+      r = cls.timelog.trim(oids[index], {}, stable,
+			    {}, {}, c, null_yield);
+    }
+
+    if (r == -ENOENT) r = 0;
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": failed to get trim " << oids[index]
+		 << cpp_strerror(-r) << dendl;
+    }
+    return r;
+  }
+  std::string_view max_marker() override {
+    return "99999999"sv;
+  }
+};
+
+class RGWMetadataLogFIFO final : public RGWMetadataLogBE {
+  using centries = std::vector<ceph::buffer::list>;
+  std::vector<std::unique_ptr<rgw::cls::fifo::FIFO>> fifos;
+public:
+  RGWMetadataLogFIFO(CephContext* cct, std::string prefix,
+		     librados::Rados* rados, const rgw_pool& log_pool)
+    : RGWMetadataLogBE(cct, prefix) {
+    librados::IoCtx ioctx;
+    auto shards = cct->_conf->rgw_md_log_max_shards;
+    auto r = rgw_init_ioctx(rados, log_pool.name, ioctx,
+			    true, false);
+    if (r < 0) {
+      throw bs::system_error(ceph::to_error_code(r));
+    }
+    fifos.resize(shards);
+    for (auto i = 0; i < shards; ++i) {
+      r = rgw::cls::fifo::FIFO::create(ioctx, get_shard_oid(i),
+				       &fifos[i], null_yield);
+      if (r < 0) {
+	throw bs::system_error(ceph::to_error_code(r));
+      }
+    }
+    ceph_assert(fifos.size() == unsigned(shards));
+    ceph_assert(std::none_of(fifos.cbegin(), fifos.cend(),
+			     [](const auto& p) {
+			       return p == nullptr;
+			     }));
+  }
+  ~RGWMetadataLogFIFO() override = default;
+  static int exists(CephContext* cct, std::string prefix, librados::Rados* rados,
+		    const rgw_pool& log_pool) {
+    auto num_shards = cct->_conf->rgw_md_log_max_shards;
+    librados::IoCtx ioctx;
+    auto r = rgw_init_ioctx(rados, log_pool.name, ioctx,
+			    false, false);
+    if (r < 0) {
+      if (r == -ENOENT) {
+	return 0;
+      } else {
+	lderr(cct) << __PRETTY_FUNCTION__
+		   << ": rgw_init_ioctx failed: " << log_pool.name
+		   << ": " << cpp_strerror(-r) << dendl;
+	return r;
+      }
+    }
+    for (auto i = 0; i < num_shards; ++i) {
+      std::unique_ptr<rgw::cls::fifo::FIFO> fifo;
+      auto oid = fmt::format("{}{}", prefix, i);
+      auto r = rgw::cls::fifo::FIFO::open(ioctx, oid,
+					  &fifo, null_yield);
+      if (r >= 0)
+	return 1;
+      if (r == -ENOENT ||
+	  r == -ENODATA) {
+	continue;
+      } else {
+	lderr(cct) << __PRETTY_FUNCTION__
+		   << ": unable to open FIFO: " << log_pool << "/" << oid
+		   << ": " << cpp_strerror(-r) << dendl;
+	return r;
+      }
+    }
+    return 0;
+  }
+  int push(int index, entries& items, librados::AioCompletion *&completion) override {
+    centries c;
+    for (const auto& bs : ((std::list<cls_log_entry> &)items)) {
+
+      bufferlist bl;
+      encode(bs, bl);
+
+      c.push_back(std::move(bl));
+    }
+
+    auto r = fifos[index]->push(c, null_yield);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": unable to push to FIFO: " << get_shard_oid(index)
+		 << ": " << cpp_strerror(-r) << dendl;
+    }
+    return r;
+  }
+  int push(int index, ceph::real_time now,
+	   const std::string& section,
+	   const std::string& key,
+	   ceph::buffer::list& bl) override {
+    auto r = fifos[index]->push(std::move(bl), null_yield);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": unable to push to FIFO: " << get_shard_oid(index)
+		 << ": " << cpp_strerror(-r) << dendl;
+    }
+    return r;
+  }
+  int list(int index, int max_entries,
+	   entries& e,
+	   std::string_view marker,
+	   std::string* out_marker, bool* truncated) override {
+    std::vector<rgw::cls::fifo::list_entry> log_entries;
+    bool more = false;
+    auto r = fifos[index]->list(max_entries, marker,
+		   		&log_entries, &more,
+				null_yield);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": unable to list FIFO: " << get_shard_oid(index)
+		 << ": " << cpp_strerror(-r) << dendl;
+      return r;
+    }
+    for (const auto& entry : log_entries) {
+      bufferlist& bl((bufferlist &)entry);
+      cls_log_entry log_entry;
+      decode(log_entry, bl);
+/*      log_entry.id = entry.marker;
+      log_entry.timestamp = entry.mtime;
+      auto liter = entry.data.cbegin();
+      try {
+	decode(log_entry.entry, liter);
+      } catch (const buffer::error& err) {
+	lderr(cct) << __PRETTY_FUNCTION__
+		   << ": failed to decode data changes log entry: "
+		   << err.what() << dendl;
+	return -EIO;
+      }*/
+      ((std::list<cls_log_entry> &)e).push_back(std::move(log_entry));
+    }
+    if (truncated)
+      *truncated = more;
+    if (out_marker && !log_entries.empty()) {
+      *out_marker = log_entries.back().marker;
+    }
+    return 0;
+  }
+  int get_info(int index, RGWMetadataLogInfo *info) override {
+    auto& fifo = fifos[index];
+    auto r = fifo->read_meta(null_yield);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": unable to get FIFO metadata: " << get_shard_oid(index)
+		 << ": " << cpp_strerror(-r) << dendl;
+      return r;
+    }
+    auto m = fifo->meta();
+    auto p = m.head_part_num;
+    if (p < 0) {
+      info->marker = rgw::cls::fifo::marker{}.to_string();
+      info->last_update = ceph::real_clock::zero();
+      return 0;
+    }
+    rgw::cls::fifo::part_info h;
+    r = fifo->get_part_info(p, &h, null_yield);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": unable to get part info: " << get_shard_oid(index) << "/" << p
+		 << ": " << cpp_strerror(-r) << dendl;
+      return r;
+    }
+    info->marker = rgw::cls::fifo::marker{p, h.last_ofs}.to_string();
+    info->last_update = h.max_time;
+    return 0;
+  }
+  /* get_info_async(index, infocompletion);
+   * also handle AIO completion in push also like in trim
+   */
+  int trim(int index, std::string_view marker, bool exclusive) override {
+    auto r = fifos[index]->trim(marker, exclusive, null_yield);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": unable to trim FIFO: " << get_shard_oid(index)
+		 << ": " << cpp_strerror(-r) << dendl;
+    }
+    return r;
+  }
+  int trim(int index, std::string_view marker,
+	   librados::AioCompletion* c, bool exclusive) override {
+    int r = 0;
+    if (marker == rgw::cls::fifo::marker(0, 0).to_string()) {
+      auto pc = c->pc;
+      pc->get();
+      pc->lock.lock();
+      pc->rval = 0;
+      pc->complete = true;
+      pc->lock.unlock();
+      auto cb_complete = pc->callback_complete;
+      auto cb_complete_arg = pc->callback_complete_arg;
+      if (cb_complete)
+	cb_complete(pc, cb_complete_arg);
+
+      auto cb_safe = pc->callback_safe;
+      auto cb_safe_arg = pc->callback_safe_arg;
+      if (cb_safe)
+	cb_safe(pc, cb_safe_arg);
+
+      pc->lock.lock();
+      pc->callback_complete = NULL;
+      pc->callback_safe = NULL;
+      pc->cond.notify_all();
+      pc->put_unlock();
+    } else {
+      r = fifos[index]->trim(marker, exclusive, c);
+      if (r < 0) {
+	lderr(cct) << __PRETTY_FUNCTION__
+		   << ": unable to trim FIFO: " << get_shard_oid(index)
+		   << ": " << cpp_strerror(-r) << dendl;
+      }
+    }
+    return r;
+  }
+  std::string_view max_marker() override {
+    static const std::string mm =
+      rgw::cls::fifo::marker::max().to_string();
+    return std::string_view(mm);
+  } 
+};
+
+int RGWMetadataLog::start(librados::Rados* lr)
+{
+  auto backing = cct->_conf.get_val<std::string>("rgw_mdlog_backing");
+  // Should be guaranteed by `set_enum_allowed`
+  ceph_assert(backing == "auto" || backing == "fifo" || backing == "omap");
+
+  auto log_pool = svc.zone->get_zone_params().log_pool;
+  auto r = RGWMetadataLogOmap::exists(cct, *svc.cls, prefix);
+  if (r < 0) {
+    lderr(cct) << __PRETTY_FUNCTION__
+	       << ": Error when checking for existing Omap datalog backend: "
+	       << cpp_strerror(-r) << dendl;
+  }
+  bool omapexists = (r > 0);
+  r = RGWMetadataLogFIFO::exists(cct, prefix, lr, log_pool);
+  if (r < 0) {
+    lderr(cct) << __PRETTY_FUNCTION__
+	       << ": Error when checking for existing FIFO datalog backend: "
+	       << cpp_strerror(-r) << dendl;
+  }
+  bool fifoexists = (r > 0);
+
+  if (omapexists && fifoexists) {
+    lderr(cct) << __PRETTY_FUNCTION__
+	       << ": Both Omap and FIFO backends exist, cannot continue."
+	       << dendl;
+    return -EINVAL;
+  }
+  if (backing == "omap" && fifoexists) {
+    lderr(cct) << __PRETTY_FUNCTION__
+	       << ": Omap requested, but FIFO backend exists, cannot continue."
+	       << dendl;
+    return -EINVAL;
+  }
+  if ((backing == "fifo") && omapexists) {
+    lderr(cct) << __PRETTY_FUNCTION__
+	       << ": FIFO requested, but Omap backend exists, cannot continue."
+	       << dendl;
+    return -EINVAL;
+  }
+
+  try {
+    if (backing == "omap" || (backing == "auto" && omapexists)) {
+      be = std::make_unique<RGWMetadataLogOmap>(cct, prefix, *svc.cls);
+    } else if (backing != "omap") {
+      be = std::make_unique<RGWMetadataLogFIFO>(cct, prefix, lr, log_pool);
+    }
+  } catch (bs::system_error& e) {
+    lderr(cct) << __PRETTY_FUNCTION__
+	       << ": Error when starting backend: "
+	       << e.what() << dendl;
+    return ceph::from_error_code(e.code());
+  }
+
+  ceph_assert(be);
+  return 0;
 }
 
 int RGWMetadataLog::add_entry(const string& hash_key, const string& section,
@@ -154,7 +617,7 @@ int RGWMetadataLog::add_entry(const string& hash_key, const string& section,
 					hash_key);
   mark_modified(shard_id);
   real_time now = real_clock::now();
-  return svc.cls->timelog.add(oid, now, section, key, bl, null_yield);
+  return be->push(shard_id, now, section, key, (ceph::buffer::list &)bl);
 }
 
 int RGWMetadataLog::get_shard_id(std::string_view hash_key)
@@ -165,13 +628,17 @@ int RGWMetadataLog::get_shard_id(std::string_view hash_key)
   return shard_id;
 }
 
+std::string_view RGWMetadataLog::max_marker() const {
+  return be->max_marker();
+}
+
 int RGWMetadataLog::store_entries_in_shard(std::vector<cls_log_entry>& entries, int shard_id, librados::AioCompletion *completion)
 {
   mark_modified(shard_id);
-  auto oid = rgw_shard_name(prefix, shard_id);
   std::list<cls_log_entry> lentries(std::move_iterator(entries.begin()),
 				    std::move_iterator(entries.end()));
-  return svc.cls->timelog.add(oid, lentries, completion, false, null_yield);
+  RGWMetadataLogBE::entries e(lentries);
+  return be->push(shard_id, e, completion);
 }
 
 int RGWMetadataLog::list_entries(int shard,
@@ -186,12 +653,10 @@ int RGWMetadataLog::list_entries(int shard,
     return 0;
   }
 
-  auto oid = get_shard_oid(shard);
   std::string next_marker;
   std::list<cls_log_entry> lentries;
-  int ret = svc.cls->timelog.list(oid, {}, {},
-                                  max_entries, lentries, string(marker),
-                                  &next_marker, truncated, null_yield);
+  RGWMetadataLogBE::entries e(lentries);
+  int ret = be->list(shard, max_entries, e, marker, &next_marker, truncated);
   entries.clear();
   std::move(lentries.begin(), lentries.end(), std::back_inserter(entries));
   if ((ret < 0) && (ret != -ENOENT))
@@ -209,18 +674,7 @@ int RGWMetadataLog::list_entries(int shard,
 
 int RGWMetadataLog::get_info(int shard_id, RGWMetadataLogInfo *info)
 {
-  auto oid = get_shard_oid(shard_id);
-
-  cls_log_header header;
-
-  int ret = svc.cls->timelog.info(oid, &header, null_yield);
-  if ((ret < 0) && (ret != -ENOENT))
-    return ret;
-
-  info->marker = header.max_marker;
-  info->last_update = header.max_time.to_real_time();
-
-  return 0;
+  return be->get_info(shard_id, info);
 }
 
 static void _mdlog_info_completion(librados::completion_t cb, void *arg)
@@ -244,77 +698,18 @@ RGWMetadataLogInfoCompletion::~RGWMetadataLogInfoCompletion()
 
 int RGWMetadataLog::get_info_async(int shard_id, RGWMetadataLogInfoCompletion *completion)
 {
-  auto oid = get_shard_oid(shard_id);
-
-  completion->get(); // hold a ref until the completion fires
-
-  return svc.cls->timelog.info_async(completion->get_io_obj(), oid,
-                                     &completion->get_header(),
-                                     completion->get_completion());
+  return be->get_info_async(shard_id, completion);
 }
 
 int RGWMetadataLog::trim(int shard_id, std::string_view marker, bool exclusive)
 {
-  auto oid = get_shard_oid(shard_id);
-
-  if (!exclusive) {
-    return svc.cls->timelog.trim(oid, {}, {}, {},
-                                 string(marker), nullptr, null_yield);
-  }
-
-  string m = string(marker);
-
-  // Extract timestamp from marker .. needed only for OMAP
-  ceph::real_time stable;
-  int sec, usec;
-  char keyext[256];
-
-  int ret = sscanf(m.c_str(), "1_%d.%d_%255s", &sec, &usec, keyext);
-
-  if (ret) {
-    ldout(cct, 0) << "ERROR: scanning marker ret = " << ret << dendl;
-    return -1;
-  } else {
-    stable = utime_t(sec, usec).to_real_time();
-    // can only trim -up to- master's first timestamp, so subtract a second.
-    // (this is why we use timestamps instead of markers for the peers)
-    stable -= std::chrono::seconds(1);
-  }
-
-  return svc.cls->timelog.trim(oid, {}, stable, {}, {},
-                               nullptr, null_yield);
+  return be->trim(shard_id, marker, exclusive);
 }
 
 int RGWMetadataLog::trim(int shard_id, std::string_view marker,
 	                 librados::AioCompletion* c, bool exclusive)
 {
-  auto oid = get_shard_oid(shard_id);
-  if (!exclusive) {
-    return svc.cls->timelog.trim(oid, {}, {}, {},
-                                 string(marker), c, null_yield);
-  }
-
-  string m = string(marker);
-
-  // Extract timestamp from marker .. needed only for OMAP
-  ceph::real_time stable;
-  int sec, usec;
-  char keyext[256];
-
-  int ret = sscanf(m.c_str(), "1_%d.%d_%255s", &sec, &usec, keyext);
-
-  if (ret) {
-    ldout(cct, 0) << "ERROR: scanning marker ret = " << ret << dendl;
-    return -1;
-  } else {
-    stable = utime_t(sec, usec).to_real_time();
-    // can only trim -up to- master's first timestamp, so subtract a second.
-    // (this is why we use timestamps instead of markers for the peers)
-    stable -= std::chrono::seconds(1);
-  }
-
-  return svc.cls->timelog.trim(oid, {}, stable, {}, {},
-                               c, null_yield);
+  return be->trim(shard_id, marker, c, exclusive);
 }
 
 int RGWMetadataLog::lock_exclusive(int shard_id, timespan duration, string& zone_id, string& owner_id) {
