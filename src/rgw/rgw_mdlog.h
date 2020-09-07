@@ -100,7 +100,7 @@ public:
   virtual int push(int index, ceph::real_time now,
 		   const std::string& section,
 		   const std::string& key,
-		   bufferlist& bl) { return 0; };
+		   ceph::buffer::list& bl) { return 0; };
   virtual int list(int index, int max_entries,
 		   entries& items,
 		   std::string_view marker,
@@ -111,6 +111,7 @@ public:
   virtual int trim(int shard_id, std::string_view marker, librados::AioCompletion* c, bool exclusive) { return 0; };
   virtual int lock_exclusive(int index, timespan duration, string& zone_id, string& owner_id, rgw_pool log_pool) { return 0; };
   virtual int unlock(int index, string& zone_id, string& owner_id, rgw_pool log_pool) { return 0; };
+  virtual std::string_view max_marker() { return "" ; };
 };
 
 class RGWMetadataLog {
@@ -189,6 +190,7 @@ public:
   RGWCoroutine* master_trim_cr(int shard_id, const std::string& marker,
 	       			std::string* last_trim);
   RGWCoroutine* peer_trim_cr(int shard_id, std::string marker);
+  std::string_view max_marker() const;
 };
 
 class RGWMetadataLogTrimCR : public RGWSimpleCoroutine {
@@ -201,8 +203,6 @@ class RGWMetadataLogTrimCR : public RGWSimpleCoroutine {
   std::string *last_trim_marker;
 
  public:
-  static constexpr const char* max_marker = "99999999";
-
   RGWMetadataLogTrimCR(CephContext *cct,
 		  	RGWMetadataLog *mdlog, const int shard_id,
                         const std::string& marker, bool exclusive,
