@@ -69,6 +69,7 @@ protected:
 };
 
 using LegacyClsFIFO = LegacyFIFO;
+using AioLegacyFIFO = LegacyFIFO;
 
 TEST_F(LegacyClsFIFO, TestCreate)
 {
@@ -518,96 +519,6 @@ TEST_F(LegacyFIFO, TestPushBatch)
   ASSERT_EQ(info.head_part_num, 4);
 }
 
-TEST_F(LegacyFIFO, TestAioTrim)
-{
-  static constexpr auto max_part_size = 2048ull;
-  static constexpr auto max_entry_size = 128ull;
-  std::unique_ptr<RCf::FIFO> f;
-  auto r = RCf::FIFO::create(ioctx, fifo_id, &f, null_yield, std::nullopt,
-			     std::nullopt, false, max_part_size,
-			     max_entry_size);
-  ASSERT_EQ(0, r);
-
-  char buf[max_entry_size];
-  memset(buf, 0, sizeof(buf));
-  const auto [part_header_size, part_entry_overhead] =
-    f->get_part_layout_info();
-  const auto entries_per_part = ((max_part_size - part_header_size) /
-				 (max_entry_size + part_entry_overhead));
-  const auto max_entries = entries_per_part * 4 + 1;
-  /* push enough entries */
-  std::vector<cb::list> bufs;
-  for (auto i = 0u; i < max_entries; ++i) {
-    cb::list bl;
-    *(int *)buf = i;
-    bl.append(buf, sizeof(buf));
-    bufs.push_back(std::move(bl));
-  }
-  ASSERT_EQ(max_entries, bufs.size());
-
-  r = f->push(bufs, null_yield);
-  ASSERT_EQ(0, r);
-
-  auto info = f->meta();
-  ASSERT_EQ(info.id, fifo_id);
-  /* head should have advanced */
-  ASSERT_GT(info.head_part_num, 0);
-
-  /* list all at once */
-  std::vector<RCf::list_entry> result;
-  bool more = false;
-  r = f->list(max_entries, std::nullopt, &result, &more, null_yield);
-  ASSERT_EQ(0, r);
-  ASSERT_EQ(false, more);
-  ASSERT_EQ(max_entries, result.size());
-
-  std::optional<std::string> marker;
-  /* trim one at a time */
-  result.clear();
-  more = false;
-  marker.reset();
-  for (auto i = 0u; i < max_entries; ++i) {
-    /* read single entry */
-    r = f->list(1, marker, &result, &more, null_yield);
-    ASSERT_EQ(0, r);
-    ASSERT_EQ(result.size(), 1);
-    const bool expected_more = (i != (max_entries - 1));
-    ASSERT_EQ(expected_more, more);
-
-    marker = result.front().marker;
-    std::unique_ptr<R::AioCompletion> c(rados.aio_create_completion(nullptr,
-								    nullptr));
-    r = f->trim(*marker, false, c.get());
-    ASSERT_EQ(0, r);
-    c->wait_for_complete();
-    r = c->get_return_value();
-    ASSERT_EQ(0, r);
-
-    /* check tail */
-    info = f->meta();
-    ASSERT_EQ(info.tail_part_num, i / entries_per_part);
-
-    /* try to read all again, see how many entries left */
-    r = f->list(max_entries, marker, &result, &more, null_yield);
-    ASSERT_EQ(max_entries - i - 1, result.size());
-    ASSERT_EQ(false, more);
-  }
-
-  /* tail now should point at head */
-  info = f->meta();
-  ASSERT_EQ(info.head_part_num, info.tail_part_num);
-
-  RCf::part_info partinfo;
-  /* check old tails are removed */
-  for (auto i = 0; i < info.tail_part_num; ++i) {
-    r = f->get_part_info(i, &partinfo, null_yield);
-    ASSERT_EQ(-ENOENT, r);
-  }
-  /* check current tail exists */
-  r = f->get_part_info(info.tail_part_num, &partinfo, null_yield);
-  ASSERT_EQ(0, r);
-}
-
 TEST_F(LegacyFIFO, TestTrimExclusive) {
   std::unique_ptr<RCf::FIFO> f;
   auto r = RCf::FIFO::create(ioctx, fifo_id, &f, null_yield);
@@ -644,4 +555,482 @@ TEST_F(LegacyFIFO, TestTrimExclusive) {
   std::tie(val, marker) = decode_entry<std::uint32_t>(result.front());
   ASSERT_EQ(result.size(), 1);
   ASSERT_EQ(max_entries - 1, val);
+}
+
+
+TEST_F(AioLegacyFIFO, TestPushListTrim)
+{
+  std::unique_ptr<RCf::FIFO> f;
+  auto r = RCf::FIFO::create(ioctx, fifo_id, &f, null_yield);
+  ASSERT_EQ(0, r);
+  static constexpr auto max_entries = 10u;
+  for (uint32_t i = 0; i < max_entries; ++i) {
+    cb::list bl;
+    encode(i, bl);
+    auto c = R::Rados::aio_create_completion();
+    r = f->push(bl, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    ASSERT_EQ(0, r);
+  }
+
+  std::optional<std::string> marker;
+  /* get entries one by one */
+  std::vector<RCf::list_entry> result;
+  bool more = false;
+  for (auto i = 0u; i < max_entries; ++i) {
+    auto c = R::Rados::aio_create_completion();
+    r = f->list(1, marker, &result, &more, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    ASSERT_EQ(0, r);
+
+    bool expected_more = (i != (max_entries - 1));
+    ASSERT_EQ(expected_more, more);
+    ASSERT_EQ(1, result.size());
+
+    std::uint32_t val;
+    std::tie(val, marker) = decode_entry<std::uint32_t>(result.front());
+
+    ASSERT_EQ(i, val);
+    result.clear();
+  }
+
+  /* get all entries at once */
+  std::string markers[max_entries];
+  std::uint32_t min_entry = 0;
+  auto c = R::Rados::aio_create_completion();
+  r = f->list(max_entries * 10, std::nullopt, &result, &more, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+
+  ASSERT_FALSE(more);
+  ASSERT_EQ(max_entries, result.size());
+  for (auto i = 0u; i < max_entries; ++i) {
+    std::uint32_t val;
+    std::tie(val, markers[i]) = decode_entry<std::uint32_t>(result[i]);
+    ASSERT_EQ(i, val);
+  }
+
+  /* trim one entry */
+  c = R::Rados::aio_create_completion();
+  r = f->trim(markers[min_entry], false, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+  ++min_entry;
+
+  c = R::Rados::aio_create_completion();
+  r = f->list(max_entries * 10, std::nullopt, &result, &more, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+  ASSERT_FALSE(more);
+  ASSERT_EQ(max_entries - min_entry, result.size());
+
+  for (auto i = min_entry; i < max_entries; ++i) {
+    std::uint32_t val;
+    std::tie(val, markers[i - min_entry]) =
+      decode_entry<std::uint32_t>(result[i - min_entry]);
+    EXPECT_EQ(i, val);
+  }
+}
+
+
+TEST_F(AioLegacyFIFO, TestPushTooBig)
+{
+  static constexpr auto max_part_size = 2048ull;
+  static constexpr auto max_entry_size = 128ull;
+
+  std::unique_ptr<RCf::FIFO> f;
+  auto r = RCf::FIFO::create(ioctx, fifo_id, &f, null_yield, std::nullopt,
+			     std::nullopt, false, max_part_size, max_entry_size);
+  ASSERT_EQ(0, r);
+
+  char buf[max_entry_size + 1];
+  memset(buf, 0, sizeof(buf));
+
+  cb::list bl;
+  bl.append(buf, sizeof(buf));
+
+  auto c = R::Rados::aio_create_completion();
+  r = f->push(bl, c);
+  ASSERT_EQ(-E2BIG, r);
+  c->release();
+
+  c = R::Rados::aio_create_completion();
+  r = f->push(std::vector<cb::list>{}, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  EXPECT_EQ(0, r);
+}
+
+
+TEST_F(AioLegacyFIFO, TestMultipleParts)
+{
+  static constexpr auto max_part_size = 2048ull;
+  static constexpr auto max_entry_size = 128ull;
+  std::unique_ptr<RCf::FIFO> f;
+  auto r = RCf::FIFO::create(ioctx, fifo_id, &f, null_yield, std::nullopt,
+			     std::nullopt, false, max_part_size,
+			     max_entry_size);
+  ASSERT_EQ(0, r);
+
+  char buf[max_entry_size];
+  memset(buf, 0, sizeof(buf));
+  const auto [part_header_size, part_entry_overhead] =
+    f->get_part_layout_info();
+  const auto entries_per_part = ((max_part_size - part_header_size) /
+				 (max_entry_size + part_entry_overhead));
+  const auto max_entries = entries_per_part * 4 + 1;
+  /* push enough entries */
+  for (auto i = 0u; i < max_entries; ++i) {
+    cb::list bl;
+    *(int *)buf = i;
+    bl.append(buf, sizeof(buf));
+    auto c = R::Rados::aio_create_completion();
+    r = f->push(bl, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    EXPECT_EQ(0, r);
+  }
+
+  auto info = f->meta();
+  ASSERT_EQ(info.id, fifo_id);
+  /* head should have advanced */
+  ASSERT_GT(info.head_part_num, 0);
+
+  /* list all at once */
+  std::vector<RCf::list_entry> result;
+  bool more = false;
+  auto c = R::Rados::aio_create_completion();
+  r = f->list(max_entries, std::nullopt, &result, &more, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  EXPECT_EQ(0, r);
+  EXPECT_EQ(false, more);
+  ASSERT_EQ(max_entries, result.size());
+
+  for (auto i = 0u; i < max_entries; ++i) {
+    auto& bl = result[i].data;
+    ASSERT_EQ(i, *(int *)bl.c_str());
+  }
+
+  std::optional<std::string> marker;
+  /* get entries one by one */
+
+  for (auto i = 0u; i < max_entries; ++i) {
+    c = R::Rados::aio_create_completion();
+    r = f->list(1, marker, &result, &more, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    EXPECT_EQ(0, r);
+    ASSERT_EQ(result.size(), 1);
+    const bool expected_more = (i != (max_entries - 1));
+    ASSERT_EQ(expected_more, more);
+
+    std::uint32_t val;
+    std::tie(val, marker) = decode_entry<std::uint32_t>(result.front());
+
+    auto& entry = result.front();
+    auto& bl = entry.data;
+    ASSERT_EQ(i, *(int *)bl.c_str());
+    marker = entry.marker;
+  }
+
+  /* trim one at a time */
+  marker.reset();
+  for (auto i = 0u; i < max_entries; ++i) {
+    /* read single entry */
+    c = R::Rados::aio_create_completion();
+    r = f->list(1, marker, &result, &more, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    EXPECT_EQ(0, r);
+    ASSERT_EQ(result.size(), 1);
+    const bool expected_more = (i != (max_entries - 1));
+    ASSERT_EQ(expected_more, more);
+
+    marker = result.front().marker;
+    c = R::Rados::aio_create_completion();
+    r = f->trim(*marker, false, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    EXPECT_EQ(0, r);
+    ASSERT_EQ(result.size(), 1);
+
+    /* check tail */
+    info = f->meta();
+    ASSERT_EQ(info.tail_part_num, i / entries_per_part);
+
+    /* try to read all again, see how many entries left */
+    c = R::Rados::aio_create_completion();
+    r = f->list(max_entries, marker, &result, &more, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    EXPECT_EQ(0, r);
+    ASSERT_EQ(max_entries - i - 1, result.size());
+    ASSERT_EQ(false, more);
+  }
+
+  /* tail now should point at head */
+  info = f->meta();
+  ASSERT_EQ(info.head_part_num, info.tail_part_num);
+
+  RCf::part_info partinfo;
+  /* check old tails are removed */
+  for (auto i = 0; i < info.tail_part_num; ++i) {
+    c = R::Rados::aio_create_completion();
+    r = f->get_part_info(i, &partinfo, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    ASSERT_EQ(-ENOENT, r);
+  }
+  /* check current tail exists */
+  c = R::Rados::aio_create_completion();
+  r = f->get_part_info(info.tail_part_num, &partinfo, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+
+  c = R::Rados::aio_create_completion();
+  r = f->get_head_info(nullptr, &partinfo, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+}
+
+TEST_F(AioLegacyFIFO, TestTwoPushers)
+{
+  static constexpr auto max_part_size = 2048ull;
+  static constexpr auto max_entry_size = 128ull;
+
+  std::unique_ptr<RCf::FIFO> f;
+  auto r = RCf::FIFO::create(ioctx, fifo_id, &f, null_yield, std::nullopt,
+			     std::nullopt, false, max_part_size,
+			     max_entry_size);
+  ASSERT_EQ(0, r);
+  char buf[max_entry_size];
+  memset(buf, 0, sizeof(buf));
+
+  auto [part_header_size, part_entry_overhead] = f->get_part_layout_info();
+  const auto entries_per_part = ((max_part_size - part_header_size) /
+				 (max_entry_size + part_entry_overhead));
+  const auto max_entries = entries_per_part * 4 + 1;
+  std::unique_ptr<RCf::FIFO> f2;
+  r = RCf::FIFO::open(ioctx, fifo_id, &f2, null_yield);
+  std::vector fifos{&f, &f2};
+
+  for (auto i = 0u; i < max_entries; ++i) {
+    cb::list bl;
+    *(int *)buf = i;
+    bl.append(buf, sizeof(buf));
+    auto& f = *fifos[i % fifos.size()];
+    auto c = R::Rados::aio_create_completion();
+    r = f->push(bl, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    ASSERT_EQ(0, r);
+  }
+
+  /* list all by both */
+  std::vector<RCf::list_entry> result;
+  bool more = false;
+  auto c = R::Rados::aio_create_completion();
+  r = f2->list(max_entries, std::nullopt, &result, &more, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+  ASSERT_EQ(false, more);
+  ASSERT_EQ(max_entries, result.size());
+
+  c = R::Rados::aio_create_completion();
+  r = f2->list(max_entries, std::nullopt, &result, &more, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+  ASSERT_EQ(false, more);
+  ASSERT_EQ(max_entries, result.size());
+
+  for (auto i = 0u; i < max_entries; ++i) {
+    auto& bl = result[i].data;
+    ASSERT_EQ(i, *(int *)bl.c_str());
+  }
+}
+
+TEST_F(AioLegacyFIFO, TestTwoPushersTrim)
+{
+  static constexpr auto max_part_size = 2048ull;
+  static constexpr auto max_entry_size = 128ull;
+  std::unique_ptr<RCf::FIFO> f1;
+  auto r = RCf::FIFO::create(ioctx, fifo_id, &f1, null_yield, std::nullopt,
+			     std::nullopt, false, max_part_size,
+			     max_entry_size);
+  ASSERT_EQ(0, r);
+
+  char buf[max_entry_size];
+  memset(buf, 0, sizeof(buf));
+
+  auto [part_header_size, part_entry_overhead] = f1->get_part_layout_info();
+  const auto entries_per_part = ((max_part_size - part_header_size) /
+				 (max_entry_size + part_entry_overhead));
+  const auto max_entries = entries_per_part * 4 + 1;
+
+  std::unique_ptr<RCf::FIFO> f2;
+  r = RCf::FIFO::open(ioctx, fifo_id, &f2, null_yield);
+  ASSERT_EQ(0, r);
+
+  /* push one entry to f2 and the rest to f1 */
+  for (auto i = 0u; i < max_entries; ++i) {
+    cb::list bl;
+    *(int *)buf = i;
+    bl.append(buf, sizeof(buf));
+    auto& f = (i < 1 ? f2 : f1);
+    auto c = R::Rados::aio_create_completion();
+    r = f->push(bl, c);
+    ASSERT_EQ(0, r);
+    c->wait_for_complete();
+    r = c->get_return_value();
+    c->release();
+    ASSERT_EQ(0, r);
+  }
+
+  /* trim half by fifo1 */
+  auto num = max_entries / 2;
+  std::string marker;
+  std::vector<RCf::list_entry> result;
+  bool more = false;
+  auto c = R::Rados::aio_create_completion();
+  r = f1->list(num, std::nullopt, &result, &more, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+  ASSERT_EQ(true, more);
+  ASSERT_EQ(num, result.size());
+
+  for (auto i = 0u; i < num; ++i) {
+    auto& bl = result[i].data;
+    ASSERT_EQ(i, *(int *)bl.c_str());
+  }
+
+  auto& entry = result[num - 1];
+  marker = entry.marker;
+  c = R::Rados::aio_create_completion();
+  r = f1->trim(marker, false, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+  /* list what's left by fifo2 */
+
+  const auto left = max_entries - num;
+  c = R::Rados::aio_create_completion();
+  r = f2->list(left, marker, &result, &more, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+  ASSERT_EQ(left, result.size());
+  ASSERT_EQ(false, more);
+
+  for (auto i = num; i < max_entries; ++i) {
+    auto& bl = result[i - num].data;
+    ASSERT_EQ(i, *(int *)bl.c_str());
+  }
+}
+
+TEST_F(AioLegacyFIFO, TestPushBatch)
+{
+  static constexpr auto max_part_size = 2048ull;
+  static constexpr auto max_entry_size = 128ull;
+
+  std::unique_ptr<RCf::FIFO> f;
+  auto r = RCf::FIFO::create(ioctx, fifo_id, &f, null_yield, std::nullopt,
+			     std::nullopt, false, max_part_size,
+			     max_entry_size);
+  ASSERT_EQ(0, r);
+
+  char buf[max_entry_size];
+  memset(buf, 0, sizeof(buf));
+  auto [part_header_size, part_entry_overhead] = f->get_part_layout_info();
+  auto entries_per_part = ((max_part_size - part_header_size) /
+			   (max_entry_size + part_entry_overhead));
+  auto max_entries = entries_per_part * 4 + 1; /* enough entries to span multiple parts */
+  std::vector<cb::list> bufs;
+  for (auto i = 0u; i < max_entries; ++i) {
+    cb::list bl;
+    *(int *)buf = i;
+    bl.append(buf, sizeof(buf));
+    bufs.push_back(bl);
+  }
+  ASSERT_EQ(max_entries, bufs.size());
+
+  auto c = R::Rados::aio_create_completion();
+  r = f->push(bufs, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+
+  /* list all */
+
+  std::vector<RCf::list_entry> result;
+  bool more = false;
+  c = R::Rados::aio_create_completion();
+  r = f->list(max_entries, std::nullopt, &result, &more, c);
+  ASSERT_EQ(0, r);
+  c->wait_for_complete();
+  r = c->get_return_value();
+  c->release();
+  ASSERT_EQ(0, r);
+  ASSERT_EQ(false, more);
+  ASSERT_EQ(max_entries, result.size());
+  for (auto i = 0u; i < max_entries; ++i) {
+    auto& bl = result[i].data;
+    ASSERT_EQ(i, *(int *)bl.c_str());
+  }
+  auto& info = f->meta();
+  ASSERT_EQ(info.head_part_num, 4);
 }
