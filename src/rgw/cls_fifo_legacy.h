@@ -31,6 +31,7 @@
 
 #include "include/rados/librados.hpp"
 #include "include/buffer.h"
+#include "include/function2.hpp"
 
 #include "common/async/yield_context.h"
 
@@ -46,32 +47,17 @@ inline constexpr std::uint64_t default_max_part_size = 4 * 1024 * 1024;
 inline constexpr std::uint64_t default_max_entry_size = 32 * 1024;
 
 void create_meta(lr::ObjectWriteOperation* op, std::string_view id,
-		 std::optional<fifo::objv> objv,
-		 std::optional<std::string_view> oid_prefix,
-		 bool exclusive = false,
-		 std::uint64_t max_part_size = default_max_part_size,
-		 std::uint64_t max_entry_size = default_max_entry_size);
+                std::optional<fifo::objv> objv,
+                std::optional<std::string_view> oid_prefix,
+                bool exclusive = false,
+                std::uint64_t max_part_size = default_max_part_size,
+                std::uint64_t max_entry_size = default_max_entry_size);
+
 int get_meta(lr::IoCtx& ioctx, const std::string& oid,
-	     std::optional<fifo::objv> objv, fifo::info* info,
-	     std::uint32_t* part_header_size,
+            std::optional<fifo::objv> objv, fifo::info* info,
+            std::uint32_t* part_header_size,
 	     std::uint32_t* part_entry_overhead, optional_yield y);
-void update_meta(lr::ObjectWriteOperation* op, const fifo::objv& objv,
-		 const fifo::update& update);
-void part_init(lr::ObjectWriteOperation* op, std::string_view tag,
-	       fifo::data_params params);
-int push_part(lr::IoCtx& ioctx, const std::string& oid, std::string_view tag,
-	      std::deque<cb::list> data_bufs, optional_yield y);
-void trim_part(lr::ObjectWriteOperation* op,
-	       std::optional<std::string_view> tag, std::uint64_t ofs,
-	       bool exclusive);
-int list_part(lr::IoCtx& ioctx, const std::string& oid,
-	      std::optional<std::string_view> tag, std::uint64_t ofs,
-	      std::uint64_t max_entries,
-	      std::vector<fifo::part_list_entry>* entries,
-	      bool* more, bool* full_part, std::string* ptag,
-	      optional_yield y);
-int get_part_info(lr::IoCtx& ioctx, const std::string& oid,
-		  fifo::part_header* header, optional_yield y);
+
 
 struct marker {
   std::int64_t num = 0;
@@ -114,6 +100,12 @@ class FIFO {
   friend struct Reader;
   friend struct Updater;
   friend struct Trimmer;
+  friend struct InfoGetter;
+  friend struct Pusher;
+  friend struct NewPartPreparer;
+  friend struct NewHeadPreparer;
+  friend struct JournalProcessor;
+  friend struct Lister;
 
   mutable lr::IoCtx ioctx;
   const std::string oid;
@@ -144,20 +136,21 @@ class FIFO {
   int create_part(int64_t part_num, std::string_view tag, optional_yield y);
   int remove_part(int64_t part_num, std::string_view tag, optional_yield y);
   int process_journal(optional_yield y);
+  void process_journal(lr::AioCompletion* c);
   int _prepare_new_part(bool is_head, optional_yield y);
+  int _prepare_new_part(bool is_head, lr::AioCompletion* c);
   int _prepare_new_head(optional_yield y);
+  int _prepare_new_head(lr::AioCompletion* c);
   int push_entries(const std::deque<cb::list>& data_bufs,
 		   optional_yield y);
+  int push_entries(const std::deque<cb::list>& data_bufs,
+		   lr::AioCompletion* c);
   int trim_part(int64_t part_num, uint64_t ofs,
 		std::optional<std::string_view> tag, bool exclusive,
 		optional_yield y);
   int trim_part(int64_t part_num, uint64_t ofs,
 		std::optional<std::string_view> tag, bool exclusive,
 		lr::AioCompletion* c);
-
-  static void trim_callback(lr::completion_t, void* arg);
-  static void update_callback(lr::completion_t, void* arg);
-  static void read_callback(lr::completion_t, void* arg);
 
 public:
 
@@ -202,12 +195,20 @@ public:
   int push(const cb::list& bl, //< Entry to push
 	   optional_yield y //< Optional yield
     );
-  /// Push entres to the FIFO
+  /// Push entries to the FIFO
   int push(const std::vector<cb::list>& data_bufs, //< Entries to push
 	   /// Optional yield
 	   optional_yield y);
+  /// Push an entry to the FIFO
+  int push(const cb::list& bl, //< Entry to push
+	   lr::AioCompletion* c //< Async completion
+    );
+  /// Push entres to the FIFO
+  int push(const std::vector<cb::list>& data_bufs, //< Entries to push
+	   lr::AioCompletion* c //< Async completion
+    );
   /// List entries
-  int list(int max_entries, /// Maximum entries to list
+  int list(int max_entries, //< Maximum entries to list
 	   /// Point after which to begin listing. Start at tail if null
 	   std::optional<std::string_view> markstr,
 	   std::vector<list_entry>* out, //< OUT: entries
@@ -215,6 +216,16 @@ public:
 	   bool* more,
 	   optional_yield y //< Optional yield
     );
+  /// List entries
+  int list(int max_entries, //< Maximum entries to list
+	   /// Point after which to begin listing. Start at tail if null
+	   std::optional<std::string_view> markstr,
+	   std::vector<list_entry>* out, //< OUT: entries
+	   /// OUT: True if more entries in FIFO beyond the last returned
+	   bool* more,
+	   lr::AioCompletion* c //< Optional yield
+    );
+
   /// Trim entries, coroutine/block style
   int trim(std::string_view markstr, //< Position to which to trim, inclusive
 	   bool exclusive, //< If true, do not trim the target entry
@@ -228,10 +239,24 @@ public:
 	   lr::AioCompletion* c //< librados AIO Completion
     );
   /// Get part info
-  int get_part_info(int64_t part_num, /// Part number
+  int get_part_info(int64_t part_num, //< Part number
 		    fifo::part_header* header, //< OUT: Information
 		    optional_yield y //< Optional yield
     );
+  /// Get part info
+  int get_part_info(int64_t part_num, //< Part number
+		    fifo::part_header* header, //< OUT: Information
+		    lr::AioCompletion* c //< AIO Completion
+    );
+  /// A convenience method to fetch the part information for the FIFO
+  /// head, using librados::AioCompletion, since
+  /// libradio::AioCompletions compose lousily.
+  int get_head_info(
+    /// Function to handle output
+    fu2::unique_function<void(int, fifo::part_header*)> f,
+    lr::AioCompletion* c //< AIO Completion
+    );
+
 };
 }
 

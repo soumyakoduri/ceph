@@ -98,6 +98,7 @@ int get_meta(lr::IoCtx& ioctx, const std::string& oid,
   return r;
 };
 
+namespace {
 void update_meta(lr::ObjectWriteOperation* op, const fifo::objv& objv,
 		 const fifo::update& update)
 {
@@ -150,6 +151,25 @@ int push_part(lr::IoCtx& ioctx, const std::string& oid, std::string_view tag,
   return r < 0 ? r : retval;
 }
 
+int push_part(lr::IoCtx& ioctx, const std::string& oid, std::string_view tag,
+	      std::deque<cb::list> data_bufs, lr::AioCompletion* c)
+{
+  lr::ObjectWriteOperation op;
+  fifo::op::push_part pp;
+
+  pp.tag = tag;
+  pp.data_bufs = data_bufs;
+  pp.total_len = 0;
+
+  for (const auto& bl : data_bufs)
+    pp.total_len += bl.length();
+
+  cb::list in;
+  encode(pp, in);
+  op.exec(fifo::op::CLASS, fifo::op::PUSH_PART, in);
+  return ioctx.aio_operate(oid, c, &op, lr::OPERATION_RETURNVEC);
+}
+
 void trim_part(lr::ObjectWriteOperation* op,
 	       std::optional<std::string_view> tag,
 	       std::uint64_t ofs, bool exclusive)
@@ -198,6 +218,56 @@ int list_part(lr::IoCtx& ioctx, const std::string& oid,
   return r;
 }
 
+struct list_entry_completion : public lr::ObjectOperationCompletion {
+  int* r_out;
+  std::vector<fifo::part_list_entry>* entries;
+  bool* more;
+  bool* full_part;
+  std::string* ptag;
+  list_entry_completion(int* r_out, std::vector<fifo::part_list_entry>* entries,
+			bool* more, bool* full_part, std::string* ptag)
+    : r_out(r_out), entries(entries), more(more), full_part(full_part),
+      ptag(ptag) {}
+  virtual ~list_entry_completion() = default;
+  void handle_completion(int r, bufferlist& bl) override {
+    if (r >= 0) try {
+	fifo::op::list_part_reply reply;
+	auto iter = bl.cbegin();
+	decode(reply, iter);
+	if (entries) *entries = std::move(reply.entries);
+	if (more) *more = reply.more;
+	if (full_part) *full_part = reply.full_part;
+	if (ptag) *ptag = reply.tag;
+      } catch (const cb::error& err) {
+	r = from_error_code(err.code());
+      }
+    if (r_out) *r_out = r;
+  }
+};
+
+lr::ObjectReadOperation list_part(std::optional<std::string_view> tag,
+				  std::uint64_t ofs,
+				  std::uint64_t max_entries,
+				  int* r_out,
+				  std::vector<fifo::part_list_entry>* entries,
+				  bool* more, bool* full_part,
+				  std::string* ptag)
+{
+  lr::ObjectReadOperation op;
+  fifo::op::list_part lp;
+
+  lp.tag = tag;
+  lp.ofs = ofs;
+  lp.max_entries = max_entries;
+
+  cb::list in;
+  encode(lp, in);
+  op.exec(fifo::op::CLASS, fifo::op::LIST_PART, in,
+	  new list_entry_completion(r_out, entries, more, full_part, ptag));
+  return op;
+}
+
+
 int get_part_info(lr::IoCtx& ioctx, const std::string& oid,
 		  fifo::part_header* header, optional_yield y)
 {
@@ -220,30 +290,110 @@ int get_part_info(lr::IoCtx& ioctx, const std::string& oid,
   return r;
 }
 
-static void complete(lr::AioCompletion* c_, int r)
+struct partinfo_completion : public lr::ObjectOperationCompletion {
+  int* rp;
+  fifo::part_header* h;
+  partinfo_completion(int* rp, fifo::part_header* h) :
+    rp(rp), h(h) {
+  }
+  virtual ~partinfo_completion() = default;
+  void handle_completion(int r, bufferlist& bl) override {
+    if (r >= 0) try {
+	fifo::op::get_part_info_reply reply;
+	auto iter = bl.cbegin();
+	decode(reply, iter);
+	if (h) *h = std::move(reply.header);
+      } catch (const cb::error& err) {
+	r = from_error_code(err.code());
+      }
+    if (rp) {
+      *rp = r;
+    }
+  }
+};
+
+lr::ObjectReadOperation get_part_info(fifo::part_header* header, int* r = 0)
 {
-  auto c = c_->pc;
-  c->lock.lock();
-  c->rval = r;
-  c->complete = true;
-  c->lock.unlock();
+  lr::ObjectReadOperation op;
+  fifo::op::get_part_info gpi;
 
-  auto cb_complete = c->callback_complete;
-  auto cb_complete_arg = c->callback_complete_arg;
-  if (cb_complete)
-    cb_complete(c, cb_complete_arg);
-
-  auto cb_safe = c->callback_safe;
-  auto cb_safe_arg = c->callback_safe_arg;
-  if (cb_safe)
-    cb_safe(c, cb_safe_arg);
-
-  c->lock.lock();
-  c->callback_complete = NULL;
-  c->callback_safe = NULL;
-  c->cond.notify_all();
-  c->put_unlock();
+  cb::list in;
+  cb::list bl;
+  encode(gpi, in);
+  op.exec(fifo::op::CLASS, fifo::op::GET_PART_INFO, in,
+	  new partinfo_completion(r, header));
+  return op;
 }
+}
+
+template<typename T>
+struct Completion {
+private:
+  lr::AioCompletion* _cur = nullptr;
+  lr::AioCompletion* _super;
+public:
+
+  lr::AioCompletion* cur() const {
+    return _cur;
+  }
+  lr::AioCompletion* super() const {
+    return _super;
+  }
+
+  Completion(lr::AioCompletion* super) : _super(super) {
+    super->pc->get();
+  }
+  void set_cur(lr::callback_t cbt) {
+    _cur = lr::Rados::aio_create_completion(static_cast<void*>(this), cbt);
+  }
+  void clear_cur() {
+    _cur->release();
+    _cur = nullptr;
+  }
+  void complete(int r) {
+    auto c = _super->pc;
+    _super = nullptr;
+    c->lock.lock();
+    c->rval = r;
+    c->complete = true;
+    c->lock.unlock();
+
+    auto cb_complete = c->callback_complete;
+    auto cb_complete_arg = c->callback_complete_arg;
+    if (cb_complete)
+      cb_complete(c, cb_complete_arg);
+
+    auto cb_safe = c->callback_safe;
+    auto cb_safe_arg = c->callback_safe_arg;
+    if (cb_safe)
+      cb_safe(c, cb_safe_arg);
+
+    c->lock.lock();
+    c->callback_complete = nullptr;
+    c->callback_safe = nullptr;
+    c->cond.notify_all();
+    c->put_unlock();
+
+    delete static_cast<T*>(this);
+  }
+
+  void abandon() {
+    _super->pc->put();
+    if (_cur)
+      _cur->release();
+    _super = nullptr;
+    _cur = nullptr;
+    delete static_cast<T*>(this);
+  }
+
+  static std::pair<T*, int> cb_init(void* arg) {
+    auto t = static_cast<T*>(arg);
+    auto r = t->_cur->get_return_value();
+    t->_cur->release();
+    t->_cur = nullptr;
+    return {t, r};
+  }
+};
 
 std::optional<marker> FIFO::to_marker(std::string_view s)
 {
@@ -324,72 +474,55 @@ int FIFO::_update_meta(const fifo::update& update,
   return r;
 }
 
-struct Updater {
+struct Updater : public Completion<Updater> {
   FIFO* fifo;
-  lr::AioCompletion* super;
-  lr::AioCompletion* cur = lr::Rados::aio_create_completion(
-    static_cast<void*>(this), &FIFO::update_callback);
   fifo::update update;
   fifo::objv version;
-  bool reread = false;
   bool* pcanceled = nullptr;
+
   Updater(FIFO* fifo, lr::AioCompletion* super,
 	  const fifo::update& update, fifo::objv version,
 	  bool* pcanceled)
-    : fifo(fifo), super(super), update(update), version(version),
-      pcanceled(pcanceled) {
-    super->pc->get();
-  }
-  ~Updater() {
-    cur->release();
-  }
-};
+    : Completion(super), fifo(fifo), update(update), version(version),
+      pcanceled(pcanceled) {}
 
-
-void FIFO::update_callback(lr::completion_t, void* arg)
-{
-  auto updater = static_cast<Updater*>(arg);
-  if (!updater->reread) {
-    int r = updater->cur->get_return_value();
+  void static cb_update(lr::completion_t, void* arg) {
+    auto [u, r] = cb_init(arg);
     if (r < 0 && r != -ECANCELED) {
-      complete(updater->super, r);
-      delete updater;
+      u->complete(r);
       return;
     }
     bool canceled = (r == -ECANCELED);
     if (!canceled) {
-      int r = updater->fifo->apply_update(&updater->fifo->info, updater->version,
-					  updater->update);
+      int r = u->fifo->apply_update(&u->fifo->info, u->version,
+				    u->update);
       if (r < 0)
 	canceled = true;
     }
     if (!canceled) {
-      if (updater->pcanceled)
-	*updater->pcanceled = false;
-      complete(updater->super, 0);
+      if (u->pcanceled)
+	*u->pcanceled = false;
+      u->complete(0);
     } else {
-      updater->cur->release();
-      updater->cur = lr::Rados::aio_create_completion(
-	arg, &FIFO::update_callback);
-      assert(uintptr_t(updater->cur) >= 0x1000);
-      updater->reread = true;
-      auto r = updater->fifo->read_meta(updater->cur);
+      u->set_cur(&Updater::cb_reread);
+      auto r = u->fifo->read_meta(u->cur());
       if (r < 0) {
-	complete(updater->super, r);
-	delete updater;
+	u->clear_cur();
+	u->complete(r);
       }
     }
-  } else {
-    int r = updater->cur->get_return_value();
-    if (r < 0 && updater->pcanceled) {
-      *updater->pcanceled = false;
-    } else if (r >= 0 && updater->pcanceled) {
-      *updater->pcanceled = true;
-    }
-    complete(updater->super, r);
-    delete updater;
   }
-}
+
+  void static cb_reread(lr::completion_t, void* arg) {
+    auto [u, r] = cb_init(arg);
+    if (r < 0 && u->pcanceled) {
+      *u->pcanceled = false;
+    } else if (r >= 0 && u->pcanceled) {
+      *u->pcanceled = true;
+    }
+    u->complete(r);
+  }
+};
 
 int FIFO::_update_meta(const fifo::update& update,
 		       fifo::objv version, bool* pcanceled,
@@ -398,13 +531,10 @@ int FIFO::_update_meta(const fifo::update& update,
   lr::ObjectWriteOperation op;
   update_meta(&op, info.version, update);
   auto updater = new Updater(this, c, update, version, pcanceled);
-  lr::AioCompletion* cur = lr::Rados::aio_create_completion(
-    static_cast<void*>(updater), &FIFO::update_callback);
-  updater->cur = cur;
-  assert(uintptr_t(updater->cur) >= 0x1000);
-  auto r = ioctx.aio_operate(oid, cur, &op);
+  updater->set_cur(&Updater::cb_update);
+  auto r = ioctx.aio_operate(oid, updater->cur(), &op);
   if (r < 0) {
-    delete updater;
+    updater->abandon();
   }
   return r;
 }
@@ -608,6 +738,174 @@ int FIFO::_prepare_new_head(optional_yield y) {
   return 0;
 }
 
+struct NewPartPreparer : public Completion<NewPartPreparer> {
+  FIFO* f;
+  std::vector<fifo::journal_entry> jentries;
+  int i;
+  std::int64_t new_head_part_num;
+  bool canceled = false;
+
+  static void callback(lr::completion_t, void* arg) {
+    auto [n, r] = cb_init(arg);
+    if (r < 0) {
+      n->complete(r);
+      return;
+    }
+
+    if (n->canceled) {
+      std::unique_lock l(n->f->m);
+      auto iter = n->f->info.journal.find(n->jentries.front().part_num);
+      auto max_push_part_num = n->f->info.max_push_part_num;
+      auto head_part_num = n->f->info.head_part_num;
+      auto version = n->f->info.version;
+      auto found = (iter != n->f->info.journal.end());
+      l.unlock();
+      if ((max_push_part_num >= n->jentries.front().part_num &&
+	   head_part_num >= n->new_head_part_num)) {
+	/* raced, but new part was already written */
+	n->complete(0);
+	return;
+      }
+      if (n->i >= MAX_RACE_RETRIES) {
+	n->complete(-ECANCELED);
+	return;
+      }
+      if (!found) {
+	n->set_cur(&NewPartPreparer::callback);
+	++n->i;
+	n->f->_update_meta(fifo::update{}
+			   .journal_entries_add(n->jentries),
+                           version, &n->canceled, n->cur());
+	return;
+      }
+      // Fall through. We still need to process the journal.
+    }
+    n->f->process_journal(n->super());
+    n->abandon();
+    return;
+  }
+
+  NewPartPreparer(FIFO* f, lr::AioCompletion* super,
+		  std::vector<fifo::journal_entry> jentries,
+		  int i, std::int64_t new_head_part_num)
+    : Completion(super), f(f), jentries(std::move(jentries)),
+      i(i), new_head_part_num(new_head_part_num) {}
+};
+
+int FIFO::_prepare_new_part(bool is_head,
+			    lr::AioCompletion* c)
+{
+  std::unique_lock l(m);
+  std::vector jentries = { info.next_journal_entry(generate_tag()) };
+  std::int64_t new_head_part_num = info.head_part_num;
+  auto version = info.version;
+
+  if (is_head) {
+    auto new_head_jentry = jentries.front();
+    new_head_jentry.op = fifo::journal_entry::Op::set_head;
+    new_head_part_num = jentries.front().part_num;
+    jentries.push_back(std::move(new_head_jentry));
+  }
+  l.unlock();
+
+  auto n = new NewPartPreparer(this, c, jentries, 0, new_head_part_num);
+  n->set_cur(&NewPartPreparer::callback);
+  auto r = _update_meta(fifo::update{}.journal_entries_add(jentries), version,
+			&n->canceled, n->cur());
+  if (r < 0) {
+    n->abandon();
+  }
+  return r;
+}
+
+struct NewHeadPreparer : public Completion<NewHeadPreparer> {
+  FIFO* f;
+  int i = 0;
+  std::int64_t new_head_num;
+  bool canceled;
+
+  void handle(int r, bool canceled) {
+    std::unique_lock l(f->m);
+    auto head_part_num = f->info.head_part_num;
+    auto version = f->info.version;
+    l.unlock();
+
+    if (r < 0) {
+      complete(r);
+      return;
+    }
+    if (canceled) {
+      if (i >= MAX_RACE_RETRIES) {
+	complete(-ECANCELED);
+	return;
+      }
+
+      // Raced, but there's still work to do!
+      if (head_part_num < new_head_num) {
+	set_cur(&NewHeadPreparer::callback);
+	++i;
+	f->_update_meta(fifo::update{}.head_part_num(new_head_num),
+			version, &this->canceled, cur());
+	return;
+      }
+    }
+    // Either we succeeded, or we were raced by someone who did it for us.
+    complete(0);
+    return;
+  }
+
+  static void callback(lr::completion_t, void* arg) {
+    auto [n, r] = cb_init(arg);
+    auto canceled = n->canceled;
+    n->canceled = false;
+    n->handle(r, canceled);
+  }
+
+  static void cb_newpart(lr::completion_t, void* arg) {
+    auto [n, r] = cb_init(arg);
+    if (r < 0) {
+      n->complete(r);
+      return;
+    }
+    std::unique_lock l(n->f->m);
+    if (n->f->info.max_push_part_num < n->new_head_num) {
+      l.unlock();
+      n->complete(-EIO);
+    } else {
+      l.unlock();
+      n->complete(0);
+    }
+  }
+
+  NewHeadPreparer(FIFO* f, lr::AioCompletion* super,
+		  std::int64_t new_head_num)
+    : Completion(super), f(f), new_head_num(new_head_num) {}
+};
+
+int FIFO::_prepare_new_head(lr::AioCompletion* c)
+{
+  std::unique_lock l(m);
+  int64_t new_head_num = info.head_part_num + 1;
+  auto max_push_part_num = info.max_push_part_num;
+  auto version = info.version;
+  l.unlock();
+
+  auto n = new NewHeadPreparer(this, c, new_head_num);
+  int r = 0;
+  if (max_push_part_num < new_head_num) {
+    n->set_cur(&NewHeadPreparer::cb_newpart);
+    r = _prepare_new_part(true, n->cur());
+  } else {
+    n->set_cur(&NewHeadPreparer::callback);
+    r = _update_meta(fifo::update{}.head_part_num(new_head_num), version,
+		     &n->canceled, n->cur());
+  }
+  if (r < 0) {
+    n->abandon();
+  }
+  return r;
+}
+
 int FIFO::push_entries(const std::deque<cb::list>& data_bufs,
 		       optional_yield y)
 {
@@ -618,6 +916,18 @@ int FIFO::push_entries(const std::deque<cb::list>& data_bufs,
   l.unlock();
 
   return push_part(ioctx, part_oid, tag, data_bufs, y);
+}
+
+int FIFO::push_entries(const std::deque<cb::list>& data_bufs,
+		       lr::AioCompletion* c)
+{
+  std::unique_lock l(m);
+  auto head_part_num = info.head_part_num;
+  auto tag = info.head_tag;
+  const auto part_oid = info.part_oid(head_part_num);
+  l.unlock();
+
+  return push_part(ioctx, part_oid, tag, data_bufs, c);
 }
 
 int FIFO::trim_part(int64_t part_num, uint64_t ofs,
@@ -705,41 +1015,33 @@ int FIFO::read_meta(optional_yield y) {
   return r;
 }
 
-struct Reader {
+struct Reader : public Completion<Reader> {
   FIFO* fifo;
   cb::list bl;
-  lr::AioCompletion* super;
-  lr::AioCompletion* cur = lr::Rados::aio_create_completion(
-    static_cast<void*>(this), &FIFO::read_callback);
   Reader(FIFO* fifo, lr::AioCompletion* super)
-    : fifo(fifo), super(super) {
-    super->pc->get();
+    : Completion(super), fifo(fifo) {
+    set_cur(&Reader::cb);
   }
-  ~Reader() {
-    cur->release();
+
+  static void cb(lr::completion_t, void* arg) {
+    auto [reader, r] = cb_init(arg);
+    if (r >= 0) try {
+	fifo::op::get_meta_reply reply;
+	auto iter = reader->bl.cbegin();
+	decode(reply, iter);
+	std::unique_lock l(reader->fifo->m);
+	if (reply.info.version.same_or_later(reader->fifo->info.version)) {
+	  reader->fifo->info = std::move(reply.info);
+	  reader->fifo->part_header_size = reply.part_header_size;
+	  reader->fifo->part_entry_overhead = reply.part_entry_overhead;
+	}
+      } catch (const cb::error& err) {
+	r = from_error_code(err.code());
+      }
+    reader->complete(r);
   }
 };
 
-void FIFO::read_callback(lr::completion_t, void* arg)
-{
-  auto reader = static_cast<Reader*>(arg);
-  auto r = reader->cur->get_return_value();
-  if (r >= 0) try {
-      fifo::op::get_meta_reply reply;
-      auto iter = reader->bl.cbegin();
-      decode(reply, iter);
-      std::unique_lock l(reader->fifo->m);
-      if (reply.info.version.same_or_later(reader->fifo->info.version)) {
-	reader->fifo->info = std::move(reply.info);
-	reader->fifo->part_header_size = reply.part_header_size;
-	reader->fifo->part_entry_overhead = reply.part_entry_overhead;
-      }
-    } catch (const cb::error& err) {
-      r = from_error_code(err.code());
-    }
-  complete(reader->super, r);
-  delete reader;
-}
 
 int FIFO::read_meta(lr::AioCompletion* c)
 {
@@ -748,10 +1050,10 @@ int FIFO::read_meta(lr::AioCompletion* c)
   cb::list in;
   encode(gm, in);
   auto reader = new Reader(this, c);
-  auto r = ioctx.aio_exec(oid, reader->cur, fifo::op::CLASS,
+  auto r = ioctx.aio_exec(oid, reader->cur(), fifo::op::CLASS,
 			  fifo::op::GET_META, in, &reader->bl);
   if (r < 0) {
-    delete reader;
+    reader->abandon();
   }
   return r;
 }
@@ -840,6 +1142,145 @@ int FIFO::push(const std::vector<cb::list>& data_bufs, optional_yield y)
   if (canceled && r == 0)
     r = -ECANCELED;
   return r;
+}
+
+int FIFO::push(const cb::list& bl, lr::AioCompletion* c) {
+  return push(std::vector{ bl }, c);
+}
+
+struct Pusher : public Completion<Pusher> {
+  FIFO* f;
+  std::deque<cb::list> remaining;
+  std::deque<cb::list> batch;
+  int i = 0;
+
+  void prep_then_push(const unsigned successes) {
+    std::unique_lock l(f->m);
+    auto max_part_size = f->info.params.max_part_size;
+    auto part_entry_overhead = f->part_entry_overhead;
+    l.unlock();
+
+    uint64_t batch_len = 0;
+    if (successes > 0) {
+      if (successes == batch.size()) {
+	batch.clear();
+      } else  {
+	batch.erase(batch.begin(), batch.begin() + successes);
+	for (const auto& b : batch) {
+	  batch_len +=  b.length() + part_entry_overhead;
+	}
+      }
+    }
+
+    if (batch.empty() && remaining.empty()) {
+      complete(0);
+      return;
+    }
+
+    while (!remaining.empty() &&
+	   (remaining.front().length() + batch_len <= max_part_size)) {
+
+      /* We can send entries with data_len up to max_entry_size,
+	 however, we want to also account the overhead when
+	 dealing with multiple entries. Previous check doesn't
+	 account for overhead on purpose. */
+      batch_len += remaining.front().length() + part_entry_overhead;
+      batch.push_back(std::move(remaining.front()));
+      remaining.pop_front();
+    }
+    push();
+  }
+
+  void push() {
+    set_cur(&push_callback);
+    auto r = f->push_entries(batch, cur());
+    if (r < 0) {
+      clear_cur();
+      complete(r);
+    }
+  }
+
+  void new_head() {
+    set_cur(&head_callback);
+    auto r = f->_prepare_new_head(cur());
+    if (r < 0) {
+      clear_cur();
+      complete(r);
+    }
+  }
+
+  // Called with response to push_entries
+  static void push_callback(lr::completion_t, void* arg) {
+    auto [p, r] = cb_init(arg);
+    if (r == -ERANGE) {
+      p->new_head();
+      return;
+    }
+    if (r < 0) {
+      p->complete(r);
+    }
+    p->i = 0; // We've made forward progress, so reset the race counter!
+    p->prep_then_push(r);
+  }
+
+  // Called with response to prepare_new_head
+  static void head_callback(lr::completion_t, void* arg) {
+    auto [p, r] = cb_init(arg);
+    if (r == -ECANCELED) {
+      if (p->i == MAX_RACE_RETRIES) {
+	p->complete(-ECANCELED);
+	return;
+      }
+      ++p->i;
+    } else if (r) {
+      p->complete(r);
+      return;
+    }
+
+    if (p->batch.empty()) {
+      p->prep_then_push(0);
+      return;
+    } else {
+      p->push();
+      return;
+    }
+  }
+
+  Pusher(FIFO* f, std::deque<cb::list>&& remaining,
+	 std::deque<cb::list> batch,
+	 lr::AioCompletion* super)
+    : Completion(super), f(f), remaining(std::move(remaining)),
+      batch(std::move(batch)) {}
+};
+
+int FIFO::push(const std::vector<cb::list>& data_bufs,
+		lr::AioCompletion* c)
+{
+  std::unique_lock l(m);
+  auto max_entry_size = info.params.max_entry_size;
+  auto need_new_head = info.need_new_head();
+  l.unlock();
+  // Validate sizes
+  for (const auto& bl : data_bufs) {
+    if (bl.length() > max_entry_size) {
+      return -E2BIG;
+    }
+  }
+
+  auto p = new Pusher(this, {data_bufs.begin(), data_bufs.end()}, {}, c);
+  if (data_bufs.empty() ) {
+    // If we return 0, the caller will still expect the completion to
+    // be completed.
+    p->complete(0);
+    return 0;
+  }
+
+  if (need_new_head) {
+    p->new_head();
+  } else {
+    p->prep_then_push(0);
+  }
+  return 0;
 }
 
 int FIFO::list(int max_entries,
@@ -980,99 +1421,80 @@ int FIFO::trim(std::string_view markstr, bool exclusive, optional_yield y)
   return r;
 }
 
-struct Trimmer {
+struct Trimmer : public Completion<Trimmer> {
   FIFO* fifo;
   std::int64_t part_num;
   std::uint64_t ofs;
   std::int64_t pn;
   bool exclusive;
-  lr::AioCompletion* super;
-  lr::AioCompletion* cur = lr::Rados::aio_create_completion(
-    static_cast<void*>(this), &FIFO::trim_callback);
-  bool update = false;
   bool canceled = false;
   int retries = 0;
 
   Trimmer(FIFO* fifo, std::int64_t part_num, std::uint64_t ofs, std::int64_t pn,
 	  bool exclusive, lr::AioCompletion* super)
-    : fifo(fifo), part_num(part_num), ofs(ofs), pn(pn), exclusive(exclusive),
-      super(super) {
-    super->pc->get();
-  }
-  ~Trimmer() {
-    cur->release();
-  }
-};
+    : Completion(super), fifo(fifo), part_num(part_num), ofs(ofs), pn(pn),
+      exclusive(exclusive) {}
 
-void FIFO::trim_callback(lr::completion_t, void* arg)
-{
-  auto trimmer = static_cast<Trimmer*>(arg);
-  int r = trimmer->cur->get_return_value();
-  if (r == -ENOENT) {
-    r = 0;
-  }
-
-  if (r < 0) {
-    complete(trimmer->super, r);
-    delete trimmer;
-  } else if (!trimmer->update) {
-    trimmer->retries = 0;
-    if (trimmer->pn < trimmer->part_num) {
-      std::unique_lock l(trimmer->fifo->m);
-      const auto max_part_size = trimmer->fifo->info.params.max_part_size;
+  static void cb(lr::completion_t, void* arg) {
+    auto [t, r] = cb_init(arg);
+    if (r == -ENOENT) r = 0;
+    if (r < 0) {
+      t->complete(r);
+      return;
+    } 
+    t->retries = 0;
+    if (t->pn < t->part_num) {
+      std::unique_lock l(t->fifo->m);
+      const auto max_part_size = t->fifo->info.params.max_part_size;
       l.unlock();
-      trimmer->cur->release();
-      trimmer->cur = lr::Rados::aio_create_completion(arg, &FIFO::trim_callback);
-      r = trimmer->fifo->trim_part(trimmer->pn++, max_part_size, std::nullopt,
-				   false, trimmer->cur);
+      t->set_cur(&Trimmer::cb);
+      r = t->fifo->trim_part(t->pn++, max_part_size, std::nullopt,
+			     false, t->cur());
       if (r < 0) {
-	complete(trimmer->super, r);
-	delete trimmer;
+	t->clear_cur();
+	t->complete(r);
       }
     } else {
-      std::unique_lock l(trimmer->fifo->m);
-      const auto tail_part_num = trimmer->fifo->info.tail_part_num;
+      std::unique_lock l(t->fifo->m);
+      const auto tail_part_num = t->fifo->info.tail_part_num;
       l.unlock();
-      trimmer->cur->release();
-      trimmer->cur = lr::Rados::aio_create_completion(arg, &FIFO::trim_callback);
-      trimmer->update = true;
-      trimmer->canceled = tail_part_num < trimmer->part_num;
-      r = trimmer->fifo->trim_part(trimmer->part_num, trimmer->ofs,
-				   std::nullopt, trimmer->exclusive, trimmer->cur);
+      t->set_cur(&Trimmer::cb_update);
+      t->canceled = tail_part_num < t->part_num;
+      r = t->fifo->trim_part(t->part_num, t->ofs, std::nullopt, t->exclusive,
+			     t->cur());
       if (r < 0) {
-	complete(trimmer->super, r);
-	delete trimmer;
+	t->clear_cur();
+	t->complete(r);
       }
     }
-  } else {
-    std::unique_lock l(trimmer->fifo->m);
-    auto tail_part_num = trimmer->fifo->info.tail_part_num;
-    auto objv = trimmer->fifo->info.version;
+  }
+  static void cb_update(lr::completion_t, void* arg) {
+    auto [t, r] = cb_init(arg);
+    std::unique_lock l(t->fifo->m);
+    auto tail_part_num = t->fifo->info.tail_part_num;
+    auto objv = t->fifo->info.version;
     l.unlock();
-    if ((tail_part_num < trimmer->part_num) &&
-	trimmer->canceled) {
-      if (trimmer->retries > MAX_RACE_RETRIES) {
-	complete(trimmer->super, -EIO);
-	delete trimmer;
+    if ((tail_part_num < t->part_num) &&
+	t->canceled) {
+      if (t->retries > MAX_RACE_RETRIES) {
+	t->complete(-EIO);
       } else {
-	trimmer->cur->release();
-	trimmer->cur = lr::Rados::aio_create_completion(arg,
-							&FIFO::trim_callback);
-	++trimmer->retries;
-	auto r = trimmer->fifo->_update_meta(fifo::update{}
-					     .tail_part_num(trimmer->part_num),
-			                     objv, &trimmer->canceled,
-                                             trimmer->cur);
+	t->set_cur(&Trimmer::cb_update);
+	++t->retries;
+	auto r = t->fifo->_update_meta(fifo::update{}
+				       .tail_part_num(t->part_num),
+			               objv, &t->canceled,
+                                       t->cur());
 	if (r < 0) {
-	  complete(trimmer->super, r);
-	  delete trimmer;
+	  t->clear_cur();
+	  t->complete(r);
 	}
       }
     } else {
-      complete(trimmer->super, 0);
+      t->complete(0);
     }
   }
-}
+};
 
 int FIFO::trim(std::string_view markstr, bool exclusive, lr::AioCompletion* c) {
   auto marker = to_marker(markstr);
@@ -1089,14 +1511,14 @@ int FIFO::trim(std::string_view markstr, bool exclusive, lr::AioCompletion* c) {
   auto ofs = marker->ofs;
   if (pn < marker->num) {
     ofs = max_part_size;
+    trimmer->set_cur(&Trimmer::cb);
   } else {
-    trimmer->update = true;
+    trimmer->set_cur(&Trimmer::cb_update);
   }
   auto r = trimmer->fifo->trim_part(pn, ofs, std::nullopt, exclusive,
-				    trimmer->cur);
+				    trimmer->cur());
   if (r < 0) {
-    complete(trimmer->super, r);
-    delete trimmer;
+    trimmer->abandon();
   }
   return r;
 }
@@ -1109,5 +1531,439 @@ int FIFO::get_part_info(int64_t part_num,
   const auto part_oid = info.part_oid(part_num);
   l.unlock();
   return rgw::cls::fifo::get_part_info(ioctx, part_oid, header, y);
+}
+
+int FIFO::get_part_info(int64_t part_num,
+			fifo::part_header* header,
+			lr::AioCompletion* c)
+{
+  std::unique_lock l(m);
+  const auto part_oid = info.part_oid(part_num);
+  l.unlock();
+  auto op = rgw::cls::fifo::get_part_info(header);
+  return ioctx.aio_operate(part_oid, c, &op, nullptr);
+}
+
+struct InfoGetter : Completion<InfoGetter> {
+  bool headerget = false;
+  int p = -1;
+  FIFO* fifo;
+  fu2::function<void(int, fifo::part_header*)> f;
+  fifo::part_header h;
+
+  InfoGetter(FIFO* fifo, fu2::function<void(int, fifo::part_header*)> f,
+	     lr::AioCompletion* super)
+    : Completion(super), fifo(fifo), f(std::move(f)) {
+    set_cur(&InfoGetter::cb);
+  }
+  static void cb(lr::completion_t, void* arg) {
+    auto [ig, r] = cb_init(arg);
+    if (r < 0) {
+      ig->complete(r);
+    } else if (!ig->headerget) {
+      auto m = ig->fifo->meta();
+      auto p = m.head_part_num;
+      if (p < 0) {
+	if (ig->f) {
+	  std::move(ig->f)(-1, nullptr);
+	}
+	ig->complete(r);
+      } else {
+	ig->headerget = true;
+	ig->clear_cur();
+	ig->set_cur(&InfoGetter::cb);
+	auto op = rgw::cls::fifo::get_part_info(&ig->h);
+	ig->p = p;
+	ig->fifo->ioctx.aio_operate(ig->fifo->info.part_oid(p), ig->super(),
+				    &op, nullptr);
+      }
+    } else {
+      if (ig->f) {
+	std::move(ig->f)(ig->p, &ig->h);
+      }
+      ig->complete(r);
+    }
+  }
+};
+
+int FIFO::get_head_info(fu2::unique_function<void(int, fifo::part_header*)> f,
+			lr::AioCompletion* c)
+{
+  auto ig = new InfoGetter(this, std::move(f), c);
+  auto r = read_meta(ig->cur());
+  if (r < 0) {
+    ig->abandon();
+  }
+  return r;
+}
+
+
+struct JournalProcessor : public Completion<JournalProcessor> {
+private:
+  FIFO* const fifo;
+
+  std::vector<fifo::journal_entry> processed;
+  std::multimap<std::int64_t, fifo::journal_entry> journal;
+  std::multimap<std::int64_t, fifo::journal_entry>::iterator iter;
+  std::int64_t new_tail;
+  std::int64_t new_head;
+  std::int64_t new_max;
+  int race_retries = 0;
+  bool first_pp = true;
+  bool canceled = false;
+
+  void create_part(int64_t part_num, std::string_view tag) {
+    set_cur(&JournalProcessor::je_cb);
+    lr::ObjectWriteOperation op;
+    op.create(false); /* We don't need exclusivity, part_init ensures
+			 we're creating from the  same journal entry. */
+    std::unique_lock l(fifo->m);
+    part_init(&op, tag, fifo->info.params);
+    auto oid = fifo->info.part_oid(part_num);
+    l.unlock();
+    auto r = fifo->ioctx.aio_operate(oid, cur(), &op);
+    if (r < 0) {
+      clear_cur();
+      complete(r);
+    }
+    return;
+  }
+
+  void remove_part(int64_t part_num, std::string_view tag) {
+    set_cur(&JournalProcessor::je_cb);
+    lr::ObjectWriteOperation op;
+    op.remove();
+    std::unique_lock l(fifo->m);
+    auto oid = fifo->info.part_oid(part_num);
+    l.unlock();
+    auto r = fifo->ioctx.aio_operate(oid, cur(), &op);
+    if (r < 0) {
+      clear_cur();
+      complete(r);
+    }
+    return;
+  }
+
+  static void je_cb(lr::completion_t, void* arg) {
+    auto [j, r] = cb_init(arg);
+    j->finish_je(r, j->iter->second);
+  }
+
+  void finish_je(int r, const fifo::journal_entry& entry) {
+    if (entry.op == fifo::journal_entry::Op::remove && r == -ENOENT)
+      r = 0;
+
+    if (r) {
+      complete(-EIO);
+      return;
+    } else {
+      switch (entry.op) {
+      case fifo::journal_entry::Op::unknown:
+      case fifo::journal_entry::Op::set_head:
+	// Can't happen. Filtered out in process.
+	complete(-EIO);
+	return;
+
+      case fifo::journal_entry::Op::create:
+	if (entry.part_num > new_max) {
+	  new_max = entry.part_num;
+	}
+	break;
+      case fifo::journal_entry::Op::remove:
+	if (entry.part_num >= new_tail) {
+	  new_tail = entry.part_num + 1;
+	}
+	break;
+      }
+      processed.push_back(entry);
+    }
+    ++iter;
+    process();
+  }
+
+  void postprocess() {
+    if (processed.empty()) {
+      complete(0);
+      return;
+    }
+    pp_run(0, false);
+  }
+
+public:
+
+  JournalProcessor(FIFO* fifo, lr::AioCompletion* super)
+    : Completion(super), fifo(fifo) {
+    std::unique_lock l(fifo->m);
+    journal = fifo->info.journal;
+    iter = journal.begin();
+    new_tail = fifo->info.tail_part_num;
+    new_head = fifo->info.head_part_num;
+    new_max = fifo->info.max_push_part_num;
+  }
+
+  static void pp_cb(lr::completion_t, void* arg) {
+    auto [j, r] = cb_init(arg);
+    auto canceled = j->canceled;
+    j->canceled = false;
+    j->pp_run(r, canceled);
+  }
+
+  void pp_run(int r, bool canceled) {
+    std::optional<int64_t> tail_part_num;
+    std::optional<int64_t> head_part_num;
+    std::optional<int64_t> max_part_num;
+
+    if (!first_pp && r == 0 && !canceled) {
+      complete(0);
+      return;
+    }
+
+    first_pp = false;
+
+    if (canceled) {
+      if (race_retries >= MAX_RACE_RETRIES) {
+	complete(-ECANCELED);
+	return;
+      }
+
+      ++race_retries;
+
+      std::vector<fifo::journal_entry> new_processed;
+      std::unique_lock l(fifo->m);
+      for (auto& e : processed) {
+	auto jiter = fifo->info.journal.find(e.part_num);
+	/* journal entry was already processed */
+	if (jiter == fifo->info.journal.end() ||
+	    !(jiter->second == e)) {
+	  continue;
+	}
+	new_processed.push_back(e);
+      }
+      processed = std::move(new_processed);
+    }
+
+    std::unique_lock l(fifo->m);
+    auto objv = fifo->info.version;
+    if (new_tail > fifo->info.tail_part_num) {
+      tail_part_num = new_tail;
+    }
+
+    if (new_head > fifo->info.head_part_num) {
+      head_part_num = new_head;
+    }
+
+    if (new_max > fifo->info.max_push_part_num) {
+      max_part_num = new_max;
+    }
+    l.unlock();
+
+    if (processed.empty() &&
+	!tail_part_num &&
+	!max_part_num) {
+      /* nothing to update anymore */
+      complete(0);
+      return;
+    }
+    set_cur(&JournalProcessor::pp_cb);
+    r = fifo->_update_meta(fifo::update{}
+		           .tail_part_num(tail_part_num)
+		           .head_part_num(head_part_num)
+		           .max_push_part_num(max_part_num)
+			   .journal_entries_rm(processed),
+                            objv, &this->canceled, cur());
+    if (r < 0) {
+      clear_cur();
+      complete(r);
+      return;
+    }
+    return;
+  }
+
+  JournalProcessor(const JournalProcessor&) = delete;
+  JournalProcessor& operator =(const JournalProcessor&) = delete;
+  JournalProcessor(JournalProcessor&&) = delete;
+  JournalProcessor& operator =(JournalProcessor&&) = delete;
+
+  void process() {
+    while (iter != journal.end()) {
+      const auto entry = iter->second;
+      switch (entry.op) {
+      case fifo::journal_entry::Op::create:
+	create_part(entry.part_num, entry.part_tag);
+	return;
+      case fifo::journal_entry::Op::set_head:
+	if (entry.part_num > new_head) {
+	  new_head = entry.part_num;
+	}
+	processed.push_back(entry);
+	++iter;
+	continue;
+      case fifo::journal_entry::Op::remove:
+	remove_part(entry.part_num, entry.part_tag);
+	return;
+      default:
+	complete(-EIO);
+	return;
+      }
+    }
+    postprocess();
+    return;
+  }
+
+};
+
+void FIFO::process_journal(lr::AioCompletion* c) {
+  auto p = new JournalProcessor(this, c);
+  p->process();
+}
+
+struct Lister : Completion<Lister> {
+  FIFO* f;
+  std::vector<list_entry> result;
+  bool more = false;
+  std::int64_t part_num;
+  std::uint64_t ofs;
+  int max_entries;
+  int r_out = 0;
+  std::vector<fifo::part_list_entry> entries;
+  bool part_more = false;
+  bool part_full = false;
+  std::vector<list_entry>* entries_out;
+  bool* more_out;
+
+  void complete(int r) {
+    if (r >= 0) {
+      if (more_out) *more_out = more;
+      if (entries_out) *entries_out = std::move(result);
+    }
+    Completion::complete(r);
+  }
+
+public:
+  Lister(FIFO* f, std::int64_t part_num, std::uint64_t ofs, int max_entries,
+	 std::vector<list_entry>* entries_out, bool* more_out,
+	 lr::AioCompletion* super)
+    : Completion(super), f(f), part_num(part_num), ofs(ofs), max_entries(max_entries),
+	entries_out(entries_out), more_out(more_out) {
+    result.reserve(max_entries);
+  }
+
+  Lister(const Lister&) = delete;
+  Lister& operator =(const Lister&) = delete;
+  Lister(Lister&&) = delete;
+  Lister& operator =(Lister&&) = delete;
+
+  void list() {
+    if (max_entries > 0) {
+      part_more = false;
+      part_full = false;
+      entries.clear();
+
+      std::unique_lock l(f->m);
+      auto part_oid = f->info.part_oid(part_num);
+      l.unlock();
+
+      set_cur(&Lister::list_cb);
+      auto op = list_part({}, ofs, max_entries, &r_out,
+			  &entries, &part_more, &part_full,
+			  nullptr);
+      f->ioctx.aio_operate(part_oid, cur(), &op, nullptr);
+    } else {
+      complete(0);
+    }
+  }
+
+  static void read_cb(lr::completion_t, void* arg) {
+    auto [l, r] = cb_init(arg);
+    if (r >= 0) r = l->r_out;
+    l->r_out = 0;
+    l->read_rep(r);
+  }
+
+  void read_rep(int r) {
+    if (r < 0) {
+      complete(r);
+      return;
+    }
+
+    if (part_num < f->info.tail_part_num) {
+      /* raced with trim? restart */
+      max_entries += result.size();
+      result.clear();
+      part_num = f->info.tail_part_num;
+      ofs = 0;
+      list();
+    }
+    /* assuming part was not written yet, so end of data */
+    more = false;
+    complete(0);
+    return;
+  }
+
+  static void list_cb(lr::completion_t, void* arg) {
+    auto [l, r] = cb_init(arg);
+    if (r >= 0) r = l->r_out;
+    l->r_out = 0;
+    l->list_rep(r);
+  }
+
+  void list_rep(int r) {
+    auto part_oid = f->info.part_oid(part_num);
+    if (r == -ENOENT) {
+      set_cur(&Lister::read_cb);
+      f->read_meta(cur());
+    }
+    if (r < 0) {
+      clear_cur();
+      complete(r);
+      return;
+    }
+
+    more = part_full || part_more;
+    for (auto& entry : entries) {
+      list_entry e;
+      e.data = std::move(entry.data);
+      e.marker = marker{part_num, entry.ofs}.to_string();
+      e.mtime = entry.mtime;
+      result.push_back(std::move(e));
+    }
+    max_entries -= entries.size();
+    entries.clear();
+    if (max_entries > 0 && part_more) {
+      list();
+      return;
+    }
+
+    if (!part_full) { /* head part is not full */
+      complete(0);
+      return;
+    }
+    ++part_num;
+    ofs = 0;
+    list();
+  }
+};
+
+int FIFO::list(int max_entries,
+	       std::optional<std::string_view> markstr,
+	       std::vector<list_entry>* out,
+	       bool* more, lr::AioCompletion* c) {
+  std::unique_lock l(m);
+  std::int64_t part_num = info.tail_part_num;
+  l.unlock();
+  std::uint64_t ofs = 0;
+
+  if (markstr) {
+    auto marker = to_marker(*markstr);
+    if (!marker) {
+      return -EINVAL;
+    }
+    part_num = marker->num;
+    ofs = marker->ofs;
+  }
+
+  auto ls = new Lister(this, part_num, ofs, max_entries, out, more, c);
+  ls->list();
+  return 0;
 }
 }
