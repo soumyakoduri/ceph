@@ -64,6 +64,7 @@ public:
     RGWSI_SysObj *sysobj{nullptr};
     RGWSI_MDLog *mdlog{nullptr};
     RGWSI_Cls *cls{nullptr};
+    librados::Rados* lr{nullptr};
   } svc;
 
   int init(rgw::sal::RGWRadosStore* _store,
@@ -72,7 +73,9 @@ public:
            RGWSI_SysObj *_sysobj_svc,
            RGWSI_Cls *_cls_svc);
 
-  int do_start() override;
+  int start(librados::Rados *_lr);
+  int do_start(librados::Rados *_lr);
+//  int do_start() override { return 0; }; // do we really need it??
 
   // traverse all the way back to the beginning of the period history, and
   // return a cursor to the first period in a fully attached history
