@@ -7145,7 +7145,7 @@ std::vector<Option> get_rgw_options() {
 	"the explicit options will cause startup to fail if the other log is "
 	"still around."),
 
-    Option("rgw_mdlog_backing", Option::TYPE_STR, Option::LEVEL_ADVANCED)
+    Option("rgw_md_log_backing", Option::TYPE_STR, Option::LEVEL_ADVANCED)
     .set_default("auto")
     .set_enum_allowed( { "auto", "fifo", "omap", "legacyfifo" } )
     .set_description("Backing store for the RGW metadata sync log")

@@ -110,6 +110,7 @@ public:
   virtual int trim(int shard_id, std::string_view marker, bool exclusive) { return 0; };
   virtual int trim(int shard_id, std::string_view marker, librados::AioCompletion* c, bool exclusive) { return 0; };
   virtual std::string_view max_marker() { return NULL; };
+  static int remove(CephContext* cct, std::string prefix, librados::Rados* rados, const rgw_pool& log_pool);
 };
 
 class RGWMetadataLog {

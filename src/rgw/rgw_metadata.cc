@@ -156,6 +156,38 @@ RGWMetadataLogBE::RGWMetadataLogBE(CephContext* const cct, std::string prefix)
     : cct(cct), prefix(prefix) {}
 RGWMetadataLogBE::~RGWMetadataLogBE() {}
 
+int RGWMetadataLogBE::remove(CephContext* cct, std::string prefix,
+	       		     librados::Rados* rados, const rgw_pool& log_pool)
+{
+  auto num_shards = cct->_conf->rgw_md_log_max_shards;
+  librados::IoCtx ioctx;
+  auto r = rgw_init_ioctx(rados, log_pool.name, ioctx,
+			  false, false);
+  if (r < 0) {
+    if (r == -ENOENT) {
+      return 0;
+    } else {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": rgw_init_ioctx failed: " << log_pool.name
+		 << ": " << cpp_strerror(-r) << dendl;
+      return r;
+    }
+  }
+  for (auto i = 0; i < num_shards; ++i) {
+    std::unique_ptr<rgw::cls::fifo::FIFO> fifo;
+    auto oid = fmt::format("{}{}", prefix, i);
+    librados::ObjectWriteOperation op;
+    op.remove();
+    auto r = rgw_rados_operate(ioctx, oid, &op, null_yield);
+    if (r < 0 && r != -ENOENT) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": remove failed: " << log_pool.name << "/" << oid
+		 << ": " << cpp_strerror(-r) << dendl;
+    }
+  }
+  return 0;
+}
+
 class RGWMetadataLogOmap final : public RGWMetadataLogBE {
   using centries = std::list<cls_log_entry>;
   RGWSI_Cls& cls;
@@ -170,23 +202,39 @@ public:
     }
   }
   ~RGWMetadataLogOmap() override = default;
-  static int exists(CephContext* cct, RGWSI_Cls& cls, std::string prefix) {
+  static int exists(CephContext* cct, RGWSI_Cls& cls, std::string prefix,
+		    bool* exists, bool* has_entries) {
     auto num_shards = cct->_conf->rgw_md_log_max_shards;
     std::string out_marker;
     bool truncated = false;
     std::list<cls_log_entry> log_entries;
+    const cls_log_header empty_info;
+    *exists = false;
+    *has_entries = false;
     for (auto i = 0; i < num_shards; ++i) {
       auto oid = fmt::format("{}{}", prefix, i);
-      auto r = cls.timelog.list(oid, {}, {},
-				100, log_entries,
-				"", &out_marker, &truncated, null_yield);
+      cls_log_header info;
+      auto r = cls.timelog.info(oid, &info, null_yield);
       if (r < 0 && r != -ENOENT) {
+	lderr(cct) << __PRETTY_FUNCTION__
+		   << ": failed to get info " << oid << ": " << cpp_strerror(-r)
+		   << dendl;
+	return r;
+      } else if ((r == -ENOENT) || (info == empty_info)) {
+	continue;
+      }
+      *exists = true;
+      r = cls.timelog.list(oid, {}, {}, 100, log_entries, "", &out_marker,
+			   &truncated, null_yield);
+      if (r < 0) {
 	lderr(cct) << __PRETTY_FUNCTION__
 		   << ": failed to list " << oid << ": " << cpp_strerror(-r)
 		   << dendl;
 	return r;
       } else if (!log_entries.empty()) {
-	return 1;
+	*has_entries = true;
+	break; // No reason to continue, once we have both existence
+	       // AND non-emptiness
       }
     }
     return 0;
@@ -364,7 +412,7 @@ public:
   }
   ~RGWMetadataLogFIFO() override = default;
   static int exists(CephContext* cct, std::string prefix, librados::Rados* rados,
-		    const rgw_pool& log_pool) {
+		    const rgw_pool& log_pool, bool* exists, bool* has_entries) {
     auto num_shards = cct->_conf->rgw_md_log_max_shards;
     librados::IoCtx ioctx;
     auto r = rgw_init_ioctx(rados, log_pool.name, ioctx,
@@ -379,21 +427,33 @@ public:
 	return r;
       }
     }
+    *exists = false;
+    *has_entries = false;
     for (auto i = 0; i < num_shards; ++i) {
       std::unique_ptr<rgw::cls::fifo::FIFO> fifo;
       auto oid = fmt::format("{}{}", prefix, i);
+      std::vector<rgw::cls::fifo::list_entry> log_entries;
+      bool more = false;
       auto r = rgw::cls::fifo::FIFO::open(ioctx, oid,
 					  &fifo, null_yield);
-      if (r >= 0)
-	return 1;
-      if (r == -ENOENT ||
-	  r == -ENODATA) {
+      if (r == -ENOENT || r == -ENODATA) {
 	continue;
       } else {
 	lderr(cct) << __PRETTY_FUNCTION__
 		   << ": unable to open FIFO: " << log_pool << "/" << oid
 		   << ": " << cpp_strerror(-r) << dendl;
 	return r;
+      }
+      *exists = true;
+      r = fifo->list(1, nullopt, &log_entries, &more,
+		     null_yield);
+      if (r < 0) {
+	lderr(cct) << __PRETTY_FUNCTION__
+		   << ": unable to list entries: " << log_pool << "/" << oid
+		   << ": " << cpp_strerror(-r) << dendl;
+      } else if (!log_entries.empty()) {
+	*has_entries = true;
+	break;
       }
     }
     return 0;
@@ -551,43 +611,77 @@ public:
 
 int RGWMetadataLog::start(librados::Rados* lr)
 {
-  auto backing = cct->_conf.get_val<std::string>("rgw_mdlog_backing");
+  auto backing = cct->_conf.get_val<std::string>("rgw_md_log_backing");
   // Should be guaranteed by `set_enum_allowed`
   ceph_assert(backing == "auto" || backing == "fifo" || backing == "omap");
 
   auto log_pool = svc.zone->get_zone_params().log_pool;
-  auto r = RGWMetadataLogOmap::exists(cct, *svc.cls, prefix);
+  bool omapexists = false, omaphasentries = false;
+  auto r = RGWMetadataLogOmap::exists(cct, *svc.cls, prefix, &omapexists, &omaphasentries);
   if (r < 0) {
     lderr(cct) << __PRETTY_FUNCTION__
 	       << ": Error when checking for existing Omap datalog backend: "
 	       << cpp_strerror(-r) << dendl;
   }
-  bool omapexists = (r > 0);
-  r = RGWMetadataLogFIFO::exists(cct, prefix, lr, log_pool);
+  bool fifoexists = false, fifohasentries = false;
+  r = RGWMetadataLogFIFO::exists(cct, prefix, lr, log_pool, &fifoexists, &fifohasentries);
   if (r < 0) {
     lderr(cct) << __PRETTY_FUNCTION__
 	       << ": Error when checking for existing FIFO datalog backend: "
 	       << cpp_strerror(-r) << dendl;
   }
-  bool fifoexists = (r > 0);
+
+  bool has_entries = omaphasentries || fifohasentries;
+  bool remove = false;
 
   if (omapexists && fifoexists) {
-    lderr(cct) << __PRETTY_FUNCTION__
-	       << ": Both Omap and FIFO backends exist, cannot continue."
-	       << dendl;
-    return -EINVAL;
+    if (has_entries) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": Both Omap and FIFO backends exist, cannot continue."
+		 << dendl;
+      return -EINVAL;
+    }
+    ldout(cct, 0)
+      << __PRETTY_FUNCTION__
+      << ": Both Omap and FIFO backends exist, but are empty. Will remove."
+      << dendl;
+    remove = true;
   }
   if (backing == "omap" && fifoexists) {
-    lderr(cct) << __PRETTY_FUNCTION__
-	       << ": Omap requested, but FIFO backend exists, cannot continue."
-	       << dendl;
-    return -EINVAL;
+    if (has_entries) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": Omap requested, but FIFO backend exists, cannot continue."
+		 << dendl;
+      return -EINVAL;
+    }
+    ldout(cct, 0) << __PRETTY_FUNCTION__
+		  << ": Omap requested, FIFO exists, but is empty. Deleting."
+		  << dendl;
+    remove = true;
   }
   if ((backing == "fifo") && omapexists) {
-    lderr(cct) << __PRETTY_FUNCTION__
-	       << ": FIFO requested, but Omap backend exists, cannot continue."
-	       << dendl;
-    return -EINVAL;
+    if (has_entries) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": FIFO requested, but Omap backend exists, cannot continue."
+		 << dendl;
+      return -EINVAL;
+    }
+    ldout(cct, 0) << __PRETTY_FUNCTION__
+		  << ": FIFO requested, Omap exists, but is empty. Deleting."
+		  << dendl;
+    remove = true;
+  }
+
+  if (remove) {
+    r = RGWMetadataLogBE::remove(cct, prefix, lr, log_pool);
+    if (r < 0) {
+      lderr(cct) << __PRETTY_FUNCTION__
+		 << ": remove failed, cannot continue."
+		 << dendl;
+      return r;
+    }
+    omapexists = false;
+    fifoexists = false;
   }
 
   try {

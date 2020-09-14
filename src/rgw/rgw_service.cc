@@ -91,8 +91,7 @@ int RGWServices_Def::init(CephContext *cct,
                          bucket_sobj.get());
   cls->init(zone.get(), rados.get());
   config_key_rados->init(rados.get());
-  mdlog->init(store, rados.get(), zone.get(), sysobj.get(), cls.get(),
-	      rados->get_rados_handle());
+  mdlog->init(store, rados.get(), zone.get(), sysobj.get(), cls.get());
   meta->init(sysobj.get(), mdlog.get(), meta_bes);
   meta_be_sobj->init(sysobj.get(), mdlog.get());
   meta_be_otp->init(sysobj.get(), mdlog.get(), cls.get());
@@ -150,7 +149,7 @@ int RGWServices_Def::init(CephContext *cct,
       return r;
     }
 
-    r = mdlog->start();
+    r = mdlog->start(rados->get_rados_handle());
     if (r < 0) {
       ldout(cct, 0) << "ERROR: failed to start mdlog service (" << cpp_strerror(-r) << dendl;
       return r;
