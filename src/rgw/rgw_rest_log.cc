@@ -82,6 +82,7 @@ void RGWOp_MDLog_List::execute() {
 
   RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls,
       period};
+  meta_log.start(store->svc()->rados->get_rados_handle());
 
   http_ret = meta_log.list_entries(shard_id, max_entries, marker, entries,
                                    &last_marker, &truncated);
@@ -154,6 +155,7 @@ void RGWOp_MDLog_ShardInfo::execute() {
     }
   }
   RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls, period};
+  meta_log.start(store->svc()->rados->get_rados_handle());
 
   http_ret = meta_log.get_info(shard_id, &info);
 }
@@ -220,6 +222,7 @@ void RGWOp_MDLog_Delete::execute() {
     }
   }
   RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls, period};
+  meta_log.start(store->svc()->rados->get_rados_handle());
 
   http_ret = meta_log.trim(shard_id, marker, true);
 }
@@ -260,6 +263,7 @@ void RGWOp_MDLog_Lock::execute() {
   }
 
   RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls, period};
+  meta_log.start(store->svc()->rados->get_rados_handle());
   unsigned dur;
   dur = (unsigned)strict_strtol(duration_str.c_str(), 10, &err);
   if (!err.empty() || dur <= 0) {
@@ -307,6 +311,7 @@ void RGWOp_MDLog_Unlock::execute() {
   }
 
   RGWMetadataLog meta_log{s->cct, store, store->svc()->zone, store->svc()->cls, period};
+  meta_log.start(store->svc()->rados->get_rados_handle());
   http_ret = meta_log.unlock(shard_id, zone_id, locker_id);
 }
 

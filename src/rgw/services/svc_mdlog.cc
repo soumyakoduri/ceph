@@ -41,11 +41,32 @@ int RGWSI_MDLog::init(rgw::sal::RGWRadosStore* _store, RGWSI_RADOS *_rados_svc,
   return 0;
 }
 
-int RGWSI_MDLog::do_start()
+int RGWSI_MDLog::start(librados::Rados *_lr)
+{
+  if (start_state != StateInit) {
+    return 0;
+  }
+
+  start_state = StateStarting;; /* setting started prior to do_start() on purpose so that circular
+                                   references can call start() on each other */
+
+  int r = do_start(_lr);
+  if (r < 0) {
+    return r;
+  }
+
+  start_state = StateStarted;
+
+  return 0;
+}
+
+int RGWSI_MDLog::do_start(librados::Rados *_lr)
 {
   auto& current_period = svc.zone->get_current_period();
 
   current_log = get_log(current_period.get_id());
+
+  current_log->start(_lr);
 
   period_puller.reset(new RGWPeriodPuller(svc.zone, svc.sysobj));
   period_history.reset(new RGWPeriodHistory(cct, period_puller.get(),
