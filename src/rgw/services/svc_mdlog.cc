@@ -59,13 +59,13 @@ int RGWSI_MDLog::do_start()
   return 0;
 }
 
-int RGWSI_MDLog::init_log()
+int RGWSI_MDLog::init_log(librados::Rados* lr)
 {
   auto& current_period = svc.zone->get_current_period();
 
   current_log = get_log(current_period.get_id());
 
-  current_log->init();
+  current_log->init(lr);
 
   return 0;
 }
