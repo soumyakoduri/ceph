@@ -59,6 +59,17 @@ int RGWSI_MDLog::do_start()
   return 0;
 }
 
+int RGWSI_MDLog::init_log()
+{
+  auto& current_period = svc.zone->get_current_period();
+
+  current_log = get_log(current_period.get_id());
+
+  current_log->init();
+
+  return 0;
+}
+
 int RGWSI_MDLog::read_history(RGWMetadataLogHistory *state,
                               RGWObjVersionTracker *objv_tracker) const
 {
