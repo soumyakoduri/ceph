@@ -1105,13 +1105,13 @@ def test_bucket_sync_disable():
     buckets, zone_bucket = create_bucket_per_zone(zonegroup_conns)
     zonegroup_meta_checkpoint(zonegroup)
 
-    for bucket_name in buckets:
-        disable_bucket_sync(realm.meta_master_zone(), bucket_name)
+    #for bucket_name in buckets:
+    #    disable_bucket_sync(realm.meta_master_zone(), bucket_name)
 
-    for zone in zonegroup.zones:
-        check_buckets_sync_status_obj_not_exist(zone, buckets)
+    #for zone in zonegroup.zones:
+    #    check_buckets_sync_status_obj_not_exist(zone, buckets)
 
-    zonegroup_data_checkpoint(zonegroup_conns)
+    # zonegroup_data_checkpoint(zonegroup_conns)
 
 def test_bucket_sync_enable_right_after_disable():
     zonegroup = realm.master_zonegroup()
