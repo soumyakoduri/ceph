@@ -234,7 +234,7 @@ public:
     std::list<cls_log_entry> lentries;
     auto r = cls.timelog.list(oids[index], {}, {},
 			      max_entries, lentries,
-			      string(marker),
+			      std::string(marker),
 			      out_marker, truncated, null_yield);
     e.clear();
     std::move(lentries.begin(), lentries.end(), std::back_inserter(e));
@@ -250,14 +250,17 @@ public:
   int get_info(int index, RGWMetadataLogInfo *info) override {
     cls_log_header header;
     auto r = cls.timelog.info(oids[index], &header, null_yield);
+    lderr(cct) << "Omapdebug get_info after info r = " <<  r << dendl;
     if (r == -ENOENT) r = 0;
     if (r < 0) {
       lderr(cct) << __PRETTY_FUNCTION__
-		 << ": failed to get info from " << oids[index]
+		 << ": Omapdebug failed to get info from " << oids[index]
 		 << cpp_strerror(-r) << dendl;
     } else {
       info->marker = header.max_marker;
       info->last_update = header.max_time.to_real_time();
+    lderr(cct) << "Omapdebug get_info after info marker = " <<  info->marker << dendl;
+    lderr(cct) << "Omapdebug get_info after info last_update = " <<  info->last_update << dendl;
     }
     return r;
   }
@@ -380,6 +383,8 @@ public:
     librados::IoCtx ioctx;
     auto r = rgw_init_ioctx(rados, log_pool.name, ioctx,
 			    false, false);
+    lderr(cct) << "FIFOdebug exists start" << dendl;
+
     if (r < 0) {
       if (r == -ENOENT) {
 	return 0;
@@ -419,10 +424,12 @@ public:
 	break;
       }
     }
+    lderr(cct) << "FIFOdebug exists end" << dendl;
     return 0;
   }
   int push(int index, std::vector<cls_log_entry>& items, librados::AioCompletion *&completion) override {
     std::vector<ceph::buffer::list> c;
+    lderr(cct) << "FIFOdebug push1 start" << dendl;
     for (const auto& bs : items) {
 
       bufferlist bl;
@@ -431,18 +438,20 @@ public:
       c.push_back(std::move(bl));
     }
 
-    auto r = fifos[index]->push(c, completion);
+    auto r = fifos[index]->push(std::move(c), completion);
     if (r < 0) {
       lderr(cct) << __PRETTY_FUNCTION__
 		 << ": unable to push to FIFO: " << get_shard_oid(index)
 		 << ": " << cpp_strerror(-r) << dendl;
     }
+    lderr(cct) << "FIFOdebug push1 end" << dendl;
     return r;
   }
   int push(int index, ceph::real_time now,
 	   const std::string& section,
 	   const std::string& key,
 	   ceph::buffer::list& bl) override {
+    lderr(cct) << "FIFOdebug push2 start" << dendl;
     cls_log_entry entry;
     utime_t t(now);
 
@@ -450,6 +459,7 @@ public:
     entry.section = section;
     entry.name = key;
     entry.data = bl;
+//    cls.timelog.prepare_entry(entry, now, section, key, bl);
 
     bufferlist ble;
     encode(entry, ble);
@@ -460,6 +470,7 @@ public:
 		 << ": unable to push to FIFO: " << get_shard_oid(index)
 		 << ": " << cpp_strerror(-r) << dendl;
     }
+    lderr(cct) << "FIFOdebug push2 end" << dendl;
     return r;
   }
   int list(int index, int max_entries,
@@ -467,6 +478,7 @@ public:
 	   std::string_view marker,
 	   std::string* out_marker, bool* truncated) override {
     std::vector<rgw::cls::fifo::list_entry> log_entries;
+    lderr(cct) << "FIFOdebug list start" << dendl;
     bool more = false;
     auto r = fifos[index]->list(max_entries, marker,
 		   		&log_entries, &more,
@@ -488,6 +500,8 @@ public:
 		   << err.what() << dendl;
 	return -EIO;
       }
+      log_entry.id = entry.marker;
+      log_entry.timestamp = utime_t(entry.mtime);
       e.push_back(std::move(log_entry));
     }
     if (truncated)
@@ -495,41 +509,54 @@ public:
     if (out_marker && !log_entries.empty()) {
       *out_marker = log_entries.back().marker;
     }
+    lderr(cct) << "FIFOdebug list end" << dendl;
     return 0;
   }
 
   int get_info(int index, RGWMetadataLogInfo *info) override {
     auto& fifo = fifos[index];
+    lderr(cct) << "FIFOdebug get_info start" << dendl;
     auto r = fifo->read_meta(null_yield);
+    lderr(cct) << "FIFOdebug get_info after read_meta" << dendl;
     if (r < 0) {
       lderr(cct) << __PRETTY_FUNCTION__
-		 << ": unable to get FIFO metadata: " << get_shard_oid(index)
+		 << ": FIFOdebug unable to get FIFO metadata: " << get_shard_oid(index)
 		 << ": " << cpp_strerror(-r) << dendl;
       return r;
     }
+    lderr(cct) << "FIFOdebug get_info before meta" << dendl;
     auto m = fifo->meta();
+    lderr(cct) << "FIFOdebug get_info after meta" << dendl;
     auto p = m.head_part_num;
+    lderr(cct) << "FIFOdebug get_info p = " <<  p << dendl;
     if (p < 0) {
       info->marker = rgw::cls::fifo::marker{}.to_string();
+      //info->marker.clear();
       info->last_update = ceph::real_clock::zero();
+    lderr(cct) << "FIFOdebug get_info marker = " <<  info->marker << dendl;
+    lderr(cct) << "FIFOdebug get_info last_update = " <<  info->last_update << dendl;
       return 0;
     }
     rgw::cls::fifo::part_info h;
+    lderr(cct) << "FIFOdebug get_info before part_info" << dendl;
     r = fifo->get_part_info(p, &h, null_yield);
+    lderr(cct) << "FIFOdebug get_info after part_info" << dendl;
     if (r < 0) {
       lderr(cct) << __PRETTY_FUNCTION__
-		 << ": unable to get part info: " << get_shard_oid(index) << "/" << p
+		 << ": FIFOdebug unable to get part info: " << get_shard_oid(index) << "/" << p
 		 << ": " << cpp_strerror(-r) << dendl;
       return r;
     }
     info->marker = rgw::cls::fifo::marker{p, h.last_ofs}.to_string();
     info->last_update = h.max_time;
+    lderr(cct) << "FIFOdebug get_info end" << dendl;
     return 0;
   }
 
   int get_info_async(int index,
 		     RGWMetadataLogInfoCompletion *completion) override {
     auto& fifo = fifos[index];
+    lderr(cct) << "FIFOdebug get_info_async start" << dendl;
     auto c = completion->get_completion();
     auto r = fifo->get_head_info([completion](int p,
 					      rgw::cls::fifo::part_info* h) {
@@ -538,6 +565,7 @@ public:
 	  rgw::cls::fifo::marker{p, h->last_ofs}.to_string();
 	completion->get_header().max_time = utime_t(h->max_time);
       } else {
+	//completion->get_header().max_marker.clear();
 	completion->get_header().max_marker =
 	  rgw::cls::fifo::marker{}.to_string();
 	completion->get_header().max_time = utime_t{};
@@ -548,22 +576,27 @@ public:
 		 << ": unable to get head info: " << get_shard_oid(index) << "/"
 		 << ": " << cpp_strerror(-r) << dendl;
     }
+    lderr(cct) << "FIFOdebug get_info_async end" << dendl;
     return r;
   }
 
   int trim(int index, std::string_view marker, bool exclusive) override {
+    lderr(cct) << "FIFOdebug trim1 start" << dendl;
     auto r = fifos[index]->trim(marker, exclusive, null_yield);
     if (r < 0) {
       lderr(cct) << __PRETTY_FUNCTION__
 		 << ": unable to trim FIFO: " << get_shard_oid(index)
 		 << ": " << cpp_strerror(-r) << dendl;
     }
+    lderr(cct) << "FIFOdebug trim1 end" << dendl;
     return r;
   }
   int trim(int index, std::string_view marker,
 	   librados::AioCompletion* c, bool exclusive) override {
     int r = 0;
+    lderr(cct) << "FIFOdebug trim2 start" << dendl;
     if (marker == rgw::cls::fifo::marker(0, 0).to_string()) {
+    //if (marker.empty()) { // == rgw::cls::fifo::marker(0, 0).to_string()) {
       auto pc = c->pc;
       pc->get();
       pc->lock.lock();
@@ -593,6 +626,7 @@ public:
 		   << ": " << cpp_strerror(-r) << dendl;
       }
     }
+    lderr(cct) << "FIFOdebug trim2 end" << dendl;
     return r;
   }
   std::string_view max_marker() override {
@@ -624,7 +658,6 @@ int RGWMetadataLogBE::remove(CephContext* cct, std::string prefix,
     }
   }
   for (auto i = 0; i < num_shards; ++i) {
-    std::unique_ptr<rgw::cls::fifo::FIFO> fifo;
     auto oid = fmt::format("{}{}", prefix, i);
     librados::ObjectWriteOperation op;
     op.remove();
@@ -774,7 +807,8 @@ int RGWMetadataLog::list_entries(int shard,
 
   auto oid = get_shard_oid(shard);
   std::string next_marker;
-  int ret = be->list(shard, max_entries, entries, marker, &next_marker, truncated);
+  int ret = be->list(shard, max_entries, entries, std::string(marker),
+		     &next_marker, truncated);
   if ((ret < 0) && (ret != -ENOENT))
     return ret;
 
