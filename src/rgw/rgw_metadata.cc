@@ -219,18 +219,22 @@ public:
 	   const std::string& section,
 	   const std::string& key,
 	   ceph::buffer::list& bl) override {
+    lderr(cct) << "$$$$$Omapdebug push2 start, index:" << index << ", oids[index]:" << oids[index] << dendl;
     auto r = cls.timelog.add(oids[index], now, section, key, bl, null_yield);
+    lderr(cct) << "Omapdebug push2 entry.id:" << ", entry.timestamp:" << now << ", entry.section:" << section << ", entry.name:" << key << ", entry.data:" << bl << dendl;
     if (r < 0) {
       lderr(cct) << __PRETTY_FUNCTION__
 		 << ": failed to push to " << oids[index]
 		 << cpp_strerror(-r) << dendl;
     }
+    lderr(cct) << "$$$$Omapdebug push2 end" << dendl;
     return r;
   }
   int list(int index, int max_entries,
 	   std::vector<cls_log_entry>& e,
 	   std::string_view marker,
 	   std::string* out_marker, bool* truncated) override {
+    lderr(cct) << " \n \n \n $$$$$$$$$$$Omapdebug list start marker:" << marker << ", max_entries:" << max_entries << ", index:" << index << ", oids[index]:" << oids[index] << dendl;
     std::list<cls_log_entry> lentries;
     auto r = cls.timelog.list(oids[index], {}, {},
 			      max_entries, lentries,
@@ -239,12 +243,16 @@ public:
     e.clear();
     std::move(lentries.begin(), lentries.end(), std::back_inserter(e));
 
+    for (const auto& log_entry : e) {
+    lderr(cct) << "Omapdebug list log_entry.id:" << log_entry.id << ", log_entry.timestamp:" << log_entry.timestamp << ", log_entry.section:" << log_entry.section << ", log_entry.name:" << log_entry.name << ", log_entry.data:" << log_entry.data << dendl;
+    }
     if (r < 0) {
       lderr(cct) << __PRETTY_FUNCTION__
-		 << ": failed to list " << oids[index]
+		 << " Omapdebug: failed to list " << oids[index]
 		 << cpp_strerror(-r) << dendl;
       return r;
     }
+   lderr(cct) << "$$$$$$$$$$$$Omapdebug list end out_marker:" << *out_marker << ", truncated:" << *truncated << "\n \n \n " << dendl;
     return 0;
   }
   int get_info(int index, RGWMetadataLogInfo *info) override {
@@ -432,6 +440,7 @@ public:
     lderr(cct) << "FIFOdebug push1 start" << dendl;
     for (const auto& bs : items) {
 
+    lderr(cct) << "FIFOdebug push bs.id:" << bs.id << ", bs.timestamp:" << bs.timestamp << ", bs.section:" << bs.section << ", bs.name:" << bs.name << ", bs.data:" << bs.data << dendl;
       bufferlist bl;
       encode(bs, bl);
 
@@ -451,18 +460,20 @@ public:
 	   const std::string& section,
 	   const std::string& key,
 	   ceph::buffer::list& bl) override {
-    lderr(cct) << "FIFOdebug push2 start" << dendl;
+    lderr(cct) << "FIFOdebug push2 start, index:" << index << dendl;
     cls_log_entry entry;
     utime_t t(now);
 
     entry.timestamp = t;
     entry.section = section;
     entry.name = key;
-    entry.data = bl;
+    entry.data = std::move(bl);
 //    cls.timelog.prepare_entry(entry, now, section, key, bl);
 
     bufferlist ble;
     encode(entry, ble);
+
+    lderr(cct) << "FIFOdebug push2 entry.id:" << entry.id << ", entry.timestamp:" << entry.timestamp << ", entry.section:" << entry.section << ", entry.name:" << entry.name << ", entry.data:" << entry.data << dendl;
 
     auto r = fifos[index]->push(std::move(ble), null_yield);
     if (r < 0) {
@@ -478,30 +489,33 @@ public:
 	   std::string_view marker,
 	   std::string* out_marker, bool* truncated) override {
     std::vector<rgw::cls::fifo::list_entry> log_entries;
-    lderr(cct) << "FIFOdebug list start" << dendl;
+    lderr(cct) << " \n \n \n $$$$$$$$$$FIFOdebug list start marker:" << marker << ", max_entries:" << max_entries << ", index:" << index << dendl;
     bool more = false;
     auto r = fifos[index]->list(max_entries, marker,
 		   		&log_entries, &more,
 				null_yield);
     if (r < 0) {
       lderr(cct) << __PRETTY_FUNCTION__
-		 << ": unable to list FIFO: " << get_shard_oid(index)
+		 << " FIFOdebug : unable to list FIFO: " << get_shard_oid(index)
 		 << ": " << cpp_strerror(-r) << dendl;
       return r;
     }
+    e.clear();
     for (const auto& entry : log_entries) {
-      auto liter = entry.data.cbegin();
+     auto liter = entry.data;
       cls_log_entry log_entry;
       try {
         decode(log_entry, liter);
       } catch (const buffer::error& err) {
 	lderr(cct) << __PRETTY_FUNCTION__
-		   << ": failed to decode metadata changes log entry: "
+		   << " FIFOdebug: failed to decode metadata changes log entry: "
 		   << err.what() << dendl;
 	return -EIO;
       }
+    lderr(cct) << "FIFOdebug list log_entry.id:" << log_entry.id << ", log_entry.timestamp:" << log_entry.timestamp << ", log_entry.section:" << log_entry.section << ", log_entry.name:" << log_entry.name << ", log_entry.data:" << log_entry.data << dendl;
       log_entry.id = entry.marker;
-      log_entry.timestamp = utime_t(entry.mtime);
+    lderr(cct) << "FIFOdebug list entry.marker:" << entry.marker << dendl;
+    lderr(cct) << "FIFOdebug list log_entry.id:" << log_entry.id << dendl;
       e.push_back(std::move(log_entry));
     }
     if (truncated)
@@ -509,7 +523,7 @@ public:
     if (out_marker && !log_entries.empty()) {
       *out_marker = log_entries.back().marker;
     }
-    lderr(cct) << "FIFOdebug list end" << dendl;
+  lderr(cct) << "$$$$$$$$$$$$FIFOdebug list end out_marker:" << *out_marker << ", truncated:" << *truncated << "\n \n \n " << dendl;
     return 0;
   }
 
@@ -530,8 +544,8 @@ public:
     auto p = m.head_part_num;
     lderr(cct) << "FIFOdebug get_info p = " <<  p << dendl;
     if (p < 0) {
-      info->marker = rgw::cls::fifo::marker{}.to_string();
-      //info->marker.clear();
+      //info->marker = rgw::cls::fifo::marker{}.to_string();
+      info->marker.clear();
       info->last_update = ceph::real_clock::zero();
     lderr(cct) << "FIFOdebug get_info marker = " <<  info->marker << dendl;
     lderr(cct) << "FIFOdebug get_info last_update = " <<  info->last_update << dendl;
@@ -565,9 +579,9 @@ public:
 	  rgw::cls::fifo::marker{p, h->last_ofs}.to_string();
 	completion->get_header().max_time = utime_t(h->max_time);
       } else {
-	//completion->get_header().max_marker.clear();
-	completion->get_header().max_marker =
-	  rgw::cls::fifo::marker{}.to_string();
+	completion->get_header().max_marker.clear();
+	//completion->get_header().max_marker =
+	 // rgw::cls::fifo::marker{}.to_string();
 	completion->get_header().max_time = utime_t{};
       }
     }, c);
@@ -595,8 +609,8 @@ public:
 	   librados::AioCompletion* c, bool exclusive) override {
     int r = 0;
     lderr(cct) << "FIFOdebug trim2 start" << dendl;
-    if (marker == rgw::cls::fifo::marker(0, 0).to_string()) {
-    //if (marker.empty()) { // == rgw::cls::fifo::marker(0, 0).to_string()) {
+//    if (marker == rgw::cls::fifo::marker(0, 0).to_string()) {
+    if (marker.empty()) { // == rgw::cls::fifo::marker(0, 0).to_string()) {
       auto pc = c->pc;
       pc->get();
       pc->lock.lock();
@@ -809,6 +823,7 @@ int RGWMetadataLog::list_entries(int shard,
   std::string next_marker;
   int ret = be->list(shard, max_entries, entries, std::string(marker),
 		     &next_marker, truncated);
+  lderr(cct) << "FIFOdebug  Omapdebug list_entries index:" << shard << ", count:" << entries.size() << ", ret=" << ret << dendl;
   if ((ret < 0) && (ret != -ENOENT))
     return ret;
 
