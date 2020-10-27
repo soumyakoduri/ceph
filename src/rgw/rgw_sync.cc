@@ -2317,12 +2317,12 @@ int RGWCloneMetaLogCoroutine::state_read_shard_status()
     [this](int ret, const cls_log_header& header) {
       if (ret < 0) {
         if (ret != -ENOENT) {
-          ldpp_dout(sync_env->dpp, 1) << "ERROR: failed to read mdlog info with "
-                                      << cpp_strerror(ret) << dendl;
+          ldpp_dout(sync_env->dpp, 1) << "ERROR: failed to read mdlog info shard_id:" << shard_id << " with " << cpp_strerror(ret) << dendl;
         }
       } else {
         shard_info.marker = header.max_marker;
         shard_info.last_update = header.max_time.to_real_time();
+  ldpp_dout(sync_env->dpp, 20) << "header present with shard_id=" << shard_id << " marker=" << shard_info.marker << " last_update=" << shard_info.last_update << dendl;
       }
       // wake up parent stack
       io_complete();
@@ -2433,6 +2433,7 @@ int RGWCloneMetaLogCoroutine::state_store_mdlog_entries()
     dest_entries.push_back(dest_entry);
 
     marker = entry.id;
+    ldpp_dout(sync_env->dpp, 0) << "store md log entry shard_id=" << shard_id << ", marker:" << marker << " dest_entry.id:" << dest_entry.id << ", dest_entry.section:" << dest_entry.section << ", dest_entry.name:" << dest_entry.name << ", dest_entry.timestamp:" << dest_entry.timestamp << dendl;
   }
 
   RGWAioCompletionNotifier *cn = stack->create_completion_notifier();

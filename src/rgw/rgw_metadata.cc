@@ -570,7 +570,7 @@ public:
   int get_info_async(int index,
 		     RGWMetadataLogInfoCompletion *completion) override {
     auto& fifo = fifos[index];
-    lderr(cct) << "FIFOdebug get_info_async start" << dendl;
+    lderr(cct) << "FIFOdebug get_info_async start shard_id:" << index << dendl;
     auto c = completion->get_completion();
     auto r = fifo->get_head_info([completion](int p,
 					      rgw::cls::fifo::part_info* h) {
@@ -578,7 +578,9 @@ public:
 	completion->get_header().max_marker =
 	  rgw::cls::fifo::marker{p, h->last_ofs}.to_string();
 	completion->get_header().max_time = utime_t(h->max_time);
+  //      lderr(cct) << "FIFOdebug get_info_async header present, shard_id:" << index << ", marker:" << completion->get_header().max_marker << dendl;
       } else {
+//        lderr(cct) << "FIFOdebug get_info_async header absent shard_id:" << index << dendl;
 	completion->get_header().max_marker.clear();
 	//completion->get_header().max_marker =
 	 // rgw::cls::fifo::marker{}.to_string();
@@ -590,7 +592,7 @@ public:
 		 << ": unable to get head info: " << get_shard_oid(index) << "/"
 		 << ": " << cpp_strerror(-r) << dendl;
     }
-    lderr(cct) << "FIFOdebug get_info_async end" << dendl;
+    lderr(cct) << "FIFOdebug get_info_async shard_id:" << index << " end" << dendl;
     return r;
   }
 
