@@ -1345,12 +1345,16 @@ class RGWCloneMetaLogCoroutine : public RGWCoroutine {
   RGWMetadataLogInfo shard_info;
   rgw_mdlog_shard_data data;
 
+  std::vector<cls_log_entry> *entries;
+  bool *ptruncated;
 public:
   RGWCloneMetaLogCoroutine(RGWMetaSyncEnv *_sync_env, RGWMetadataLog* mdlog,
                            const std::string& period, int _id,
-                           const string& _marker, string *_new_marker)
+                           const string& _marker, string *_new_marker,
+			   std::vector<cls_log_entry> *_entries, bool *_ptruncated)
     : RGWCoroutine(_sync_env->cct), sync_env(_sync_env), mdlog(mdlog),
-      period(period), shard_id(_id), marker(_marker), new_marker(_new_marker) {
+      period(period), shard_id(_id), marker(_marker), new_marker(_new_marker),
+      entries(_entries), ptruncated(_ptruncated)	{
     if (new_marker) {
       *new_marker = marker;
     }
@@ -1739,12 +1743,14 @@ public:
           done_with_period = true;
           break;
         }
+	log_entries.clear();
 	if (mdlog_marker <= max_marker) {
 	  /* we're at the tip, try to bring more entries */
           ldpp_dout(sync_env->dpp, 20) << __func__ << ":" << __LINE__ << ": shard_id=" << shard_id << " syncing mdlog for shard_id=" << shard_id << dendl;
           yield call(new RGWCloneMetaLogCoroutine(sync_env, mdlog,
                                                   period, shard_id,
-                                                  mdlog_marker, &mdlog_marker));
+                                                  mdlog_marker, &mdlog_marker,
+						  &log_entries, &truncated));
 	}
         if (retcode < 0) {
           tn->log(10, SSTR(*this << ": failed to fetch more log entries, retcode=" << retcode));
@@ -1758,16 +1764,11 @@ public:
           tn->set_flag(RGW_SNS_FLAG_ACTIVE); /* actually have entries to sync */
           tn->log(20, SSTR("mdlog_marker=" << mdlog_marker << " sync_marker=" << sync_marker.marker));
           marker = max_marker;
-          yield call(new RGWReadMDLogEntriesCR(sync_env, mdlog, shard_id,
-                                               &max_marker, INCREMENTAL_MAX_ENTRIES,
-                                               &log_entries, &truncated));
-          if (retcode < 0) {
-            tn->log(10, SSTR("failed to list mdlog entries, retcode=" << retcode));
-            yield lease_cr->go_down();
-            drain_all();
-            *reset_backoff = false; // back off and try again later
-            return retcode;
-          }
+
+	  if (!log_entries.empty()) {
+	    max_marker = log_entries.back().id;
+	  }
+
           for (log_iter = log_entries.begin(); log_iter != log_entries.end() && !done_with_period; ++log_iter) {
             if (!period_marker.empty() && period_marker <= log_iter->id) {
               done_with_period = true;
@@ -2273,14 +2274,6 @@ int RGWCloneMetaLogCoroutine::operate()
         return state_init();
       }
       yield {
-        ldpp_dout(sync_env->dpp, 20) << __func__ << ": shard_id=" << shard_id << ": reading shard status" << dendl;
-        return state_read_shard_status();
-      }
-      yield {
-        ldpp_dout(sync_env->dpp, 20) << __func__ << ": shard_id=" << shard_id << ": reading shard status complete" << dendl;
-        return state_read_shard_status_complete();
-      }
-      yield {
         ldpp_dout(sync_env->dpp, 20) << __func__ << ": shard_id=" << shard_id << ": sending rest request" << dendl;
         return state_send_rest_request();
       }
@@ -2435,6 +2428,13 @@ int RGWCloneMetaLogCoroutine::state_store_mdlog_entries()
     marker = entry.id;
   }
 
+  if (!dest_entries.empty()) {
+    *entries = std::move(dest_entries);
+  }
+  *ptruncated = truncated;
+
+  ldpp_dout(sync_env->dpp, 20) << "entries: size=" << entries->size() << dendl;
+
   RGWAioCompletionNotifier *cn = stack->create_completion_notifier();
 
   int ret = mdlog->store_entries_in_shard(dest_entries, shard_id, cn->completion());
@@ -2443,6 +2443,7 @@ int RGWCloneMetaLogCoroutine::state_store_mdlog_entries()
     ldpp_dout(sync_env->dpp, 10) << "failed to store md log entries shard_id=" << shard_id << " ret=" << ret << dendl;
     return set_cr_error(ret);
   }
+
   return io_block(0);
 }
 

@@ -1570,12 +1570,15 @@ struct InfoGetter : Completion<InfoGetter> {
 	ig->complete(r);
       } else {
 	ig->headerget = true;
-	ig->clear_cur();
 	ig->set_cur(&InfoGetter::cb);
 	auto op = rgw::cls::fifo::get_part_info(&ig->h);
 	ig->p = p;
-	ig->fifo->ioctx.aio_operate(ig->fifo->info.part_oid(p), ig->super(),
+	auto r = ig->fifo->ioctx.aio_operate(ig->fifo->info.part_oid(p), ig->super(),
 				    &op, nullptr);
+	if (r < 0) {
+	  ig->clear_cur();
+	  ig->complete(r);
+	}
       }
     } else {
       if (ig->f) {
