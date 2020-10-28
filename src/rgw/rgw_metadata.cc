@@ -431,7 +431,7 @@ public:
       c.push_back(std::move(bl));
     }
 
-    auto r = fifos[index]->push(c, completion);
+    auto r = fifos[index]->push(std::move(c), completion);
     if (r < 0) {
       lderr(cct) << __PRETTY_FUNCTION__
 		 << ": unable to push to FIFO: " << get_shard_oid(index)
@@ -449,7 +449,7 @@ public:
     entry.timestamp = t;
     entry.section = section;
     entry.name = key;
-    entry.data = bl;
+    entry.data = std::move(bl);
 
     bufferlist ble;
     encode(entry, ble);
@@ -477,8 +477,9 @@ public:
 		 << ": " << cpp_strerror(-r) << dendl;
       return r;
     }
+    e.clear();
     for (const auto& entry : log_entries) {
-      auto liter = entry.data.cbegin();
+     auto liter = entry.data;
       cls_log_entry log_entry;
       try {
         decode(log_entry, liter);
@@ -488,6 +489,7 @@ public:
 		   << err.what() << dendl;
 	return -EIO;
       }
+      log_entry.id = entry.marker;
       e.push_back(std::move(log_entry));
     }
     if (truncated)
@@ -510,7 +512,7 @@ public:
     auto m = fifo->meta();
     auto p = m.head_part_num;
     if (p < 0) {
-      info->marker = rgw::cls::fifo::marker{}.to_string();
+      info->marker.clear();
       info->last_update = ceph::real_clock::zero();
       return 0;
     }
@@ -538,8 +540,7 @@ public:
 	  rgw::cls::fifo::marker{p, h->last_ofs}.to_string();
 	completion->get_header().max_time = utime_t(h->max_time);
       } else {
-	completion->get_header().max_marker =
-	  rgw::cls::fifo::marker{}.to_string();
+	completion->get_header().max_marker.clear();
 	completion->get_header().max_time = utime_t{};
       }
     }, c);
@@ -563,7 +564,7 @@ public:
   int trim(int index, std::string_view marker,
 	   librados::AioCompletion* c, bool exclusive) override {
     int r = 0;
-    if (marker == rgw::cls::fifo::marker(0, 0).to_string()) {
+    if (marker.empty()) {
       auto pc = c->pc;
       pc->get();
       pc->lock.lock();
@@ -624,7 +625,6 @@ int RGWMetadataLogBE::remove(CephContext* cct, std::string prefix,
     }
   }
   for (auto i = 0; i < num_shards; ++i) {
-    std::unique_ptr<rgw::cls::fifo::FIFO> fifo;
     auto oid = fmt::format("{}{}", prefix, i);
     librados::ObjectWriteOperation op;
     op.remove();
@@ -774,7 +774,8 @@ int RGWMetadataLog::list_entries(int shard,
 
   auto oid = get_shard_oid(shard);
   std::string next_marker;
-  int ret = be->list(shard, max_entries, entries, marker, &next_marker, truncated);
+  int ret = be->list(shard, max_entries, entries, std::string(marker),
+		     &next_marker, truncated);
   if ((ret < 0) && (ret != -ENOENT))
     return ret;
 
