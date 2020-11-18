@@ -1015,6 +1015,25 @@ def test_multi_zone_redirect():
     set_sync_from_all(z2, True)
     set_redirect_zone(z2, None)
 
+def test_zonegroup_sync_policy_config():
+    zonegroup = realm.master_zonegroup()
+
+    zonegroup_meta_checkpoint(zonegroup)
+
+    zone = zonegroup.master_zone
+
+    c1 = zone.cluster
+
+    c1.admin(['sync', 'info'])
+
+    result = c1.admin(['sync', 'group', 'create', '--group-id', 'sync-mirror', '--status' , 'allowed'])
+
+    zonegroup.period.update(zone, commit=True)
+
+    c1.admin(['sync policy get'])
+
+    return
+
 def test_zonegroup_remove():
     zonegroup = realm.master_zonegroup()
     zonegroup_conns = ZonegroupConns(zonegroup)
