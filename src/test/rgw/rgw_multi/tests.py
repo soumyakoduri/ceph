@@ -1054,6 +1054,47 @@ def test_zonegroup_sync_policy_config():
 
     return
 
+def test_zonegroup_sync_policy_config_bucket():
+    zonegroup = realm.master_zonegroup()
+    zonegroup_conns = ZonegroupConns(zonegroup)
+
+    zonegroup_meta_checkpoint(zonegroup)
+
+    z1, z2 = zonegroup.zones[0:2]
+    c1, c2 = (z1.cluster, z2.cluster)
+
+    zc1, zc2 = zonegroup_conns.zones[0:2]
+    bucket_name = gen_bucket_name()
+    log.info('create bucket zone=%s name=%s', zc1.name, bucket_name)
+    bucket = zc1.create_bucket(bucket_name)
+
+    zones = z1.name+","+z2.name
+
+    c1.admin(['sync policy get'])
+    create_sync_policy_group(c1, "sync1", "allowed", bucket_name)
+    set_sync_policy_group_status(c1, "sync1", "enabled", bucket_name)
+    get_sync_policy_group(c1, "sync1", bucket_name)
+
+    get_sync_policy(c1, bucket_name)
+
+    create_sync_group_flow_symmetrical(c1, "sync1", "flowid1", zones, bucket_name)
+    create_sync_group_flow_directional(c1, "sync1", "flowid2", z1.name, z2.name, bucket_name)
+
+    create_sync_group_pipe(c1, "sync1", "pipeid1", zones, zones, bucket_name)
+    get_sync_policy_group(c1, "sync1", bucket_name)
+
+    zonegroup.period.update(z1, commit=True)
+
+    remove_sync_group_pipe(c1, "sync1", "pipeid1", bucket_name)
+    remove_sync_group_flow_directional(c1, "sync1", "flowid2", z1.name, z2.name, bucket_name)
+    remove_sync_group_flow_symmetrical(c1, "sync1", "flowid1", zones, bucket_name)
+    remove_sync_policy_group(c1, "sync1", bucket_name)
+
+    get_sync_policy(c1, bucket_name)
+    zonegroup.period.update(z1, commit=True)
+
+    return
+
 def test_zonegroup_remove():
     zonegroup = realm.master_zonegroup()
     zonegroup_conns = ZonegroupConns(zonegroup)
