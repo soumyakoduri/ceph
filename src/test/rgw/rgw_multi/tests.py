@@ -1020,15 +1020,24 @@ def test_zonegroup_sync_policy_config():
 
     zonegroup_meta_checkpoint(zonegroup)
 
-    zone = zonegroup.master_zone
+    #zone = zonegroup.master_zone
+    z1, z2 = zonegroup.zones[0:2]
+    c1, c2 = (z1.cluster, z2.cluster)
 
-    c1 = zone.cluster
+
+    #c1 = zone.cluster
 
     c1.admin(['sync', 'info'])
 
     result = c1.admin(['sync', 'group', 'create', '--group-id', 'sync-mirror', '--status' , 'allowed'])
 
-    zonegroup.period.update(zone, commit=True)
+    zones = z1.name+","+z2.name
+
+    result = c1.admin(['sync', 'group', 'flow', 'create', '--group-id', 'sync-mirror', '--flow-id', 'flow-mirror', '--flow-type', 'symmetrical', '--zones' , zones])
+    result = c1.admin(['sync', 'group', 'pipe', 'create', '--group-id', 'sync-mirror', '--pipe-id', 'pipe-mirror', '--source-zones', zones, '--dest-zones', zones, '--source-bucket=\'*\'' , '--dest-bucket=\'*\''])
+#    result = c1.admin(['sync', 'group', 'modify', '--group-id', 'sync-mirror', '--status' , 'enabled'])
+
+    zonegroup.period.update(z1, commit=True)
 
     c1.admin(['sync policy get'])
 
