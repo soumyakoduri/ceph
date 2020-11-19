@@ -1025,21 +1025,32 @@ def test_zonegroup_sync_policy_config():
     c1, c2 = (z1.cluster, z2.cluster)
 
 
-    #c1 = zone.cluster
-
-    c1.admin(['sync', 'info'])
-
-    result = c1.admin(['sync', 'group', 'create', '--group-id', 'sync-mirror', '--status' , 'allowed'])
-
     zones = z1.name+","+z2.name
 
-    result = c1.admin(['sync', 'group', 'flow', 'create', '--group-id', 'sync-mirror', '--flow-id', 'flow-mirror', '--flow-type', 'symmetrical', '--zones' , zones])
-    result = c1.admin(['sync', 'group', 'pipe', 'create', '--group-id', 'sync-mirror', '--pipe-id', 'pipe-mirror', '--source-zones', zones, '--dest-zones', zones, '--source-bucket=\'*\'' , '--dest-bucket=\'*\''])
-#    result = c1.admin(['sync', 'group', 'modify', '--group-id', 'sync-mirror', '--status' , 'enabled'])
+    c1.admin(['sync policy get'])
+
+    create_sync_policy_group(c1, "sync1")
+    set_sync_policy_group_status(c1, "sync1", "enabled")
+    get_sync_policy_group(c1, "sync1")
+
+    get_sync_policy(c1)
+
+    create_sync_group_flow_symmetrical(c1, "sync1", "flowid1", zones)
+    create_sync_group_flow_directional(c1, "sync1", "flowid2", z1.name, z2.name)
+
+    create_sync_group_pipe(c1, "sync1", "pipeid1", zones, zones)
+    get_sync_policy_group(c1, "sync1")
 
     zonegroup.period.update(z1, commit=True)
 
-    c1.admin(['sync policy get'])
+    remove_sync_group_pipe(c1, "sync1", "pipeid1")
+    remove_sync_group_flow_directional(c1, "sync1", "flowid2", z1.name, z2.name)
+    remove_sync_group_flow_symmetrical(c1, "sync1", "flowid1")
+    remove_sync_policy_group(c1, "sync1")
+
+    get_sync_policy(c1)
+
+    zonegroup.period.update(z1, commit=True)
 
     return
 
@@ -1342,3 +1353,97 @@ def test_bucket_creation_time():
         for a, b in zip(z1, z2):
             eq(a.name, b.name)
             eq(a.creation_date, b.creation_date)
+
+def get_sync_policy(cluster, bucket = None):
+    cmd = ['sync', 'policy', 'get']
+    if bucket:
+        cmd += ['--bucket', bucket]
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def create_sync_policy_group(cluster, group, status = "allowed", bucket = None):
+    cmd = ['sync', 'group', 'create', '--group-id', group, '--status' , status]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def set_sync_policy_group_status(cluster, group, status, bucket = None):
+    cmd = ['sync', 'group', 'modify', '--group-id', group, '--status' , status]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def get_sync_policy_group(cluster, group, bucket = None):
+    cmd = ['sync', 'group', 'get', '--group-id', group]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def remove_sync_policy_group(cluster, group, bucket = None):
+    cmd = ['sync', 'group', 'remove', '--group-id', group]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def create_sync_group_flow_symmetrical(cluster, group, flow_id, zones, bucket = None):
+    cmd = ['sync', 'group', 'flow', 'create', '--group-id', group, '--flow-id' , flow_id, '--flow-type', 'symmetrical', '--zones', zones]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def create_sync_group_flow_directional(cluster, group, flow_id, src_zones, dest_zones, bucket = None):
+    cmd = ['sync', 'group', 'flow', 'create', '--group-id', group, '--flow-id' , flow_id, '--flow-type', 'directional', '--source-zone', src_zones, '--dest-zone', dest_zones]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def remove_sync_group_flow_symmetrical(cluster, group, flow_id, zones = None, bucket = None):
+    cmd = ['sync', 'group', 'flow', 'remove', '--group-id', group, '--flow-id' , flow_id, '--flow-type', 'symmetrical']
+    if zones:
+        cmd += ['--zones', zones]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def remove_sync_group_flow_directional(cluster, group, flow_id, src_zones, dest_zones, bucket = None):
+    cmd = ['sync', 'group', 'flow', 'remove', '--group-id', group, '--flow-id' , flow_id, '--flow-type', 'directional', '--source-zone', src_zones, '--dest-zone', dest_zones]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def create_sync_group_pipe(cluster, group, pipe_id, src_zones, dest_zones, bucket = None, args = None):
+    cmd = ['sync', 'group', 'pipe', 'create', '--group-id', group, '--pipe-id' , pipe_id, '--source-zones', src_zones, '--dest-zones', dest_zones]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    if args:
+        cmd += args
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
+
+def remove_sync_group_pipe(cluster, group, pipe_id, bucket = None, args = None):
+    cmd = ['sync', 'group', 'pipe', 'remove', '--group-id', group, '--pipe-id' , pipe_id]
+    if bucket:
+        cmd += ['--bucket', bucket]
+    if args:
+        cmd += args
+    (result_json, _) = cluster.admin(cmd)
+    #verify result??
+    return json.loads(result_json)
