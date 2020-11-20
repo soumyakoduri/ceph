@@ -1029,24 +1029,24 @@ def test_zonegroup_sync_policy_config():
 
     c1.admin(['sync policy get'])
 
-    create_sync_policy_group(c1, "sync1")
-    set_sync_policy_group_status(c1, "sync1", "enabled")
-    get_sync_policy_group(c1, "sync1")
+    create_sync_policy_group(c1, "sync-group")
+    set_sync_policy_group_status(c1, "sync-group", "enabled")
+    get_sync_policy_group(c1, "sync-group")
 
     get_sync_policy(c1)
 
-    create_sync_group_flow_symmetrical(c1, "sync1", "flowid1", zones)
-    create_sync_group_flow_directional(c1, "sync1", "flowid2", z1.name, z2.name)
+    create_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1", zones)
+    create_sync_group_flow_directional(c1, "sync-group", "sync-flow2", z1.name, z2.name)
 
-    create_sync_group_pipe(c1, "sync1", "pipeid1", zones, zones)
-    get_sync_policy_group(c1, "sync1")
+    create_sync_group_pipe(c1, "sync-group", "sync-pipe", zones, zones)
+    get_sync_policy_group(c1, "sync-group")
 
     zonegroup.period.update(z1, commit=True)
 
-    remove_sync_group_pipe(c1, "sync1", "pipeid1")
-    remove_sync_group_flow_directional(c1, "sync1", "flowid2", z1.name, z2.name)
-    remove_sync_group_flow_symmetrical(c1, "sync1", "flowid1")
-    remove_sync_policy_group(c1, "sync1")
+    remove_sync_group_pipe(c1, "sync-group", "sync-pipe")
+    remove_sync_group_flow_directional(c1, "sync-group", "sync-flow2", z1.name, z2.name)
+    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1")
+    remove_sync_policy_group(c1, "sync-group")
 
     get_sync_policy(c1)
 
@@ -1071,24 +1071,24 @@ def test_zonegroup_sync_policy_config_bucket():
     zones = z1.name+","+z2.name
 
     c1.admin(['sync policy get'])
-    create_sync_policy_group(c1, "sync1", "allowed", bucket_name)
-    set_sync_policy_group_status(c1, "sync1", "enabled", bucket_name)
-    get_sync_policy_group(c1, "sync1", bucket_name)
+    create_sync_policy_group(c1, "sync-group", "allowed", bucket_name)
+    set_sync_policy_group_status(c1, "sync-group", "enabled", bucket_name)
+    get_sync_policy_group(c1, "sync-group", bucket_name)
 
     get_sync_policy(c1, bucket_name)
 
-    create_sync_group_flow_symmetrical(c1, "sync1", "flowid1", zones, bucket_name)
-    create_sync_group_flow_directional(c1, "sync1", "flowid2", z1.name, z2.name, bucket_name)
+    create_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1", zones, bucket_name)
+    create_sync_group_flow_directional(c1, "sync-group", "sync-flow2", z1.name, z2.name, bucket_name)
 
-    create_sync_group_pipe(c1, "sync1", "pipeid1", zones, zones, bucket_name)
-    get_sync_policy_group(c1, "sync1", bucket_name)
+    create_sync_group_pipe(c1, "sync-group", "sync-pipe", zones, zones, bucket_name)
+    get_sync_policy_group(c1, "sync-group", bucket_name)
 
     zonegroup.period.update(z1, commit=True)
 
-    remove_sync_group_pipe(c1, "sync1", "pipeid1", bucket_name)
-    remove_sync_group_flow_directional(c1, "sync1", "flowid2", z1.name, z2.name, bucket_name)
-    remove_sync_group_flow_symmetrical(c1, "sync1", "flowid1", zones, bucket_name)
-    remove_sync_policy_group(c1, "sync1", bucket_name)
+    remove_sync_group_pipe(c1, "sync-group", "sync-pipe", bucket_name)
+    remove_sync_group_flow_directional(c1, "sync-group", "sync-flow2", z1.name, z2.name, bucket_name)
+    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1", zones, bucket_name)
+    remove_sync_policy_group(c1, "sync-group", bucket_name)
 
     get_sync_policy(c1, bucket_name)
     zonegroup.period.update(z1, commit=True)
