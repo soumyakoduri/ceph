@@ -1399,56 +1399,64 @@ def get_sync_policy(cluster, bucket = None):
     cmd = ['sync', 'policy', 'get']
     if bucket:
         cmd += ['--bucket', bucket]
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to get sync policy'
+
     return json.loads(result_json)
 
 def create_sync_policy_group(cluster, group, status = "allowed", bucket = None):
     cmd = ['sync', 'group', 'create', '--group-id', group, '--status' , status]
     if bucket:
         cmd += ['--bucket', bucket]
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to create sync policy group id=%s, bucket=%s' % (group, bucket)
     return json.loads(result_json)
 
 def set_sync_policy_group_status(cluster, group, status, bucket = None):
     cmd = ['sync', 'group', 'modify', '--group-id', group, '--status' , status]
     if bucket:
         cmd += ['--bucket', bucket]
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to set sync policy group id=%s, bucket=%s' % (group, bucket)
     return json.loads(result_json)
 
 def get_sync_policy_group(cluster, group, bucket = None):
     cmd = ['sync', 'group', 'get', '--group-id', group]
     if bucket:
         cmd += ['--bucket', bucket]
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to get sync policy group id=%s, bucket=%s' % (group, bucket)
     return json.loads(result_json)
 
 def remove_sync_policy_group(cluster, group, bucket = None):
     cmd = ['sync', 'group', 'remove', '--group-id', group]
     if bucket:
         cmd += ['--bucket', bucket]
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to remove sync policy group id=%s, bucket=%s' % (group, bucket)
     return json.loads(result_json)
 
 def create_sync_group_flow_symmetrical(cluster, group, flow_id, zones, bucket = None):
     cmd = ['sync', 'group', 'flow', 'create', '--group-id', group, '--flow-id' , flow_id, '--flow-type', 'symmetrical', '--zones', zones]
     if bucket:
         cmd += ['--bucket', bucket]
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to create sync group flow symmetrical groupid=%s, flow_id=%s, zones=%s, bucket=%s' % (group, flow_id, zones, bucket)
     return json.loads(result_json)
 
 def create_sync_group_flow_directional(cluster, group, flow_id, src_zones, dest_zones, bucket = None):
     cmd = ['sync', 'group', 'flow', 'create', '--group-id', group, '--flow-id' , flow_id, '--flow-type', 'directional', '--source-zone', src_zones, '--dest-zone', dest_zones]
     if bucket:
         cmd += ['--bucket', bucket]
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to create sync group flow directional groupid=%s, flow_id=%s, src_zones=%s, dest_zones=%s, bucket=%s' % (group, flow_id, src_zones, dest_zones, bucket)
     return json.loads(result_json)
 
 def remove_sync_group_flow_symmetrical(cluster, group, flow_id, zones = None, bucket = None):
@@ -1457,16 +1465,18 @@ def remove_sync_group_flow_symmetrical(cluster, group, flow_id, zones = None, bu
         cmd += ['--zones', zones]
     if bucket:
         cmd += ['--bucket', bucket]
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to remove sync group flow symmetrical groupid=%s, flow_id=%s, zones=%s, bucket=%s' % (group, flow_id, zones, bucket)
     return json.loads(result_json)
 
 def remove_sync_group_flow_directional(cluster, group, flow_id, src_zones, dest_zones, bucket = None):
     cmd = ['sync', 'group', 'flow', 'remove', '--group-id', group, '--flow-id' , flow_id, '--flow-type', 'directional', '--source-zone', src_zones, '--dest-zone', dest_zones]
     if bucket:
         cmd += ['--bucket', bucket]
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to remove sync group flow directional groupid=%s, flow_id=%s, src_zones=%s, dest_zones=%s, bucket=%s' % (group, flow_id, src_zones, dest_zones, bucket)
     return json.loads(result_json)
 
 def create_sync_group_pipe(cluster, group, pipe_id, src_zones, dest_zones, bucket = None, args = None):
@@ -1475,8 +1485,9 @@ def create_sync_group_pipe(cluster, group, pipe_id, src_zones, dest_zones, bucke
         cmd += ['--bucket', bucket]
     if args:
         cmd += args
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to create sync group pipe groupid=%s, pipe_id=%s, src_zones=%s, dest_zones=%s, bucket=%s' % (group, pipe_id, src_zones, dest_zones, bucket)
     return json.loads(result_json)
 
 def remove_sync_group_pipe(cluster, group, pipe_id, bucket = None, args = None):
@@ -1485,6 +1496,7 @@ def remove_sync_group_pipe(cluster, group, pipe_id, bucket = None, args = None):
         cmd += ['--bucket', bucket]
     if args:
         cmd += args
-    (result_json, _) = cluster.admin(cmd)
-    #verify result??
+    (result_json, retcode) = cluster.admin(cmd)
+    if retcode != 0:
+        assert False, 'failed to remove sync group pipe groupid=%s, pipe_id=%s, src_zones=%s, dest_zones=%s, bucket=%s' % (group, pipe_id, src_zones, dest_zones, bucket)
     return json.loads(result_json)
