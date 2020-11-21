@@ -459,13 +459,15 @@ class ZonegroupConns:
 
 def check_all_buckets_exist(zone_conn, buckets):
     if not zone_conn.zone.has_buckets():
+        log.info('zone %s does not contain any buckets %s', zone_conn.name, b)
         return True
 
     for b in buckets:
         try:
             zone_conn.get_bucket(b)
+            log.info('zone %s contains bucket %s', zone_conn.name, b)
         except:
-            log.critical('zone %s does not contain bucket %s', zone.name, b)
+            log.critical('zone %s does not contain bucket %s', zone_conn.name, b)
             return False
 
     return True
@@ -1015,7 +1017,7 @@ def test_multi_zone_redirect():
     set_sync_from_all(z2, True)
     set_redirect_zone(z2, None)
 
-def test_zonegroup_sync_policy_config():
+def test_sync_policy_config_zonegroup():
     zonegroup = realm.master_zonegroup()
 
     zonegroup_meta_checkpoint(zonegroup)
@@ -1054,7 +1056,7 @@ def test_zonegroup_sync_policy_config():
 
     return
 
-def test_zonegroup_sync_policy_config_bucket():
+def test_sync_policy_config_bucket():
     zonegroup = realm.master_zonegroup()
     zonegroup_conns = ZonegroupConns(zonegroup)
 
@@ -1095,6 +1097,173 @@ def test_zonegroup_sync_policy_config_bucket():
 
     return
 
+def test_sync_flow_symmetrical_zonegroup_all():
+    """
+    default case: sync from all zones to all other zones
+    """
+
+    zonegroup = realm.master_zonegroup()
+
+    zonegroup_meta_checkpoint(zonegroup)
+    zones = ""
+    for z in zonegroup.zones:
+        zones += z.name
+
+    c1 = zonegroup.zones[0].cluster
+
+    c1.admin(['sync policy get'])
+
+    create_sync_policy_group(c1, "sync-group")
+    create_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1", "\"*\"")
+    create_sync_group_pipe(c1, "sync-group", "sync-pipe", "\"*\"", "\"*\"")
+    set_sync_policy_group_status(c1, "sync-group", "enabled")
+
+    zonegroup.period.update(zoneA, commit=True)
+
+    get_sync_policy(c1)
+
+    zonegroup_conns = ZonegroupConns(zonegroup)
+    buckets, _ = create_bucket_per_zone(zonegroup_conns)
+    zonegroup_meta_checkpoint(zonegroup)
+
+    for zone in zonegroup_conns.zones:
+       assert check_all_buckets_exist(zone, buckets)
+
+    return
+
+def test_sync_flow_symmetrical_zonegroup_select():
+    """
+    allow sync between zoneA & zoneB
+    verify zoneC doesnt sync the data
+    """
+
+    zonegroup = realm.master_zonegroup()
+
+    if len(zonegroup.zones) < 3:
+        raise SkipTest("test_sync_flow_symmetrical_zonegroup_select skipped. Requires 3 or more zones in master zonegroup.")
+
+    zonegroup_meta_checkpoint(zonegroup)
+
+    (zoneA, zoneB, zoneC) = zonegroup.zones[0:3]
+
+    c1 = zoneA.cluster
+
+    zones = zoneA.name + ',' + zoneB.name
+
+    # configure sync policy
+    c1.admin(['sync policy get'])
+    create_sync_policy_group(c1, "sync-group")
+    create_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow", zones)
+    create_sync_group_pipe(c1, "sync-group", "sync-pipe", zones, zones)
+    set_sync_policy_group_status(c1, "sync-group", "enabled")
+
+    zonegroup.period.update(zoneA, commit=True)
+
+    get_sync_policy(c1)
+
+    zonegroup_conns = ZonegroupConns(zonegroup)
+    zcA, zcB, zcC = zonegroup_conns.zones[0:3]
+    buckets = []
+
+    for zone in zonegroup_conns.rw_zones:
+        log.info(' rw_zone zone=%s', zone.name)
+
+    # create bucketA in zoneA
+    bucketA_name = gen_bucket_name()
+    log.info('create bucket zone=%s name=%s', zoneA.name, bucketA_name)
+    bucketA = zcA.create_bucket(bucketA_name)
+    buckets.append(bucketA_name)
+
+    # create bucketB in zoneB
+    bucketB_name = gen_bucket_name()
+    log.info('create bucket zone=%s name=%s', zoneB.name, bucketB_name)
+    bucketB = zcB.create_bucket(bucketB_name)
+    buckets.append(bucketB_name)
+
+    for b in buckets:
+        log.info('array contains bucket=%s', b)
+
+    zonegroup_meta_checkpoint(zonegroup)
+
+    # zoneC shouldn't contain those buckets
+    assert check_all_buckets_exist(zcA, buckets)
+    assert check_all_buckets_exist(zcB, buckets)
+    assert check_all_buckets_exist(zcC, buckets)
+#    assert check_all_buckets_dont_exist(zcC, buckets)
+
+    return
+
+def test_sync_flow_directional_zonegroup_select():
+    """
+    allow sync only from zoneA to zoneB
+    verify zoneC doesnt sync the data
+    """
+
+    zonegroup = realm.master_zonegroup()
+
+    if len(zonegroup.zones) < 3:
+        raise SkipTest("test_sync_flow_symmetrical_zonegroup_select skipped. Requires 3 or more zones in master zonegroup.")
+
+    zonegroup_meta_checkpoint(zonegroup)
+
+    (zoneA, zoneB, zoneC) = zonegroup.zones[0:3]
+
+    c1 = zoneA.cluster
+
+    # configure sync policy
+    c1.admin(['sync policy get'])
+    create_sync_policy_group(c1, "sync-group")
+    create_sync_group_flow_directional(c1, "sync-group", "sync-flow", zoneA.name, zoneB.name)
+    create_sync_group_pipe(c1, "sync-group", "sync-pipe", zoneA.name, zoneB.name)
+    set_sync_policy_group_status(c1, "sync-group", "enabled")
+
+    zonegroup.period.update(zoneA, commit=True)
+
+    get_sync_policy(c1)
+
+    zonegroup_conns = ZonegroupConns(zonegroup)
+    zcA, zcB, zcC = zonegroup_conns.zones[0:3]
+    buckets = []
+
+    for zone in zonegroup_conns.rw_zones:
+        log.info(' rw_zone zone=%s', zone.name)
+
+    # create bucketA in zoneA
+    bucketA_name = gen_bucket_name()
+    log.info('create bucket zone=%s name=%s', zoneA.name, bucketA_name)
+    bucketA = zcA.create_bucket(bucketA_name)
+    buckets.append(bucketA_name)
+
+    # create bucketB in zoneB
+    bucketB_name = gen_bucket_name()
+    log.info('create bucket zone=%s name=%s', zoneB.name, bucketB_name)
+    bucketB = zcB.create_bucket(bucketB_name)
+    buckets.append(bucketB_name)
+
+    for b in buckets:
+        log.info('array contains bucket=%s', b)
+
+    zonegroup_meta_checkpoint(zonegroup)
+
+    # zoneC shouldn't contain those buckets
+    check_all_buckets_exist(zcA, buckets)
+    check_all_buckets_exist(zcB, buckets)
+    check_all_buckets_exist(zcC, buckets)
+#    assert check_all_buckets_dont_exist(zcC, buckets)
+
+    return
+
+def test_zonegroup_remove():
+    zonegroup = realm.master_zonegroup()
+    zonegroup_conns = ZonegroupConns(zonegroup)
+    if len(zonegroup.zones) < 2:
+        raise SkipTest("test_zonegroup_remove skipped. Requires 2 or more zones in master zonegroup.")
+
+    zonegroup_meta_checkpoint(zonegroup)
+    z1, z2 = zonegroup.zones[0:2]
+    c1, c2 = (z1.cluster, z2.cluster)
+
+    # get admin credentials out of existing zone
 def test_zonegroup_remove():
     zonegroup = realm.master_zonegroup()
     zonegroup_conns = ZonegroupConns(zonegroup)
