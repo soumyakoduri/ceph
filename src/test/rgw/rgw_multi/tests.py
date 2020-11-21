@@ -16,6 +16,7 @@ from boto.s3.website import WebsiteConfiguration
 from boto.s3.cors import CORSConfiguration
 
 from nose.tools import eq_ as eq
+from nose.tools import assert_not_equal, assert_equal
 from nose.plugins.attrib import attr
 from nose.plugins.skip import SkipTest
 
@@ -1165,31 +1166,49 @@ def test_sync_flow_symmetrical_zonegroup_select():
     zcA, zcB, zcC = zonegroup_conns.zones[0:3]
     buckets = []
 
-    for zone in zonegroup_conns.rw_zones:
-        log.info(' rw_zone zone=%s', zone.name)
-
     # create bucketA in zoneA
     bucketA_name = gen_bucket_name()
     log.info('create bucket zone=%s name=%s', zoneA.name, bucketA_name)
     bucketA = zcA.create_bucket(bucketA_name)
-    buckets.append(bucketA_name)
+    buckets.append(bucketA)
 
+    objnames = [ 'myobj', '_myobj', ':', '&' ]
+    content = 'asdasd'
+
+    # don't wait for meta sync just yet
+    for objname in objnames:
+        k = new_key(zcA, bucketA_name, objname)
+        k.set_contents_from_string(content)
+
+    """
     # create bucketB in zoneB
     bucketB_name = gen_bucket_name()
     log.info('create bucket zone=%s name=%s', zoneB.name, bucketB_name)
     bucketB = zcB.create_bucket(bucketB_name)
-    buckets.append(bucketB_name)
-
+    buckets.append(bucketB)
+    """
     for b in buckets:
-        log.info('array contains bucket=%s', b)
+        log.info('array contains bucket=%s', b.name)
 
     zonegroup_meta_checkpoint(zonegroup)
 
-    # zoneC shouldn't contain those buckets
-    assert check_all_buckets_exist(zcA, buckets)
-    assert check_all_buckets_exist(zcB, buckets)
-    assert check_all_buckets_exist(zcC, buckets)
-#    assert check_all_buckets_dont_exist(zcC, buckets)
+#    for zone in zonegroup_conns.zones:
+#       assert check_all_buckets_exist(zone, buckets)
+
+    for b in buckets:
+        zone_bucket_checkpoint(zoneA, zoneB, b.name)
+    #    check_bucket_eq(zoneA, zoneB, b)
+
+    bucket = get_bucket(zcB, bucketA_name)
+    for objname in objnames:
+        k = bucket.get_key(objname)
+        log.info('content=%s, key.content=%s', content, k.get_contents_as_string(encoding='ascii'))
+        assert_equal(k.get_contents_as_string(encoding='ascii'), content)
+
+    bucket = get_bucket(zcC, bucketA_name)
+    for objname in objnames:
+        k = bucket.get_key(objname)
+        assert_equal(k, None)
 
     return
 
