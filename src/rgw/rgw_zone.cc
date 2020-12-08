@@ -1414,7 +1414,7 @@ int RGWPeriod::update_sync_status(rgw::sal::RGWRadosStore *store, /* for now */
       if (marker.realm_epoch != current_epoch) {
         marker.marker.clear();
       }
-      markers.emplace_back(std::move(marker.marker));
+      markers.emplace_back(std::move(marker.remote_marker));
     }
   }
 

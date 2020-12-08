@@ -1402,6 +1402,7 @@ class RGWMetaSyncShardCR : public RGWCoroutine {
   bool truncated = false;
 
   string mdlog_marker;
+  string last_mdlog_marker;
   string raw_key;
   rgw_mdlog_entry mdlog_entry;
 
@@ -1711,8 +1712,9 @@ public:
             << " (now " << realm_epoch << ')' << dendl;
         sync_marker.realm_epoch = realm_epoch;
         sync_marker.marker.clear();
+        sync_marker.remote_marker.clear();
       }
-      mdlog_marker = sync_marker.marker;
+      mdlog_marker = last_mdlog_marker = sync_marker.remote_marker;
       set_marker_tracker(new RGWMetaSyncShardMarkerTrack(sync_env,
                                                          sync_env->shard_obj_name(shard_id),
                                                          sync_marker, tn));
@@ -1720,7 +1722,7 @@ public:
       /*
        * mdlog_marker: the remote sync marker positiion
        * sync_marker: the local sync marker position
-       * max_marker: the max mdlog position that we fetched
+       * max_marker: the max remote mdlog position that we fetched
        * marker: the current position we try to sync
        * period_marker: the last marker before the next period begins (optional)
        */
@@ -1734,12 +1736,12 @@ public:
         }
 #define INCREMENTAL_MAX_ENTRIES 100
         ldpp_dout(sync_env->dpp, 20) << __func__ << ":" << __LINE__ << ": shard_id=" << shard_id << " mdlog_marker=" << mdlog_marker << " sync_marker.marker=" << sync_marker.marker << " period_marker=" << period_marker << dendl;
-        if (!period_marker.empty() && period_marker <= mdlog_marker) {
+        if (!period_marker.empty() && period_marker <= max_marker) {
           tn->log(10, SSTR("finished syncing current period: mdlog_marker=" << mdlog_marker << " sync_marker=" << sync_marker.marker << " period_marker=" << period_marker));
           done_with_period = true;
           break;
         }
-	if (mdlog_marker <= max_marker) {
+	if (mdlog_marker <= last_mdlog_marker) {
 	  /* we're at the tip, try to bring more entries */
           ldpp_dout(sync_env->dpp, 20) << __func__ << ":" << __LINE__ << ": shard_id=" << shard_id << " syncing mdlog for shard_id=" << shard_id << dendl;
           yield call(new RGWCloneMetaLogCoroutine(sync_env, mdlog,
@@ -1754,7 +1756,7 @@ public:
           return retcode;
         }
         *reset_backoff = true; /* if we got to this point, all systems function */
-	if (mdlog_marker > max_marker) {
+	if (mdlog_marker > last_mdlog_marker) {
           tn->set_flag(RGW_SNS_FLAG_ACTIVE); /* actually have entries to sync */
           tn->log(20, SSTR("mdlog_marker=" << mdlog_marker << " sync_marker=" << sync_marker.marker));
           marker = max_marker;
@@ -1768,6 +1770,9 @@ public:
             *reset_backoff = false; // back off and try again later
             return retcode;
           }
+
+	  last_mdlog_marker = mdlog_marker;
+
           for (log_iter = log_entries.begin(); log_iter != log_entries.end() && !done_with_period; ++log_iter) {
             if (!period_marker.empty() && period_marker <= log_iter->id) {
               done_with_period = true;
@@ -1806,7 +1811,7 @@ public:
           tn->log(10, SSTR(*this << ": done with period"));
           break;
         }
-	if (mdlog_marker == max_marker && can_adjust_marker) {
+	if (mdlog_marker == last_mdlog_marker && can_adjust_marker) {
           tn->unset_flag(RGW_SNS_FLAG_ACTIVE);
 #define INCREMENTAL_INTERVAL 20
 	  yield wait(utime_t(INCREMENTAL_INTERVAL, 0));
@@ -1814,6 +1819,8 @@ public:
       } while (can_adjust_marker);
 
       tn->unset_flag(RGW_SNS_FLAG_ACTIVE);
+
+      sync_marker.remote_marker = mdlog_marker;
 
       while (num_spawned() > 1) {
         yield wait_for_child();
@@ -2272,14 +2279,6 @@ int RGWCloneMetaLogCoroutine::operate()
       yield {
         ldpp_dout(sync_env->dpp, 20) << __func__ << ": shard_id=" << shard_id << ": init request" << dendl;
         return state_init();
-      }
-      yield {
-        ldpp_dout(sync_env->dpp, 20) << __func__ << ": shard_id=" << shard_id << ": reading shard status" << dendl;
-        return state_read_shard_status();
-      }
-      yield {
-        ldpp_dout(sync_env->dpp, 20) << __func__ << ": shard_id=" << shard_id << ": reading shard status complete" << dendl;
-        return state_read_shard_status_complete();
       }
       yield {
         ldpp_dout(sync_env->dpp, 20) << __func__ << ": shard_id=" << shard_id << ": sending rest request" << dendl;
