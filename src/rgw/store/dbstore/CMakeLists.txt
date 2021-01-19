@@ -18,10 +18,10 @@ set(dbstore_srcs
     common/dbstore.h
     common/dbstore.cc)
 
-set(main_srcs
+set(dbstore_mgr_srcs
     dbstore_mgr.h
     dbstore_mgr.cc
-    main.cc)
+    )
 
 add_library(dbstore_lib ${dbstore_srcs})
 target_include_directories(dbstore_lib PUBLIC "${CMAKE_SOURCE_DIR}/src/fmt/include")
@@ -45,5 +45,14 @@ endif()
 add_subdirectory(tests)
 
 include_directories(${CMAKE_INCLUDE_DIR})
-add_library(dbstore ${main_srcs})
+add_library(dbstore ${dbstore_mgr_srcs})
 target_link_libraries(dbstore ${CMAKE_LINK_LIBRARIES})
+
+# testing purposes
+set(main_srcs
+    main.cc)
+
+set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} dbstore)
+add_executable(dbstore-bin ${main_srcs})
+add_dependencies(dbstore-bin dbstore)
+target_link_libraries(dbstore-bin ${CMAKE_LINK_LIBRARIES})

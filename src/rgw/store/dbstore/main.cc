@@ -5,7 +5,7 @@
 #include <pthread.h>
 
 #include "dbstore_mgr.h"
-#include "dbstore.h"
+#include <dbstore.h>
 
 struct thr_args {
 	class DBstore *dbs;
