@@ -21,7 +21,6 @@ using namespace std;
 class DBstore;
 
 struct DBOpParams {
-	string tenant;
 	string user_table;
 	string bucket_table;
 	string object_table;
@@ -40,7 +39,6 @@ struct DBOpParams {
  * style identifiers used by backend db
  */
 struct DBOpPrepareParams {
-	string tenant;
 	string user_table;
 	string bucket_table;
 	string object_table;
@@ -277,7 +275,7 @@ class DeleteObjectDataOp: public DBOp {
 
 class DBstore {
 	private:
-	const string tenant;
+	const string db_name;
 	const string user_table;
 	const string bucket_table;
 	static map<string, class ObjectOp*> objectmap;
@@ -292,14 +290,19 @@ class DBstore {
 	void *db;
 
 	public:	
-	DBstore(string tenant_name) : tenant(tenant_name),
-       				user_table(tenant_name+".user.table"),
-			        bucket_table(tenant_name+".bucket.table")
+	DBstore(string db_name) : db_name(db_name),
+       				user_table("user.table"),
+			        bucket_table("bucket.table")
        			        {}
+	DBstore() {}
+
+	/*DBstore() : db_name("default_db"),
+       		    user_table("user.table"),
+		    bucket_table("bucket.table")
+       		    {}*/
 	virtual	~DBstore() {}
 
-	 string getDBname();
-	string getTenant();
+	string getDBname();
 	string getUserTable();
 	string getBucketTable();
 	map<string, class ObjectOp*> getObjectMap();

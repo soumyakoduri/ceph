@@ -6,11 +6,7 @@
 using namespace std;
 
 string DBstore::getDBname() {
-	return tenant + ".db";
-}
-
-string DBstore::getTenant() {
-	return tenant;
+	return db_name + ".db";
 }
 
 string DBstore::getUserTable() {
@@ -426,8 +422,8 @@ int DBstore::Initialize(string logfile, int loglevel)
                 return ret;
         }
 
-	dbout(L_FULLDEBUG)<<"DBstore successfully initialized for tenant:" \
-			<<tenant<<"\n";
+	dbout(L_FULLDEBUG)<< "DBstore successfully initialized - name:" \
+			<< db_name << "\n";
 
 	return ret;
 }
@@ -443,8 +439,8 @@ int DBstore::Destroy()
 
 	FreeDBOps();
 
-	dbout(L_FULLDEBUG)<<"DBstore successfully destroyed for tenant:" \
-			<<tenant<<"\n";
+	dbout(L_FULLDEBUG)<<"DBstore successfully destroyed - name:" \
+			<<db_name<<"\n";
 
 	LogDestroy();
 	
@@ -598,7 +594,6 @@ int DBstore::InitializeParams(string Op, DBOpParams *params)
 		goto out;
 
 	//reset params here
-	params->tenant = tenant;
 	params->user_table = user_table;
 	params->bucket_table = bucket_table;
 

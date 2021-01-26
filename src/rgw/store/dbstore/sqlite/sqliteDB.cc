@@ -174,15 +174,13 @@ static int get_objectdata(sqlite3_stmt *stmt) {
 
 int SQLiteDB::InitializeDBOps()
 {
-	string tenant = getTenant();
-
         (void)createTables();
-        dbops.InsertUser = new SQLInsertUser(tenant, &this->db);
-        dbops.RemoveUser = new SQLRemoveUser(tenant, &this->db);
-        dbops.ListUser = new SQLListUser(tenant, &this->db);
-        dbops.InsertBucket = new SQLInsertBucket(tenant, &this->db);
-        dbops.RemoveBucket = new SQLRemoveBucket(tenant, &this->db);
-        dbops.ListBucket = new SQLListBucket(tenant, &this->db);
+        dbops.InsertUser = new SQLInsertUser(&this->db);
+        dbops.RemoveUser = new SQLRemoveUser(&this->db);
+        dbops.ListUser = new SQLListUser(&this->db);
+        dbops.InsertBucket = new SQLInsertBucket(&this->db);
+        dbops.RemoveBucket = new SQLRemoveBucket(&this->db);
+        dbops.ListBucket = new SQLListBucket(&this->db);
 
 	return 0;
 }
@@ -206,7 +204,6 @@ int InitPrepareParams(DBOpPrepareParams *params)
 		return -1;
 	}
 
-	params->tenant = ":tenant";
 	params->user_table = ":user_table";
 	params->object_table = ":object_table";
 	params->objectdata_table = ":objectdata_table";
@@ -517,9 +514,8 @@ int SQLiteDB::ListAllObjects(DBOpParams *params)
 	string schema;
         map<string, class ObjectOp*>::iterator iter;
         map<string, class ObjectOp*> objectmap;
-	string bucket, tenant;
+	string bucket;
 
-	tenant = getTenant();
 	cout<<"########### Listing all Objects #############\n";
 
 	objectmap = getObjectMap();
@@ -529,7 +525,7 @@ int SQLiteDB::ListAllObjects(DBOpParams *params)
 
 	for (iter = objectmap.begin(); iter != objectmap.end(); ++iter) {
 		bucket = iter->first;
-		params->object_table = tenant + "." + bucket +
+		params->object_table = bucket +
 					".object.table";
 		schema = ListTableSchema(params->object_table);
 
@@ -545,12 +541,12 @@ int SQLiteDB::ListAllObjects(DBOpParams *params)
 
 int SQLObjectOp::InitializeObjectOps()
 {
-        InsertObject = new SQLInsertObject(tenant, sdb);
-	RemoveObject = new SQLRemoveObject(tenant, sdb);
-	ListObject = new SQLListObject(tenant, sdb);
-	PutObjectData = new SQLPutObjectData(tenant, sdb);
-	GetObjectData = new SQLGetObjectData(tenant, sdb);
-	DeleteObjectData = new SQLDeleteObjectData(tenant, sdb);
+        InsertObject = new SQLInsertObject(sdb);
+	RemoveObject = new SQLRemoveObject(sdb);
+	ListObject = new SQLListObject(sdb);
+	PutObjectData = new SQLPutObjectData(sdb);
+	GetObjectData = new SQLGetObjectData(sdb);
+	DeleteObjectData = new SQLDeleteObjectData(sdb);
 
 	return 0;
 }
@@ -743,7 +739,7 @@ int SQLInsertBucket::Execute(struct DBOpParams *params)
 	int ret = -1;
 	class SQLObjectOp *ObPtr = NULL;
 
-	ObPtr = new SQLObjectOp(getTenant(), sdb);
+	ObPtr = new SQLObjectOp(sdb);
 
 	objectmapInsert(params->bucket_name, ObPtr);
 
@@ -849,7 +845,6 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
-	string tenant_name = getTenant();
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
@@ -860,10 +855,8 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 	s_params.is_prepare = true;
 	s_params.u.p_params = &p_params;
 
-	p_params.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
-	copy.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
+	p_params.object_table = params->bucket_name + ".object.table";
+	copy.object_table = params->bucket_name + ".object.table";
 
 	(void)createObjectTable(&copy);
 
@@ -905,7 +898,6 @@ int SQLRemoveObject::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
-	string tenant_name = getTenant();
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
@@ -916,10 +908,8 @@ int SQLRemoveObject::Prepare(struct DBOpParams *params)
 	s_params.is_prepare = true;
 	s_params.u.p_params = &p_params;
 
-	p_params.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
-	copy.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
+	p_params.object_table = params->bucket_name + ".object.table";
+	copy.object_table = params->bucket_name + ".object.table";
 
 	(void)createObjectTable(&copy);
 
@@ -961,7 +951,6 @@ int SQLListObject::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
-	string tenant_name = getTenant();
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
@@ -972,10 +961,8 @@ int SQLListObject::Prepare(struct DBOpParams *params)
 	s_params.is_prepare = true;
 	s_params.u.p_params = &p_params;
 
-	p_params.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
-	copy.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
+	p_params.object_table = params->bucket_name + ".object.table";
+	copy.object_table = params->bucket_name + ".object.table";
 
 	(void)createObjectTable(&copy);
 
@@ -1018,7 +1005,6 @@ int SQLPutObjectData::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
-	string tenant_name = getTenant();
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
@@ -1029,14 +1015,10 @@ int SQLPutObjectData::Prepare(struct DBOpParams *params)
 	s_params.is_prepare = true;
 	s_params.u.p_params = &p_params;
 
-	p_params.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
-	p_params.objectdata_table = tenant_name + "." + params->bucket_name +
-				".objectdata.table";
-	copy.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
-	copy.objectdata_table = tenant_name + "." + params->bucket_name +
-				".objectdata.table";
+	p_params.object_table = params->bucket_name + ".object.table";
+	p_params.objectdata_table = params->bucket_name + ".objectdata.table";
+	copy.object_table = params->bucket_name + ".object.table";
+	copy.objectdata_table = params->bucket_name + ".objectdata.table";
 
 	(void)createObjectDataTable(&copy);
 
@@ -1090,7 +1072,6 @@ int SQLGetObjectData::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
-	string tenant_name = getTenant();
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
@@ -1101,14 +1082,10 @@ int SQLGetObjectData::Prepare(struct DBOpParams *params)
 	s_params.is_prepare = true;
 	s_params.u.p_params = &p_params;
 
-	p_params.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
-	p_params.objectdata_table = tenant_name + "." + params->bucket_name +
-				".objectdata.table";
-	copy.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
-	copy.objectdata_table = tenant_name + "." + params->bucket_name +
-				".objectdata.table";
+	p_params.object_table = params->bucket_name + ".object.table";
+	p_params.objectdata_table = params->bucket_name + ".objectdata.table";
+	copy.object_table = params->bucket_name + ".object.table";
+	copy.objectdata_table = params->bucket_name + ".objectdata.table";
 
 	(void)createObjectDataTable(&copy);
 
@@ -1149,7 +1126,6 @@ int SQLDeleteObjectData::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
-	string tenant_name = getTenant();
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
@@ -1160,14 +1136,10 @@ int SQLDeleteObjectData::Prepare(struct DBOpParams *params)
 	s_params.is_prepare = true;
 	s_params.u.p_params = &p_params;
 
-	p_params.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
-	p_params.objectdata_table = tenant_name + "." + params->bucket_name +
-				".objectdata.table";
-	copy.object_table = tenant_name + "." + params->bucket_name +
-				".object.table";
-	copy.objectdata_table = tenant_name + "." + params->bucket_name +
-				".objectdata.table";
+	p_params.object_table = params->bucket_name + ".object.table";
+	p_params.objectdata_table = params->bucket_name + ".objectdata.table";
+	copy.object_table = params->bucket_name + ".object.table";
+	copy.objectdata_table = params->bucket_name + ".objectdata.table";
 
 	(void)createObjectDataTable(&copy);
 

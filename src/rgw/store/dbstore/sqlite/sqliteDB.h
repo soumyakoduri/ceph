@@ -22,10 +22,10 @@ class SQLiteDB : public DBstore, public DBOp{
 	sqlite3_stmt *stmt = NULL;
 	DBOpPrepareParams PrepareParams;
 
-	SQLiteDB(string tenant_name) : DBstore(tenant_name) {
+	SQLiteDB(string db_name) : DBstore(db_name) {
 		InitPrepareParams(&PrepareParams);
 	}
-	SQLiteDB(string tenant_name, sqlite3 *dbi) : DBstore(tenant_name) {
+	SQLiteDB(sqlite3 *dbi) : DBstore() {
                 db = (void*)dbi;
 		InitPrepareParams(&PrepareParams);
 	}
@@ -58,12 +58,10 @@ class SQLiteDB : public DBstore, public DBOp{
 
 class SQLObjectOp : public ObjectOp {
 	private:
-		string tenant;
 		sqlite3 **sdb = NULL;
 
 	public:
-		SQLObjectOp(string tenant_name, sqlite3 **sdbi) :
-       			tenant(tenant_name), sdb(sdbi) {};
+		SQLObjectOp(sqlite3 **sdbi) : sdb(sdbi) {};
 		~SQLObjectOp() {}
 
 		int InitializeObjectOps();
@@ -76,8 +74,7 @@ class SQLInsertUser : public SQLiteDB, public InsertUserOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLInsertUser(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLInsertUser(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
 	~SQLInsertUser() {
 		if (stmt)
 			sqlite3_finalize(stmt);
@@ -93,8 +90,7 @@ class SQLRemoveUser : public SQLiteDB, public RemoveUserOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLRemoveUser(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLRemoveUser(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
 	~SQLRemoveUser() {
 		if (stmt)
 			sqlite3_finalize(stmt);
@@ -110,8 +106,7 @@ class SQLListUser : public SQLiteDB, public ListUserOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLListUser(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLListUser(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
 	~SQLListUser() {
 		if (stmt)
 			sqlite3_finalize(stmt);
@@ -127,8 +122,7 @@ class SQLInsertBucket : public SQLiteDB, public InsertBucketOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLInsertBucket(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLInsertBucket(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
 	~SQLInsertBucket() {
 		if (stmt)
 			sqlite3_finalize(stmt);
@@ -144,8 +138,7 @@ class SQLRemoveBucket : public SQLiteDB, public RemoveBucketOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLRemoveBucket(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLRemoveBucket(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
 	~SQLRemoveBucket() {
 		if (stmt)
 			sqlite3_finalize(stmt);
@@ -161,8 +154,7 @@ class SQLListBucket : public SQLiteDB, public ListBucketOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLListBucket(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLListBucket(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
 	~SQLListBucket() {
 		if (stmt)
 			sqlite3_finalize(stmt);
@@ -178,10 +170,8 @@ class SQLInsertObject : public SQLiteDB, public InsertObjectOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLInsertObject(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
-	SQLInsertObject(string tenant_name, sqlite3 **sdbi) :
-		SQLiteDB(tenant_name, *sdbi), sdb(sdbi) {}
+	SQLInsertObject(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLInsertObject(sqlite3 **sdbi) : SQLiteDB(*sdbi), sdb(sdbi) {}
 
 	~SQLInsertObject() {
 		if (stmt)
@@ -198,10 +188,8 @@ class SQLRemoveObject : public SQLiteDB, public RemoveObjectOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLRemoveObject(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
-	SQLRemoveObject(string tenant_name, sqlite3 **sdbi) :
-		SQLiteDB(tenant_name, *sdbi), sdb(sdbi) {}
+	SQLRemoveObject(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLRemoveObject(sqlite3 **sdbi) : SQLiteDB(*sdbi), sdb(sdbi) {}
 
 	~SQLRemoveObject() {
 		if (stmt)
@@ -218,10 +206,8 @@ class SQLListObject : public SQLiteDB, public ListObjectOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLListObject(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
-	SQLListObject(string tenant_name, sqlite3 **sdbi) :
-		SQLiteDB(tenant_name, *sdbi), sdb(sdbi) {}
+	SQLListObject(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLListObject(sqlite3 **sdbi) : SQLiteDB(*sdbi), sdb(sdbi) {}
 
 	~SQLListObject() {
 		if (stmt)
@@ -238,10 +224,8 @@ class SQLPutObjectData : public SQLiteDB, public PutObjectDataOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLPutObjectData(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
-	SQLPutObjectData(string tenant_name, sqlite3 **sdbi) :
-		SQLiteDB(tenant_name, *sdbi), sdb(sdbi) {}
+	SQLPutObjectData(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLPutObjectData(sqlite3 **sdbi) : SQLiteDB(*sdbi), sdb(sdbi) {}
 
 	~SQLPutObjectData() {
 		if (stmt)
@@ -258,10 +242,8 @@ class SQLGetObjectData : public SQLiteDB, public GetObjectDataOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLGetObjectData(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
-	SQLGetObjectData(string tenant_name, sqlite3 **sdbi) :
-		SQLiteDB(tenant_name, *sdbi), sdb(sdbi) {}
+	SQLGetObjectData(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLGetObjectData(sqlite3 **sdbi) : SQLiteDB(*sdbi), sdb(sdbi) {}
 
 	~SQLGetObjectData() {
 		if (stmt)
@@ -278,10 +260,8 @@ class SQLDeleteObjectData : public SQLiteDB, public DeleteObjectDataOp {
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLDeleteObjectData(string tenant_name, void **db) :
-	       	SQLiteDB(tenant_name, (sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
-	SQLDeleteObjectData(string tenant_name, sqlite3 **sdbi) :
-		SQLiteDB(tenant_name, *sdbi), sdb(sdbi) {}
+	SQLDeleteObjectData(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLDeleteObjectData(sqlite3 **sdbi) : SQLiteDB(*sdbi), sdb(sdbi) {}
 
 	~SQLDeleteObjectData() {
 		if (stmt)

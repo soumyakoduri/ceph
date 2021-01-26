@@ -17,7 +17,7 @@ DBstore* DBstoreManager::getDBstore (string tenant, bool create)
     pair<map<string, DBstore*>::iterator,bool> ret;
 
     if (tenant.empty())
-        return NULL;
+        return default_dbstore;
 
     if (DBstoreHandles.empty())
         goto not_found;
@@ -104,13 +104,16 @@ void DBstoreManager::deleteDBstore(DBstore *dbs) {
     if (!dbs)
         return;
 
-    (void)deleteDBstore(dbs->getTenant());
+    (void)deleteDBstore(dbs->getDBname());
 }
 
 
 void DBstoreManager::destroyAllHandles(){
     map<string, DBstore*>::iterator iter;
     DBstore *dbs = nullptr;
+
+    default_dbstore->Destroy();
+    delete default_dbstore;
 
     if (DBstoreHandles.empty())
         return;

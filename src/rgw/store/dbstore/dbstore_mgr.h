@@ -11,14 +11,22 @@
 #include <iostream>
 
 using namespace std;
+
+/* XXX: Should be a dbstore config option */
+string default_tenant = "default_ns";
+
+using namespace std;
 class DBstore;
 
 class DBstoreManager {
 private:
   map<string, DBstore*> DBstoreHandles;
+  DBstore *default_dbstore = NULL;
 
 public:
-  DBstoreManager(): DBstoreHandles() {};
+  DBstoreManager(): DBstoreHandles() {
+	default_dbstore = createDBstore(default_tenant);
+  };
   ~DBstoreManager() { destroyAllHandles(); };
 
   /* XXX: TBD based on testing
