@@ -17,6 +17,10 @@ string DBstore::getBucketTable() {
 	return bucket_table;
 }
 
+string DBstore::getQuotaTable() {
+	return quota_table;
+}
+
 map<string, class ObjectOp*> DBstore::objectmap = {};
 
 map<string, class ObjectOp*> DBstore::getObjectMap() {
@@ -39,6 +43,9 @@ string DBOp::CreateTableSchema(string type, DBOpParams *params) {
 		return fmt::format(CreateObjectDataTableQ.c_str(),
 			           params->objectdata_table.c_str(),
 				   params->object_table.c_str());
+	if (!type.compare("Quota"))
+		return fmt::format(CreateQuotaTableQ.c_str(),
+			           params->quota_table.c_str());
 
 	dbout(L_ERR)<<"Incorrect table type("<<type<<") specified \n";
 
@@ -617,12 +624,13 @@ int DBstore::ProcessOp(string Op, struct DBOpParams *params) {
 	ret = db_op->Execute(params);
 
 	Unlock();
-	if (ret)
+	if (ret) {
 		dbout(L_ERR)<<"In Process op Execute failed for fop(" \
 			   <<Op.c_str()<<") \n";
-	else
+	} else {
 		dbout(L_FULLDEBUG)<<"Successfully processed fop(" \
 			   <<Op.c_str()<<") \n";
+	}
 
 	return ret;
 }

@@ -25,6 +25,7 @@ struct DBOpParams {
 	string bucket_table;
 	string object_table;
 	string objectdata_table;
+	string quota_table;
 	string user_name;
 	string bucket_name;
 	string object;
@@ -43,6 +44,7 @@ struct DBOpPrepareParams {
 	string bucket_table;
 	string object_table;
 	string objectdata_table;
+	string quota_table;
 	string user_name;
 	string bucket_name;
 	string object;
@@ -89,7 +91,28 @@ class DBOp {
 	private:
 	const string CreateUserTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' (	\
-			UserName TEXT PRIMARY KEY NOT NULL UNIQUE \n);";
+			UserName TEXT PRIMARY KEY NOT NULL UNIQUE , \
+	       		Tenant TEXT ,		\
+			ID TEXT ,		\
+			NS TEXT ,		\
+			DisplayName TEXT , 	\
+			UserEmail TEXT ,	\
+			AccessKeys BLOB ,	\
+			SwiftKeys BLOB ,	\
+			SubUsers  BLOB ,	\
+			Suspended INTEGER ,	\
+			MaxBuckets INTEGER ,	\
+			OpMask	INTEGER ,	\
+			UserCaps BLOB,  #check if really needed	\
+			Admin	INTEGER ,	\
+			System INTEGER , 	\
+			PlacementTags BLOB , 	\
+			BucketQuotaID INTEGER ,	\
+			UserQuotaID INTEGER ,	\
+			TYPE INTEGER ,		\
+			MfaIDs INTEGER ,	\
+			AssumedRoleARN TEXT \n);";
+
 	const string CreateBucketTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' ( \
 			BucketName TEXT PRIMARY KEY NOT NULL UNIQUE , \
@@ -113,6 +136,17 @@ class DBOp {
 			PRIMARY KEY (BucketName, ObjectName, Offset), \
                         FOREIGN KEY (BucketName, ObjectName) \
                                 REFERENCES '{}' (BucketName, ObjectName) ON DELETE CASCADE ON UPDATE CASCADE \n);";
+
+	const string CreateQuotaTableQ =
+		"CREATE TABLE IF NOT EXISTS '{}' ( \
+			ID INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE , \
+			MaxSizeSoftThreshold INTEGER ,	\
+			MaxObjsSoftThreshold INTEGER ,	\
+			MaxSize	INTEGER ,		\
+			MaxObjects INTEGER ,		\
+			Enabled Boolean ,		\
+			CheckOnRaw Boolean ,		\
+			TempURLKeys BLOB \n);";
 
 	const string DropQ = "DROP TABLE IF EXISTS '{}'";
 	const string ListAllQ = "SELECT  * from '{}'";
@@ -278,6 +312,7 @@ class DBstore {
 	const string db_name;
 	const string user_table;
 	const string bucket_table;
+	const string quota_table;
 	static map<string, class ObjectOp*> objectmap;
 	pthread_mutex_t mutex; // to protect objectmap and other shared
        			       // objects if any. This mutex is taken
@@ -291,20 +326,23 @@ class DBstore {
 
 	public:	
 	DBstore(string db_name) : db_name(db_name),
-       				user_table("user.table"),
-			        bucket_table("bucket.table")
+       				user_table(db_name+".user.table"),
+			        bucket_table(db_name+".bucket.table"),
+			        quota_table(db_name+".quota.table")
        			        {}
-	DBstore() {}
+/*	DBstore() {}*/
 
-	/*DBstore() : db_name("default_db"),
+	DBstore() : db_name("default_db"),
        		    user_table("user.table"),
-		    bucket_table("bucket.table")
-       		    {}*/
+		    bucket_table("bucket.table"),
+		    quota_table("quota.table")
+       		    {}
 	virtual	~DBstore() {}
 
 	string getDBname();
 	string getUserTable();
 	string getBucketTable();
+	string getQuotaTable();
 	map<string, class ObjectOp*> getObjectMap();
 
 	struct DBOps dbops; // DB operations, make it private?

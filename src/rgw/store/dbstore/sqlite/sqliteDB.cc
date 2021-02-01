@@ -334,6 +334,9 @@ int SQLiteDB::createTables()
 	if ((cb = createBucketTable(&params)))
 		goto out;
 
+	if ((cb = createQuotaTable(&params)))
+		goto out;
+
 	ret = 0;
 out:
 	if (ret) {
@@ -391,6 +394,22 @@ int SQLiteDB::createObjectTable(DBOpParams *params)
 		dbout(L_ERR)<<"CreateObjectTable failed \n";
 
 	dbout(L_FULLDEBUG)<<"CreateObjectTable suceeded \n";
+
+	return ret;
+}
+
+int SQLiteDB::createQuotaTable(DBOpParams *params)
+{
+	int ret = -1;
+	string schema;
+
+	schema = CreateTableSchema("Quota", params);
+
+	ret = exec(schema.c_str(), NULL);
+	if (ret)
+		dbout(L_ERR)<<"CreateQuotaTable failed \n";
+
+	dbout(L_FULLDEBUG)<<"CreateQuotaTable suceeded \n";
 
 	return ret;
 }

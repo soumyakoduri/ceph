@@ -45,6 +45,7 @@ class SQLiteDB : public DBstore, public DBOp{
 	int createUserTable(DBOpParams *params);
 	int createObjectTable(DBOpParams *params);
 	int createObjectDataTable(DBOpParams *params);
+	int createQuotaTable(DBOpParams *params);
 
 	int DeleteBucketTable(DBOpParams *params);
 	int DeleteUserTable(DBOpParams *params);
