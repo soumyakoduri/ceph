@@ -38,6 +38,8 @@ void* process(void *arg)
 
 	db->InitializeParams("InsertUser", &params);
 	params.user_name = user1;
+	params.user_query = "Username";
+	params.user_query_val = user1;
 	db->ProcessOp("InsertUser", &params);
 
 	params.bucket_name = bucketa;
@@ -84,7 +86,7 @@ void* process(void *arg)
 	params.object = objectc2;
 	db->ProcessOp("InsertObject", &params);
 
-	db->ProcessOp("ListUser", &params);
+	db->ProcessOp("GetUser", &params);
 	db->ProcessOp("ListBucket", &params);
 	db->ProcessOp("ListObject", &params);
 

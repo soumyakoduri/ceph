@@ -110,7 +110,7 @@ string RemoveUserOp::Schema(SchemaParams *s_params) {
 		       p->user_name.c_str());
 }
 
-string ListUserOp::Schema(SchemaParams *s_params) {
+string GetUserOp::Schema(SchemaParams *s_params) {
 	struct DBOpParams *p;
 	struct DBOpPrepareParams *pp;
 
@@ -124,15 +124,15 @@ string ListUserOp::Schema(SchemaParams *s_params) {
 			return NULL;
 
 		return fmt::format(Query.c_str(), pp->user_table.c_str(),
-			       pp->user_name.c_str());
+			       pp->user_query.c_str(), pp->user_query_val.c_str());
 	}
 
 	p = s_params->u.params;
 	if (!p) /* DBOpParams */
 		return NULL;
 
-	return fmt::format(Query.c_str(), p->user_table.c_str(),
-		       p->user_name.c_str());
+	return fmt::format(Query.c_str(), p->user_table.c_str(), p->user_query.c_str(),
+		       p->user_query_val.c_str());
 }
 
 string InsertBucketOp::Schema(SchemaParams *s_params) {
@@ -504,8 +504,8 @@ DBOp * DBstore::getDBOp(string Op, struct DBOpParams *params)
 		return dbops.InsertUser;
 	if (!Op.compare("RemoveUser"))
 		return dbops.RemoveUser;
-	if (!Op.compare("ListUser"))
-		return dbops.ListUser;
+	if (!Op.compare("GetUser"))
+		return dbops.GetUser;
 	if (!Op.compare("InsertBucket"))
 		return dbops.InsertBucket;
 	if (!Op.compare("RemoveBucket"))

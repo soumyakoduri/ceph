@@ -177,7 +177,7 @@ int SQLiteDB::InitializeDBOps()
         (void)createTables();
         dbops.InsertUser = new SQLInsertUser(&this->db);
         dbops.RemoveUser = new SQLRemoveUser(&this->db);
-        dbops.ListUser = new SQLListUser(&this->db);
+        dbops.GetUser = new SQLGetUser(&this->db);
         dbops.InsertBucket = new SQLInsertBucket(&this->db);
         dbops.RemoveBucket = new SQLRemoveBucket(&this->db);
         dbops.ListBucket = new SQLListBucket(&this->db);
@@ -189,7 +189,7 @@ int SQLiteDB::FreeDBOps()
 {
         delete dbops.InsertUser;
         delete dbops.RemoveUser;
-        delete dbops.ListUser;
+        delete dbops.GetUser;
         delete dbops.InsertBucket;
         delete dbops.RemoveBucket;
         delete dbops.ListBucket;
@@ -213,6 +213,8 @@ int InitPrepareParams(DBOpPrepareParams *params)
 	params->offset = ":offset";
 	params->data = ":data";
 	params->datalen = ":datalen";
+	params->user_query = ":user_query";
+	params->user_query_val = ":user_query_val";
 
 	return 0;
 }
@@ -503,9 +505,9 @@ int SQLiteDB::ListAllUsers(DBOpParams *params)
 	cout<<"########### Listing all Users #############\n";
 	ret = exec(schema.c_str(), &list_callback);
 	if (ret)
-		dbout(L_ERR)<<"ListUsertable failed \n";
+		dbout(L_ERR)<<"GetUsertable failed \n";
 
-	dbout(L_FULLDEBUG)<<"ListUserTable suceeded \n";
+	dbout(L_FULLDEBUG)<<"GetUserTable suceeded \n";
 
 	return ret;
 }
@@ -670,14 +672,14 @@ out:
 	return ret;
 }
 
-int SQLListUser::Prepare(struct DBOpParams *params)
+int SQLGetUser::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
-		dbout(L_ERR)<<"In SQLListUser - no db\n";
+		dbout(L_ERR)<<"In SQLGetUser - no db\n";
 		goto out;
 	}
 
@@ -686,25 +688,27 @@ int SQLListUser::Prepare(struct DBOpParams *params)
 
 	p_params.user_table = params->user_table;
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareListUser");
+	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareGetUser");
 out:
 	return ret;
 }
 
-int SQLListUser::Bind(struct DBOpParams *params)
+int SQLGetUser::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.user_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.user_query.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->user_query.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->user_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.user_query_val.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->user_query_val.c_str(), sdb);
 out:
 	return rc;
 }
 
-int SQLListUser::Execute(struct DBOpParams *params)
+int SQLGetUser::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 

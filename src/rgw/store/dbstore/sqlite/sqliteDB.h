@@ -101,14 +101,14 @@ class SQLRemoveUser : public SQLiteDB, public RemoveUserOp {
         int Bind(DBOpParams *params);
 };
 
-class SQLListUser : public SQLiteDB, public ListUserOp {
+class SQLGetUser : public SQLiteDB, public GetUserOp {
 	private:
 	sqlite3 **sdb = NULL;
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLListUser(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
-	~SQLListUser() {
+	SQLGetUser(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	~SQLGetUser() {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}

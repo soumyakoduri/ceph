@@ -112,9 +112,6 @@ void DBstoreManager::destroyAllHandles(){
     map<string, DBstore*>::iterator iter;
     DBstore *dbs = nullptr;
 
-    default_dbstore->Destroy();
-    delete default_dbstore;
-
     if (DBstoreHandles.empty())
         return;
 

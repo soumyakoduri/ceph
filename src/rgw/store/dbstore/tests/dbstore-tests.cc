@@ -65,6 +65,8 @@ namespace {
 			ASSERT_TRUE(db != nullptr);
 
 			GlobalParams.user_name = user1;
+			GlobalParams.user_query = "Username";
+			GlobalParams.user_query_val = user1;
 			GlobalParams.bucket_name = bucket1;
 			GlobalParams.object = object1;
 			GlobalParams.offset = 0;
@@ -92,11 +94,11 @@ TEST_F(DBstoreBaseTest, InsertUser) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, ListUser) {
+TEST_F(DBstoreBaseTest, GetUser) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
-	ret = db->ProcessOp("ListUser", &params);
+	ret = db->ProcessOp("GetUser", &params);
 	ASSERT_EQ(ret, 0);
 }
 

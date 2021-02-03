@@ -13,7 +13,7 @@
 using namespace std;
 
 /* XXX: Should be a dbstore config option */
-string default_tenant = "default_ns";
+const static string default_tenant = "default_ns";
 
 using namespace std;
 class DBstore;

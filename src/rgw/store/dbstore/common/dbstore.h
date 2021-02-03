@@ -32,6 +32,9 @@ struct DBOpParams {
 	size_t offset;
 	string data;
 	size_t datalen;
+	/* Maybe have seperate struct for each op params */
+	string user_query;
+	string user_query_val;
 };
 
 /* Used for prepared schemas.
@@ -51,6 +54,9 @@ struct DBOpPrepareParams {
 	string offset;
 	string data;
 	string datalen;
+	/* Maybe have seperate struct for each op params */
+	string user_query;
+	string user_query_val;
 };
 
 struct SchemaParams {
@@ -64,7 +70,7 @@ struct SchemaParams {
 struct DBOps {
 	class InsertUserOp *InsertUser;
 	class RemoveUserOp *RemoveUser;
-	class ListUserOp *ListUser;
+	class GetUserOp *GetUser;
 	class InsertBucketOp *InsertBucket;
 	class RemoveBucketOp *RemoveBucket;
 	class ListBucketOp *ListBucket;
@@ -103,7 +109,7 @@ class DBOp {
 			Suspended INTEGER ,	\
 			MaxBuckets INTEGER ,	\
 			OpMask	INTEGER ,	\
-			UserCaps BLOB,  #check if really needed	\
+			UserCaps BLOB ,		\
 			Admin	INTEGER ,	\
 			System INTEGER , 	\
 			PlacementTags BLOB , 	\
@@ -195,13 +201,13 @@ class RemoveUserOp: public DBOp {
 	string Schema(SchemaParams *s_params);
 };
 
-class ListUserOp: public DBOp {
+class GetUserOp: public DBOp {
 	private:
 	const string Query =
-	"SELECT  * from '{}' where UserName = {}";
+	"SELECT  * from '{}' where {} = {}";
 
 	public:
-	virtual ~ListUserOp() {}
+	virtual ~GetUserOp() {}
 
 	string Schema(SchemaParams *s_params);
 };
