@@ -5,376 +5,16 @@
 
 using namespace std;
 
-string DBstore::getDBname() {
-	return db_name + ".db";
-}
-
-string DBstore::getUserTable() {
-	return user_table;
-}
-
-string DBstore::getBucketTable() {
-	return bucket_table;
-}
-
-string DBstore::getQuotaTable() {
-	return quota_table;
-}
-
 map<string, class ObjectOp*> DBstore::objectmap = {};
 
 map<string, class ObjectOp*> DBstore::getObjectMap() {
 	return DBstore::objectmap;
 }
 
-string DBOp::CreateTableSchema(string type, DBOpParams *params) {
-	if (!type.compare("User"))
-		return fmt::format(CreateUserTableQ.c_str(),
-			           params->user_table.c_str());
-	if (!type.compare("Bucket"))
-		return fmt::format(CreateBucketTableQ.c_str(),
-			           params->bucket_table.c_str(),
-				   params->user_table.c_str());
-	if (!type.compare("Object"))
-		return fmt::format(CreateObjectTableQ.c_str(),
-			           params->object_table.c_str(),
-				   params->bucket_table.c_str());
-	if (!type.compare("ObjectData"))
-		return fmt::format(CreateObjectDataTableQ.c_str(),
-			           params->objectdata_table.c_str(),
-				   params->object_table.c_str());
-	if (!type.compare("Quota"))
-		return fmt::format(CreateQuotaTableQ.c_str(),
-			           params->quota_table.c_str());
-
-	dbout(L_ERR)<<"Incorrect table type("<<type<<") specified \n";
-
-	return NULL;
-}
-
-string DBOp::DeleteTableSchema(string table) {
-	return fmt::format(DropQ.c_str(), table.c_str());
-}
-
-string DBOp::ListTableSchema(string table) {
-	return fmt::format(ListAllQ.c_str(), table.c_str());
-}
-
-string InsertUserOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(), pp->user_table.c_str(),
-			       pp->user_name.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(), p->user_table.c_str(),
-		       p->user_name.c_str());
-}
-
-string RemoveUserOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(), pp->user_table.c_str(),
-			       pp->user_name.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(), p->user_table.c_str(),
-		       p->user_name.c_str());
-}
-
-string GetUserOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(), pp->user_table.c_str(),
-			       pp->user_query.c_str(), pp->user_query_val.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(), p->user_table.c_str(), p->user_query.c_str(),
-		       p->user_query_val.c_str());
-}
-
-string InsertBucketOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(), pp->bucket_table.c_str(),
-			       	pp->bucket_name.c_str(), pp->user_name.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(), p->bucket_table.c_str(),
-		       p->bucket_name.c_str(), p->user_name.c_str());
-}
-
-string RemoveBucketOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(), pp->bucket_table.c_str(),
-			       pp->bucket_name.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(), p->bucket_table.c_str(),
-		       p->bucket_name.c_str());
-}
-
-string ListBucketOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(), pp->bucket_table.c_str(),
-			       pp->bucket_name.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(), p->bucket_table.c_str(),
-		       p->bucket_name.c_str());
-}
-
-string InsertObjectOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(),
-		 	pp->object_table.c_str(), pp->bucket_name.c_str(),
-		        pp->object.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(),
-		 p->object_table.c_str(), p->bucket_name.c_str(),
-		 p->object.c_str());
-}
-
-string RemoveObjectOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(), pp->object_table.c_str(),
-			       pp->bucket_name.c_str(), pp->object.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(), p->object_table.c_str(),
-		       p->bucket_name.c_str(), p->object.c_str());
-}
-
-string ListObjectOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(), pp->object_table.c_str(),
-			       pp->bucket_name.c_str(), pp->object.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(), p->object_table.c_str(),
-		       p->bucket_name.c_str(), p->object.c_str());
-}
-
-string PutObjectDataOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(),
-		 	pp->objectdata_table.c_str(),
-		       	pp->bucket_name.c_str(), pp->object.c_str(),
-		       	pp->offset.c_str(), pp->data.c_str(),
-			pp->datalen.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(),
-	 	p->objectdata_table.c_str(), p->bucket_name.c_str(),
-	 	p->object.c_str(), p->offset, p->data.c_str(), p->datalen);
-}
-
-string GetObjectDataOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(),
-		 	pp->objectdata_table.c_str(), pp->bucket_name.c_str(),
-		        pp->object.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(),
-		 p->objectdata_table.c_str(), p->bucket_name.c_str(),
-		 p->object.c_str());
-}
-
-string DeleteObjectDataOp::Schema(SchemaParams *s_params) {
-	struct DBOpParams *p;
-	struct DBOpPrepareParams *pp;
-
-	if (!s_params)
-		return NULL;
-
-	if (s_params->is_prepare) {
-		pp = s_params->u.p_params;
-
-		if (!pp)
-			return NULL;
-
-		return fmt::format(Query.c_str(),
-		 	pp->objectdata_table.c_str(), pp->bucket_name.c_str(),
-		        pp->object.c_str());
-	}
-
-	p = s_params->u.params;
-	if (!p) /* DBOpParams */
-		return NULL;
-
-	return fmt::format(Query.c_str(),
-		 p->objectdata_table.c_str(), p->bucket_name.c_str(),
-		 p->object.c_str());
-}
-
 /* Custom Logging initialization */
 ofstream fileout;
 ostream *dbout;
-int LogLevel = L_EVENT;
+int LogLevel = L_FULLDEBUG;
 string LogFile = "dbstore.log";
 
 static void LogInit(string logfile, int loglevel) {
@@ -634,3 +274,33 @@ int DBstore::ProcessOp(string Op, struct DBOpParams *params) {
 
 	return ret;
 }
+
+int DBstore::get_user(const std::string& query_str, const std::string& query_str_val,
+                      std::unique_ptr<RGWUser>* user) {
+	int ret = 0;
+	RGWUser *u;
+
+	if (query_str.empty()) {
+		// not checking for query_str_val as the query can be to fetch
+		// entries with null values
+		return -1;
+	}
+
+	// XXX: validate query_str with UserTable entries names
+        DBOpParams params = {};
+
+        InitializeParams("GetUser", &params);
+        ret = ProcessOp("GetUser", &params);
+
+	if (ret)
+		goto out;
+
+	/* Create RGWUser from params.uinfo */
+//	u = new RGWDBstoreUser(this, params.uinfo);
+
+	user->reset(u);
+
+out:
+	return ret;
+}
+

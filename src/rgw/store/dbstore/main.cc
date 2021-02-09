@@ -6,11 +6,14 @@
 
 #include "dbstore_mgr.h"
 #include <dbstore.h>
+#include <dbstore-log.h>
 
 struct thr_args {
 	class DBstore *dbs;
 	int thr_id;
 };
+
+int loglevel = L_FULLDEBUG;
 
 void* process(void *arg)
 {
@@ -18,6 +21,7 @@ void* process(void *arg)
 
 	class DBstore *db = t_args->dbs;
 	int thr_id = t_args->thr_id;
+	int ret = -1;
 
 	dbout(L_EVENT)<<"Entered thread:"<<thr_id<<"\n";
 
@@ -37,12 +41,54 @@ void* process(void *arg)
 	struct DBOpParams params = {};
 
 	db->InitializeParams("InsertUser", &params);
-	params.user_name = user1;
-	params.user_query = "Username";
-	params.user_query_val = user1;
-	db->ProcessOp("InsertUser", &params);
+	
+	params.op.uinfo.username = user1;
+	params.op.uinfo.tenant = "tenant";
+	params.op.uinfo.id = "id";
+	params.op.uinfo.suspended = 123;
+	params.op.uinfo.max_buckets = 456;
+	params.op.uinfo.assumedrolearn = "role";
+	params.op.uinfo.placement_tags.push_back("tags1");
+	params.op.uinfo.placement_tags.push_back("tags2");
 
-	params.bucket_name = bucketa;
+	RGWAccessKey k1("id1", "key1");
+	RGWAccessKey k2("id2", "key2");
+	params.op.uinfo.access_keys.insert(make_pair("key1", k1));
+	params.op.uinfo.access_keys.insert(make_pair("key2", k2));
+
+	ret = db->ProcessOp("InsertUser", &params);
+	cout << "InsertUser return value: " <<  ret << "\n";
+
+	struct DBOpParams params2 = {};
+	params.op.uinfo.tenant = "tenant2";
+
+	db->InitializeParams("GetUser", &params2);
+	params2.op.uinfo.username = user1;
+	ret = db->ProcessOp("GetUser", &params2);
+
+	cout << "GetUser return value: " <<  ret << "\n";
+
+	cout << "tenant: " << params2.op.uinfo.tenant << "\n";
+	cout << "suspended: " << params2.op.uinfo.suspended << "\n";
+	cout << "assumedrolearn: " << params2.op.uinfo.assumedrolearn << "\n";
+
+	list<string>::iterator it = params2.op.uinfo.placement_tags.begin();
+
+	while (it != params2.op.uinfo.placement_tags.end()) {
+		cout << "list = " << *it << "\n";
+		it++;
+	}
+
+	map<string, RGWAccessKey>::iterator it2 = params2.op.uinfo.access_keys.begin();
+
+	while (it2 != params2.op.uinfo.access_keys.end()) {
+		cout << "keys = " << it2->first << "\n";
+		RGWAccessKey k = it2->second;
+		cout << "id = " << k.id << ", keys = " << k.key << "\n";
+		it2++;
+	}
+
+/*	params.bucket_name = bucketa;
 	db->ProcessOp("InsertBucket", &params);
 
 	params.object = objecta1;
@@ -75,7 +121,7 @@ void* process(void *arg)
 
 	db->ProcessOp("GetObjectData", &params);
 
-	params.user_name = user2;
+	params.op.uinfo.username = user2;
 	db->ProcessOp("InsertUser", &params);
 
 	params.bucket_name = bucketc;
@@ -101,13 +147,13 @@ void* process(void *arg)
 	params.bucket_name = bucketb;
 	db->ProcessOp("RemoveBucket", &params);
 
-	params.user_name = user2;
+	params.op.uinfo.username = user2;
 	db->ProcessOp("RemoveUser", &params);
 
 	db->ListAllUsers(&params);
 	db->ListAllBuckets(&params);
 	db->ListAllObjects(&params);
-
+*/
 	dbout(L_EVENT)<<"Exiting thread:"<<thr_id<<"\n";
 
 	return 0;
@@ -117,7 +163,6 @@ int main(int argc, char *argv[])
 {
 	string tenant = "Redhat";
 	string logfile;
-	int loglevel;
 
 	class DBstoreManager dbsm;
         class DBstore *dbs;
@@ -125,14 +170,16 @@ int main(int argc, char *argv[])
 	void *res;
 
 	pthread_attr_t attr;
-	int num_thr = 10;
+	int num_thr = 2;
 	pthread_t threads[num_thr];
 	struct thr_args t_args[num_thr];
 
+		cout << "loglevel  " << loglevel << "\n";
 	// format: ./dbstore logfile loglevel
 	if (argc == 3) {
 		logfile = argv[1];
 		loglevel = (atoi)(argv[2]);
+		cout << "loglevel set to " << loglevel << "\n";
 	}
 
         dbs = dbsm.getDBstore(tenant, true);
@@ -146,7 +193,6 @@ int main(int argc, char *argv[])
              dbout(L_ERR)<<" error in pthread_attr_init \n";
 	     goto out;
 	}
-
 
 	for (tnum = 0; tnum < num_thr; tnum++) {
 		t_args[tnum].dbs = dbs;
@@ -166,7 +212,7 @@ int main(int argc, char *argv[])
 
         rc = pthread_attr_destroy(&attr);
         if (rc != 0) {
-        	dbout(L_EVENT)<<"error in pthread_attr_destroy \n";
+        	dbout(loglevel)<<"error in pthread_attr_destroy \n";
 	}
 
         /* Now join with each thread, and display its returned value */

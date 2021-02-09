@@ -18,8 +18,8 @@ namespace gtest {
 	       			db_type("SQLite"), ret(-1) {}
 
 		Environment(string tenantname, string db_typename): 
-			tenant("tenantname"), db_type("db_typename"),
-			db(nullptr), ret(-1) {}
+			tenant("tenantname"), db(nullptr),
+			db_type("db_typename"), ret(-1) {}
 
 		virtual ~Environment() {}
 
@@ -41,8 +41,8 @@ namespace gtest {
 		}
 
 		string tenant;
-		string db_type;
 		class DBstore *db;
+		string db_type;
 		int ret;
 	};
 }
@@ -64,9 +64,7 @@ namespace {
 			db = gtest::env->db;
 			ASSERT_TRUE(db != nullptr);
 
-			GlobalParams.user_name = user1;
-			GlobalParams.user_query = "Username";
-			GlobalParams.user_query_val = user1;
+			GlobalParams.op.uinfo.username = user1;
 			GlobalParams.bucket_name = bucket1;
 			GlobalParams.object = object1;
 			GlobalParams.offset = 0;
@@ -90,6 +88,17 @@ TEST_F(DBstoreBaseTest, InsertUser) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
+	params.op.uinfo.tenant = "tenant";
+	params.op.uinfo.id = "id";
+	params.op.uinfo.suspended = 123;
+	params.op.uinfo.max_buckets = 456;
+	params.op.uinfo.assumedrolearn = "role";
+	params.op.uinfo.placement_tags.push_back("tags");
+	RGWAccessKey k1("id1", "key1");
+	RGWAccessKey k2("id2", "key2");
+	params.op.uinfo.access_keys.insert(make_pair("key1", k1));
+	params.op.uinfo.access_keys.insert(make_pair("key2", k2));
+
 	ret = db->ProcessOp("InsertUser", &params);
 	ASSERT_EQ(ret, 0);
 }
@@ -100,6 +109,22 @@ TEST_F(DBstoreBaseTest, GetUser) {
 
 	ret = db->ProcessOp("GetUser", &params);
 	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(params.op.uinfo.tenant, "tenant");
+	ASSERT_EQ(params.op.uinfo.id, "id");
+	ASSERT_EQ(params.op.uinfo.suspended, 123);
+	ASSERT_EQ(params.op.uinfo.max_buckets, 456);
+	ASSERT_EQ(params.op.uinfo.assumedrolearn, "role");
+	ASSERT_EQ(params.op.uinfo.placement_tags.back(), "tags");
+	RGWAccessKey k;
+	map<string, RGWAccessKey>::iterator it2 = params.op.uinfo.access_keys.begin();
+	k = it2->second;
+	ASSERT_EQ(k.id, "id1");
+	ASSERT_EQ(k.key, "key1");
+	it2++;
+	k = it2->second;
+	ASSERT_EQ(k.id, "id2");
+	ASSERT_EQ(k.key, "key2");
+
 }
 
 TEST_F(DBstoreBaseTest, ListAllUsers) {

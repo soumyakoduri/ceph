@@ -12,8 +12,6 @@
 
 using namespace std;
 
-int InitPrepareParams(DBOpPrepareParams *params);
-
 class SQLiteDB : public DBstore, public DBOp{
 	private:
 	sqlite3_mutex *mutex = NULL;
@@ -23,11 +21,11 @@ class SQLiteDB : public DBstore, public DBOp{
 	DBOpPrepareParams PrepareParams;
 
 	SQLiteDB(string db_name) : DBstore(db_name) {
-		InitPrepareParams(&PrepareParams);
+		InitPrepareParams(PrepareParams);
 	}
 	SQLiteDB(sqlite3 *dbi) : DBstore() {
                 db = (void*)dbi;
-		InitPrepareParams(&PrepareParams);
+		InitPrepareParams(PrepareParams);
 	}
 	~SQLiteDB() {}
 
@@ -35,10 +33,14 @@ class SQLiteDB : public DBstore, public DBOp{
 		 int (*callback)(void*,int,char**,char**));
 	void *openDB();
 	int closeDB();
-	int Step(sqlite3_stmt *stmt, int (*cbk)(sqlite3_stmt *stmt));
+	int Step(DBOpInfo &op, sqlite3_stmt *stmt,
+		 int (*cbk)(DBOpInfo &op, sqlite3_stmt *stmt));
 	int Reset(sqlite3_stmt *stmt);
 	int InitializeDBOps();
 	int FreeDBOps();
+	/* default value matches with sqliteDB style */
+	int InitPrepareParams(DBOpPrepareParams &params) { return 0; }
+
 
 	int createTables();
 	int createBucketTable(DBOpParams *params);

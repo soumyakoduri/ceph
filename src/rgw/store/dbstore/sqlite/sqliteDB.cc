@@ -6,12 +6,11 @@
 #define SQL_PREPARE(params, sdb, stmt, ret, Op) 	\
 do {							\
 	string schema;			   		\
-	schema = Schema(&params);	   		\
-							\
+	schema = Schema(params);	   		\
 	sqlite3_prepare_v2 (*sdb, schema.c_str(), 	\
 		            -1, &stmt , NULL);		\
 	if (!stmt) {					\
-	        dbout(L_ERR)<<"failed to prepare statement " \
+	        cout<<"failed to prepare statement " \
 	       		   <<"for Op("<<Op<<"); Errmsg -"\
 	       		   <<sqlite3_errmsg(*sdb)<<"\n";\
 		ret = -1;				\
@@ -27,7 +26,7 @@ do {						\
 	index = sqlite3_bind_parameter_index(stmt, str);     \
 							     \
 	if (index <=0)  {				     \
-	        dbout(L_ERR)<<"failed to fetch bind parameter"\
+	        cout<<"failed to fetch bind parameter"\
 	       	  	   " index for str("<<str<<") in "   \
 			   <<"stmt("<<stmt<<"); Errmsg -"    \
 	       		   <<sqlite3_errmsg(*sdb)<<"\n"; 	     \
@@ -69,7 +68,7 @@ do {								\
 
 #define SQL_BIND_BLOB(stmt, index, blob, size, sdb)		\
 do {								\
-	rc = sqlite3_bind_blob(stmt, index, blob, size, NULL);  \
+	rc = sqlite3_bind_blob(stmt, index, blob, size, SQLITE_TRANSIENT);  \
 								\
 	if (rc != SQLITE_OK) {					\
 	        dbout(L_ERR)<<"sqlite bind blob failed for index("     	\
@@ -81,6 +80,38 @@ do {								\
 	}							\
 }while(0);
 
+#define SQL_ENCODE_BLOB_PARAM(stmt, index, param, sdb)		\
+do {								\
+	bufferlist b;						\
+	encode(param, b);					\
+	SQL_BIND_BLOB(stmt, index, b.c_str(), b.length(), sdb); \
+}while(0);
+								
+#define SQL_READ_BLOB(stmt, index, void_ptr, len)		\
+do {								\
+	void_ptr = NULL;					\
+	void_ptr = (void *)sqlite3_column_blob(stmt, index);	\
+	len = sqlite3_column_bytes(stmt, index);		\
+								\
+	if (!void_ptr || len == 0) {				\
+		dbout(L_FULLDEBUG)<<"Null value for blob index("  \
+			 <<index<<") in stmt("<<stmt<<") \n";   \
+	}							\
+}while(0);
+
+#define SQL_DECODE_BLOB_PARAM(stmt, index, param, sdb)		\
+do {								\
+	bufferlist b;						\
+	void *blob;						\
+	int blob_len = 0;					\
+								\
+        SQL_READ_BLOB(stmt, index, blob, blob_len);		\
+								\
+	b.append(reinterpret_cast<char *>(blob), blob_len);	\
+								\
+	decode(param, b);					\
+}while(0);
+								
 #define SQL_EXECUTE(params, stmt, cbk, args...) \
 do{						\
 	if (!stmt) {				\
@@ -88,23 +119,23 @@ do{						\
 	}					\
 						\
 	if (!stmt) {				\
-		dbout(L_ERR)<<"No prepared statement \n";	\
+		cout<<"No prepared statement \n";	\
 		goto out;			\
 	}					\
 						\
 	ret = Bind(params);			\
 	if (ret) {				\
-		dbout(L_ERR)<<"Bind parameters failed for stmt("	\
+		cout<<"Bind parameters failed for stmt("	\
 			   <<stmt<<") \n";		\
 		goto out;			\
 	}					\
 						\
-	ret = Step(stmt, cbk);			\
+	ret = Step(params->op, stmt, cbk);		\
 						\
 	Reset(stmt);				\
 						\
 	if (ret) {				\
-		dbout(L_ERR)<<"Execution failed for stmt("	\
+		cout<<"Execution failed for stmt("	\
 			   <<stmt<<")\n";		\
 		goto out;			\
 	}					\
@@ -120,17 +151,60 @@ static int list_callback(void *None, int argc, char **argv, char **aname)
         return 0;
 }
 
-
-static int list_user(sqlite3_stmt *stmt) {
+static int list_user(DBOpInfo &op, sqlite3_stmt *stmt) {
 	if (!stmt)
 		return -1;
 
 	cout<<sqlite3_column_text(stmt, 0)<<"\n";
+/* Ensure the column names match with the user table defined in dbstore.h                     
+                        UserName TEXT PRIMARY KEY NOT NULL UNIQUE , - 0
+                        Tenant TEXT ,            - 1
+                        ID TEXT ,                - 2
+                        NS TEXT ,                - 3
+                        UserEmail TEXT ,         - 4
+                        Suspended INTEGER ,      - 5
+                        MaxBuckets INTEGER ,     - 6
+                        OpMask  INTEGER ,        - 7
+                        Admin   INTEGER ,        - 8
+                        System INTEGER ,         - 9
+                        BucketQuotaID INTEGER ,  - 10
+                        UserQuotaID INTEGER ,    - 11
+                        TYPE INTEGER ,           - 12
+                        MfaIDs INTEGER ,         - 13
+                        AssumedRoleARN TEXT \n)  - 14
+*/
+
+	op.uinfo.username = (const char*)sqlite3_column_text(stmt, 0); // user_name
+	op.uinfo.tenant = (const char*)sqlite3_column_text(stmt, 1);
+	op.uinfo.id = (const char*)sqlite3_column_text(stmt, 2);
+	op.uinfo.ns = (const char*)sqlite3_column_text(stmt, 3);
+	op.uinfo.user_email = (const char*)sqlite3_column_text(stmt, 4);
+
+	op.uinfo.suspended = sqlite3_column_int(stmt, 5);
+	op.uinfo.max_buckets = sqlite3_column_int(stmt, 6);
+	op.uinfo.op_mask = sqlite3_column_int(stmt, 7);
+
+
+	op.uinfo.admin = sqlite3_column_int(stmt, 8);
+	op.uinfo.system = sqlite3_column_int(stmt, 9);
+
+	op.uinfo.bucket_quota_id = sqlite3_column_int(stmt, 10);
+	op.uinfo.user_quota_id = sqlite3_column_int(stmt, 11);
+	op.uinfo.type = sqlite3_column_int(stmt, 12);
+	op.uinfo.mfaids = sqlite3_column_int(stmt, 13);
+	op.uinfo.assumedrolearn = (const char*)sqlite3_column_text(stmt, 14);
+
+	SQL_DECODE_BLOB_PARAM(stmt, 15, op.uinfo.access_keys, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, 16, op.uinfo.swift_keys, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, 17, op.uinfo.subusers, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, 18, op.uinfo.user_caps, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, 19, op.uinfo.placement_tags, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, 20, op.uinfo.temp_url_keys, sdb);
 
 	return 0;
 }
 
-static int list_bucket(sqlite3_stmt *stmt) {
+static int list_bucket(DBOpInfo &op, sqlite3_stmt *stmt) {
 	if (!stmt)
 		return -1;
 
@@ -140,7 +214,7 @@ static int list_bucket(sqlite3_stmt *stmt) {
 	return 0;
 }
 
-static int list_object(sqlite3_stmt *stmt) {
+static int list_object(DBOpInfo &op, sqlite3_stmt *stmt) {
 	if (!stmt)
 		return -1;
 
@@ -150,7 +224,7 @@ static int list_object(sqlite3_stmt *stmt) {
 	return 0;
 }
 
-static int get_objectdata(sqlite3_stmt *stmt) {
+static int get_objectdata(DBOpInfo &op, sqlite3_stmt *stmt) {
 	if (!stmt)
 		return -1;
 
@@ -193,28 +267,6 @@ int SQLiteDB::FreeDBOps()
         delete dbops.InsertBucket;
         delete dbops.RemoveBucket;
         delete dbops.ListBucket;
-
-	return 0;
-}
-
-int InitPrepareParams(DBOpPrepareParams *params)
-{
-	if (!params) {
-		dbout(L_ERR)<<"PrepareParams passed is NULL\n";
-		return -1;
-	}
-
-	params->user_table = ":user_table";
-	params->object_table = ":object_table";
-	params->objectdata_table = ":objectdata_table";
-	params->user_name = ":user";
-	params->bucket_name = ":bucket";
-	params->object = ":object";
-	params->offset = ":offset";
-	params->data = ":data";
-	params->datalen = ":datalen";
-	params->user_query = ":user_query";
-	params->user_query_val = ":user_query_val";
 
 	return 0;
 }
@@ -272,12 +324,14 @@ int SQLiteDB::Reset(sqlite3_stmt *stmt)
 	return ret;
 }
 
-int SQLiteDB::Step(sqlite3_stmt *stmt, int (*cbk)(sqlite3_stmt *stmt))
+int SQLiteDB::Step(DBOpInfo &op, sqlite3_stmt *stmt,
+	           int (*cbk)(DBOpInfo &op, sqlite3_stmt *stmt))
 {
 	int ret = -1;
 
-	if (!stmt)
+	if (!stmt) {
 		return -1;
+	}
 
 again:
 		ret = sqlite3_step(stmt);
@@ -287,13 +341,15 @@ again:
 				   <<"); Errmsg - "<<sqlite3_errmsg((sqlite3*)db)<<"\n";
 			return -1;
 		} else if (ret == SQLITE_ROW) {
-			if (cbk)
-				(*cbk)(stmt);
+			if (cbk) {
+				(*cbk)(op, stmt);
+			} else {
+			}
 			goto again;
 		}
 
 	dbout(L_FULLDEBUG)<<"sqlite step successfully executed for stmt(" \
-			 <<stmt<<") \n";
+			 <<stmt<<")  ret = " << ret <<"\n";
 
 	return 0;
 }
@@ -588,19 +644,15 @@ int SQLInsertUser::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLInsertUser - no db\n";
 		goto out;
 	}
 
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
-
 	p_params.user_table = params->user_table;
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareInsertUser");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareInsertUser");
 out:
 	return ret;
 }
@@ -611,10 +663,71 @@ int SQLInsertUser::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.user_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.user.username.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.username.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->user_name.c_str(), sdb);
+	cout << "username prepare = " << p_params.user.username.c_str() << "\n";
+	cout << "username = " << params->op.uinfo.username.c_str() << "\n";
 
+	SQL_BIND_INDEX(stmt, index, p_params.user.tenant.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.tenant.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.id.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.id.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.ns.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.ns.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.user_email.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.ns.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.suspended.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.uinfo.suspended, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.max_buckets.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.uinfo.max_buckets, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.op_mask.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.uinfo.op_mask, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.admin.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.uinfo.admin, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.system.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.uinfo.system, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.bucket_quota_id.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.uinfo.bucket_quota_id, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.user_quota_id.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.uinfo.user_quota_id, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.type.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.uinfo.type, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.mfaids.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.uinfo.mfaids, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.assumedrolearn.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.assumedrolearn.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.access_keys.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.uinfo.access_keys, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.swift_keys.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.uinfo.swift_keys, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.subusers.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.uinfo.subusers, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.user_caps.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.uinfo.user_caps, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.placement_tags.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.uinfo.placement_tags, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.user.temp_url_keys.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.uinfo.temp_url_keys, sdb);
 out:
 	return rc;
 }
@@ -632,19 +745,15 @@ int SQLRemoveUser::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLRemoveUser - no db\n";
 		goto out;
 	}
 
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
-
 	p_params.user_table = params->user_table;
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareRemoveUser");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareRemoveUser");
 out:
 	return ret;
 }
@@ -655,9 +764,8 @@ int SQLRemoveUser::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.user_name.c_str(), sdb);
-
-	SQL_BIND_TEXT(stmt, index, params->user_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.user.username.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.username.c_str(), sdb);
 
 out:
 	return rc;
@@ -676,19 +784,15 @@ int SQLGetUser::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLGetUser - no db\n";
 		goto out;
 	}
 
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
-
 	p_params.user_table = params->user_table;
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareGetUser");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetUser");
 out:
 	return ret;
 }
@@ -699,11 +803,9 @@ int SQLGetUser::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.user_query.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->user_query.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.user.username.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.username.c_str(), sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.user_query_val.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->user_query_val.c_str(), sdb);
 out:
 	return rc;
 }
@@ -721,19 +823,15 @@ int SQLInsertBucket::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLInsertBucket - no db\n";
 		goto out;
 	}
 
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
-
 	p_params.bucket_table = params->bucket_table;
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareInsertBucket");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareInsertBucket");
 
 out:
 	return ret;
@@ -745,9 +843,9 @@ int SQLInsertBucket::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.user_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.user.username.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->user_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.username.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.bucket_name.c_str(), sdb);
 
@@ -775,19 +873,15 @@ int SQLRemoveBucket::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLRemoveBucket - no db\n";
 		goto out;
 	}
 
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
-
 	p_params.bucket_table = params->bucket_table;
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareRemoveBucket");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareRemoveBucket");
 
 out:
 	return ret;
@@ -822,19 +916,15 @@ int SQLListBucket::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLListBucket - no db\n";
 		goto out;
 	}
 
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
-
 	p_params.bucket_table = params->bucket_table;
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareListBucket");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareListBucket");
 
 out:
 	return ret;
@@ -867,7 +957,6 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
@@ -875,15 +964,12 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
-
 	p_params.object_table = params->bucket_name + ".object.table";
 	copy.object_table = params->bucket_name + ".object.table";
 
 	(void)createObjectTable(&copy);
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareInsertObject");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareInsertObject");
 
 out:
 	return ret;
@@ -920,7 +1006,6 @@ int SQLRemoveObject::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
@@ -928,15 +1013,12 @@ int SQLRemoveObject::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
-
 	p_params.object_table = params->bucket_name + ".object.table";
 	copy.object_table = params->bucket_name + ".object.table";
 
 	(void)createObjectTable(&copy);
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareRemoveObject");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareRemoveObject");
 
 out:
 	return ret;
@@ -973,7 +1055,6 @@ int SQLListObject::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
@@ -981,16 +1062,13 @@ int SQLListObject::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
-
 	p_params.object_table = params->bucket_name + ".object.table";
 	copy.object_table = params->bucket_name + ".object.table";
 
 	(void)createObjectTable(&copy);
 
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareListObject");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareListObject");
 
 out:
 	return ret;
@@ -1027,16 +1105,12 @@ int SQLPutObjectData::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLPutObjectData - no db\n";
 		goto out;
 	}
-
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
 
 	p_params.object_table = params->bucket_name + ".object.table";
 	p_params.objectdata_table = params->bucket_name + ".objectdata.table";
@@ -1045,7 +1119,7 @@ int SQLPutObjectData::Prepare(struct DBOpParams *params)
 
 	(void)createObjectDataTable(&copy);
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PreparePutObjectData");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PreparePutObjectData");
 
 out:
 	return ret;
@@ -1094,16 +1168,12 @@ int SQLGetObjectData::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLGetObjectData - no db\n";
 		goto out;
 	}
-
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
 
 	p_params.object_table = params->bucket_name + ".object.table";
 	p_params.objectdata_table = params->bucket_name + ".objectdata.table";
@@ -1112,7 +1182,7 @@ int SQLGetObjectData::Prepare(struct DBOpParams *params)
 
 	(void)createObjectDataTable(&copy);
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareGetObjectData");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetObjectData");
 
 out:
 	return ret;
@@ -1148,16 +1218,12 @@ int SQLDeleteObjectData::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
-	struct SchemaParams s_params = {};
 	struct DBOpParams copy = *params;
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLDeleteObjectData - no db\n";
 		goto out;
 	}
-
-	s_params.is_prepare = true;
-	s_params.u.p_params = &p_params;
 
 	p_params.object_table = params->bucket_name + ".object.table";
 	p_params.objectdata_table = params->bucket_name + ".objectdata.table";
@@ -1166,7 +1232,7 @@ int SQLDeleteObjectData::Prepare(struct DBOpParams *params)
 
 	(void)createObjectDataTable(&copy);
 
-	SQL_PREPARE(s_params, sdb, stmt, ret, "PrepareDeleteObjectData");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareDeleteObjectData");
 
 out:
 	return ret;
