@@ -42,12 +42,12 @@ void* process(void *arg)
 
 	db->InitializeParams("InsertUser", &params);
 	
-	params.op.uinfo.username = user1;
-	params.op.uinfo.tenant = "tenant";
-	params.op.uinfo.id = "id";
+	params.op.uinfo.display_name = user1;
+	params.op.uinfo.user_id.tenant = "tenant";
+	params.op.uinfo.user_id.id = "id";
 	params.op.uinfo.suspended = 123;
 	params.op.uinfo.max_buckets = 456;
-	params.op.uinfo.assumedrolearn = "role";
+	params.op.uinfo.assumed_role_arn = "role";
 	params.op.uinfo.placement_tags.push_back("tags1");
 	params.op.uinfo.placement_tags.push_back("tags2");
 
@@ -60,17 +60,17 @@ void* process(void *arg)
 	cout << "InsertUser return value: " <<  ret << "\n";
 
 	struct DBOpParams params2 = {};
-	params.op.uinfo.tenant = "tenant2";
+	params.op.uinfo.user_id.tenant = "tenant2";
 
 	db->InitializeParams("GetUser", &params2);
-	params2.op.uinfo.username = user1;
+	params2.op.uinfo.display_name = user1;
 	ret = db->ProcessOp("GetUser", &params2);
 
 	cout << "GetUser return value: " <<  ret << "\n";
 
-	cout << "tenant: " << params2.op.uinfo.tenant << "\n";
+	cout << "tenant: " << params2.op.uinfo.user_id.tenant << "\n";
 	cout << "suspended: " << params2.op.uinfo.suspended << "\n";
-	cout << "assumedrolearn: " << params2.op.uinfo.assumedrolearn << "\n";
+	cout << "assumed_role_arn: " << params2.op.uinfo.assumed_role_arn << "\n";
 
 	list<string>::iterator it = params2.op.uinfo.placement_tags.begin();
 
@@ -121,7 +121,7 @@ void* process(void *arg)
 
 	db->ProcessOp("GetObjectData", &params);
 
-	params.op.uinfo.username = user2;
+	params.op.uinfo.display_name = user2;
 	db->ProcessOp("InsertUser", &params);
 
 	params.bucket_name = bucketc;
@@ -147,7 +147,7 @@ void* process(void *arg)
 	params.bucket_name = bucketb;
 	db->ProcessOp("RemoveBucket", &params);
 
-	params.op.uinfo.username = user2;
+	params.op.uinfo.display_name = user2;
 	db->ProcessOp("RemoveUser", &params);
 
 	db->ListAllUsers(&params);

@@ -290,11 +290,11 @@ int DBstore::get_user(const std::string& query_str, const std::string& query_str
 
         InitializeParams("GetUser", &params);
 
-	params.op.uinfo.query_str = query_str;
+	params.op.get_query_str = query_str;
 
 	// validate query_str with UserTable entries names
 	if (query_str == "username") {
-		params.op.uinfo.username = query_str_val;
+		params.op.uinfo.display_name = query_str_val;
 	} else if (query_str == "email") {
 		params.op.uinfo.user_email = query_str_val;
 	} else {
@@ -308,7 +308,7 @@ int DBstore::get_user(const std::string& query_str, const std::string& query_str
 		goto out;
 
 	/* Create RGWUser from params.uinfo */
-//	u = new RGWDBstoreUser(this, params.uinfo);
+//	u = new RGWDBUser(this, params.uinfo);
 
 	user->reset(u);
 

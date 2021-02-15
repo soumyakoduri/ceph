@@ -64,7 +64,7 @@ namespace {
 			db = gtest::env->db;
 			ASSERT_TRUE(db != nullptr);
 
-			GlobalParams.op.uinfo.username = user1;
+			GlobalParams.op.uinfo.display_name = user1;
 			GlobalParams.bucket_name = bucket1;
 			GlobalParams.object = object1;
 			GlobalParams.offset = 0;
@@ -88,12 +88,12 @@ TEST_F(DBstoreBaseTest, InsertUser) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
-	params.op.uinfo.tenant = "tenant";
+	params.op.uinfo.user_id.tenant = "tenant";
 	params.op.uinfo.user_email = "user1@dbstore.com";
-	params.op.uinfo.id = "id";
+	params.op.uinfo.user_id.id = "id";
 	params.op.uinfo.suspended = 123;
 	params.op.uinfo.max_buckets = 456;
-	params.op.uinfo.assumedrolearn = "role";
+	params.op.uinfo.assumed_role_arn = "role";
 	params.op.uinfo.placement_tags.push_back("tags");
 	RGWAccessKey k1("id1", "key1");
 	RGWAccessKey k2("id2", "key2");
@@ -110,12 +110,12 @@ TEST_F(DBstoreBaseTest, GetUser) {
 
 	ret = db->ProcessOp("GetUser", &params);
 	ASSERT_EQ(ret, 0);
-	ASSERT_EQ(params.op.uinfo.tenant, "tenant");
+	ASSERT_EQ(params.op.uinfo.user_id.tenant, "tenant");
 	ASSERT_EQ(params.op.uinfo.user_email, "user1@dbstore.com");
-	ASSERT_EQ(params.op.uinfo.id, "id");
+	ASSERT_EQ(params.op.uinfo.user_id.id, "id");
 	ASSERT_EQ(params.op.uinfo.suspended, 123);
 	ASSERT_EQ(params.op.uinfo.max_buckets, 456);
-	ASSERT_EQ(params.op.uinfo.assumedrolearn, "role");
+	ASSERT_EQ(params.op.uinfo.assumed_role_arn, "role");
 	ASSERT_EQ(params.op.uinfo.placement_tags.back(), "tags");
 	RGWAccessKey k;
 	map<string, RGWAccessKey>::iterator it2 = params.op.uinfo.access_keys.begin();
@@ -133,17 +133,17 @@ TEST_F(DBstoreBaseTest, GetUserQuery) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
-	params.op.uinfo.query_str = "email";
+	params.op.get_query_str = "email";
 	params.op.uinfo.user_email = "user1@dbstore.com";
 
 	ret = db->ProcessOp("GetUser", &params);
 	ASSERT_EQ(ret, 0);
-	ASSERT_EQ(params.op.uinfo.tenant, "tenant");
+	ASSERT_EQ(params.op.uinfo.user_id.tenant, "tenant");
 	ASSERT_EQ(params.op.uinfo.user_email, "user1@dbstore.com");
-	ASSERT_EQ(params.op.uinfo.id, "id");
+	ASSERT_EQ(params.op.uinfo.user_id.id, "id");
 	ASSERT_EQ(params.op.uinfo.suspended, 123);
 	ASSERT_EQ(params.op.uinfo.max_buckets, 456);
-	ASSERT_EQ(params.op.uinfo.assumedrolearn, "role");
+	ASSERT_EQ(params.op.uinfo.assumed_role_arn, "role");
 	ASSERT_EQ(params.op.uinfo.placement_tags.back(), "tags");
 	RGWAccessKey k;
 	map<string, RGWAccessKey>::iterator it2 = params.op.uinfo.access_keys.begin();

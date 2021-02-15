@@ -23,35 +23,9 @@
 using namespace std;
 class DBstore;
 
-/* Match with UserTable */
-struct DBUserInfo {
-	string username;
-	string tenant;
-	string id;
-	string ns;
-	string user_email;
-	int suspended;
-	int max_buckets;
-	int op_mask;
-	int admin;
-	int system;
-	int bucket_quota_id;
-	int user_quota_id;
-	int type;
-	int mfaids;
-	string assumedrolearn;
-	map<string, RGWAccessKey> access_keys;
-  	map<string, RGWAccessKey> swift_keys;
-  	map<string, RGWSubUser> subusers;
-	map<string, uint32_t> user_caps;
-	list<string> placement_tags;
-	map<int, string> temp_url_keys;
-
-	string query_str;
-};
-
 struct DBOpInfo {
-	DBUserInfo uinfo; // maybe array in case of multiple entries in GetUser?
+	RGWUserInfo uinfo = {};
+	string get_query_str;
 };
 
 struct DBOpParams {
@@ -81,28 +55,29 @@ struct DBOpParams {
  * to get the right index of each param.
  */
 struct DBUserPrepareParams {
-	string username = ":username";
 	string tenant = ":tenant";
 	string id = ":id";
 	string ns = ":ns";
+	string username = ":username";
 	string user_email = ":user_email";
-	string suspended = ":suspended";
-	string max_buckets = ":max_buckets";
-	string op_mask = ":op_mask";
-	string admin = ":admin";
-	string system = ":system";
-	string bucket_quota_id = ":bucket_quota_id";
-	string user_quota_id = ":user_quota_id";
-	string type = ":type";
-	string mfaids = ":mfaids";
-	string assumedrolearn = ":assumedrolearn";
 	string access_keys = ":access_keys";
 	string swift_keys = ":swift_keys";
 	string subusers = ":subusers";
+	string suspended = ":suspended";
+	string max_buckets = ":max_buckets";
+	string op_mask = ":op_mask";
 	string user_caps = ":user_caps";
+	string admin = ":admin";
+	string system = ":system";
+	string placement_name = ":placement_name";
+	string placement_storage_class = ":placement_storage_class";
 	string placement_tags = ":placement_tags";
+	string bucket_quota = ":bucket_quota";
 	string temp_url_keys = ":temp_url_keys";
-	string query_str = ":query_str";
+	string user_quota = ":user_quota";
+	string type = ":type";
+	string mfa_ids = ":mfa_ids";
+	string assumed_role_arn = ":assumed_role_arn";
 };
 
 struct DBOpPrepareParams {
@@ -112,6 +87,8 @@ struct DBOpPrepareParams {
 	string objectdata_table = ":objectdata_table";
 	string quota_table = ":quota_table";
 	DBUserPrepareParams user;
+
+	string get_query_str = ":get_query_str";
 
 	/* below subject to change */
 	string bucket_name = ":bucket";
@@ -156,22 +133,24 @@ class DBOp {
 			ID TEXT ,		\
 			NS TEXT ,		\
 			UserEmail TEXT ,	\
-			Suspended INTEGER ,	\
-			MaxBuckets INTEGER ,	\
-			OpMask	INTEGER ,	\
-			Admin	INTEGER ,	\
-			System INTEGER , 	\
-			BucketQuotaID INTEGER ,	\
-			UserQuotaID INTEGER ,	\
-			TYPE INTEGER ,		\
-			MfaIDs INTEGER ,	\
-			AssumedRoleARN TEXT ,	\
 			AccessKeys BLOB ,	\
 			SwiftKeys BLOB ,	\
 			SubUsers BLOB ,		\
+			Suspended INTEGER ,	\
+			MaxBuckets INTEGER ,	\
+			OpMask	INTEGER ,	\
 			UserCaps BLOB ,		\
+			Admin	INTEGER ,	\
+			System INTEGER , 	\
+			PlacementName TEXT , 	\
+			PlacementStorageClass TEXT , 	\
 			PlacementTags BLOB ,	\
-		        TempURLKeys BLOB \n);";
+			BucketQuota BLOB ,	\
+		        TempURLKeys BLOB ,	\
+			UserQuota BLOB ,	\
+			TYPE INTEGER ,		\
+			MfaIDs BLOB ,	\
+			AssumedRoleARN TEXT \n);";
 
 	const string CreateBucketTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' ( \
@@ -264,12 +243,12 @@ class InsertUserOp : public DBOp {
 	 * record, will use another query.
 	 */
 	const string Query = "INSERT OR REPLACE INTO '{}'	\
-	       		(UserName, Tenant, ID, NS, UserEmail, Suspended,  \
-			 MaxBuckets, OpMask, Admin, System, BucketQuotaID,\
-		 	 UserQuotaID, Type, MfaIDs, AssumedRoleARN, AccessKeys, \
-			 SwiftKeys, SubUsers, UserCaps, PlacementTags, TempURLKeys )	\
+	       		(UserName, Tenant, ID, NS, UserEmail, AccessKeys, SwiftKeys, \
+			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
+			 System, PlacementName, PlacementStorageClass, PlacementTags, \
+			 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN )\
 		         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
-				 {}, {}, {}, {}, {}, {}, {}, {}, {}, {});";
+				 {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {});";
 
 	public:
 	virtual ~InsertUserOp() {}
@@ -278,15 +257,15 @@ class InsertUserOp : public DBOp {
 		return fmt::format(Query.c_str(), params.user_table.c_str(),
 			       params.user.username.c_str(), params.user.tenant,
 			       params.user.id, params.user.ns, params.user.user_email,
-			       params.user.suspended,
+			       params.user.access_keys, params.user.swift_keys,
+			       params.user.subusers, params.user.suspended,
 			       params.user.max_buckets, params.user.op_mask,
-			       params.user.admin, params.user.system,
-			       params.user.bucket_quota_id,
-			       params.user.user_quota_id, params.user.type, params.user.mfaids,
-			       params.user.assumedrolearn, params.user.access_keys,
-			       params.user.swift_keys, params.user.subusers,
-			       params.user.user_caps, params.user.placement_tags,
-			       params.user.temp_url_keys);
+			       params.user.user_caps, params.user.admin, params.user.system,
+			       params.user.placement_name, params.user.placement_storage_class,
+			       params.user.placement_tags, params.user.bucket_quota,
+			       params.user.temp_url_keys, params.user.user_quota,
+			       params.user.type, params.user.mfa_ids,
+			       params.user.assumed_role_arn);
 	}
 
 };
@@ -310,17 +289,17 @@ class GetUserOp: public DBOp {
 	/* If below query columns are updated, make sure to update the indexes
 	 * in list_user() cbk in sqliteDB.cc */
 	const string Query = "SELECT \
-	       		 UserName, Tenant, ID, NS, UserEmail, Suspended,  \
-			 MaxBuckets, OpMask, Admin, System, BucketQuotaID,\
-		 	 UserQuotaID, Type, MfaIDs, AssumedRoleARN, AccessKeys, \
-			 SwiftKeys, SubUsers, UserCaps, PlacementTags, TempURLKeys \
+	       		 UserName, Tenant, ID, NS, UserEmail, AccessKeys, SwiftKeys, \
+			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
+			 System, PlacementName, PlacementStorageClass, PlacementTags, \
+			 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
 			 from '{}' where UserName = {}";
 
 	const string QueryByEmail = "SELECT \
-	       		 UserName, Tenant, ID, NS, UserEmail, Suspended,  \
-			 MaxBuckets, OpMask, Admin, System, BucketQuotaID,\
-		 	 UserQuotaID, Type, MfaIDs, AssumedRoleARN, AccessKeys, \
-			 SwiftKeys, SubUsers, UserCaps, PlacementTags, TempURLKeys \
+	       		 UserName, Tenant, ID, NS, UserEmail, AccessKeys, SwiftKeys, \
+			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
+			 System, PlacementName, PlacementStorageClass, PlacementTags, \
+			 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
 			 from '{}' where UserEmail = {}";
 
 	public:
@@ -329,7 +308,7 @@ class GetUserOp: public DBOp {
 	virtual ~GetUserOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
-		if (params.user.query_str == "email") {
+		if (params.get_query_str == "email") {
 			return fmt::format(QueryByEmail.c_str(), params.user_table.c_str(),
 					   params.user.user_email.c_str());
 		} else {
