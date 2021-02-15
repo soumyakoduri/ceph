@@ -107,6 +107,7 @@ class SQLGetUser : public SQLiteDB, public GetUserOp {
 	private:
 	sqlite3 **sdb = NULL;
 	sqlite3_stmt *stmt = NULL; // Prepared statement
+	sqlite3_stmt *email_stmt = NULL; // Prepared statement to query by useremail
 
 	public:
 	SQLGetUser(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}

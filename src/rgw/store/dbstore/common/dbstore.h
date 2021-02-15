@@ -46,6 +46,8 @@ struct DBUserInfo {
 	map<string, uint32_t> user_caps;
 	list<string> placement_tags;
 	map<int, string> temp_url_keys;
+
+	string query_str;
 };
 
 struct DBOpInfo {
@@ -100,6 +102,7 @@ struct DBUserPrepareParams {
 	string user_caps = ":user_caps";
 	string placement_tags = ":placement_tags";
 	string temp_url_keys = ":temp_url_keys";
+	string query_str = ":query_str";
 };
 
 struct DBOpPrepareParams {
@@ -313,14 +316,26 @@ class GetUserOp: public DBOp {
 			 SwiftKeys, SubUsers, UserCaps, PlacementTags, TempURLKeys \
 			 from '{}' where UserName = {}";
 
+	const string QueryByEmail = "SELECT \
+	       		 UserName, Tenant, ID, NS, UserEmail, Suspended,  \
+			 MaxBuckets, OpMask, Admin, System, BucketQuotaID,\
+		 	 UserQuotaID, Type, MfaIDs, AssumedRoleARN, AccessKeys, \
+			 SwiftKeys, SubUsers, UserCaps, PlacementTags, TempURLKeys \
+			 from '{}' where UserEmail = {}";
+
 	public:
 
 	public:
 	virtual ~GetUserOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
-		return fmt::format(Query.c_str(), params.user_table.c_str(),
-				   params.user.username.c_str());
+		if (params.user.query_str == "email") {
+			return fmt::format(QueryByEmail.c_str(), params.user_table.c_str(),
+					   params.user.user_email.c_str());
+		} else {
+			return fmt::format(Query.c_str(), params.user_table.c_str(),
+					   params.user.username.c_str());
+		}
 	}
 };
 

@@ -89,6 +89,7 @@ TEST_F(DBstoreBaseTest, InsertUser) {
 	int ret = -1;
 
 	params.op.uinfo.tenant = "tenant";
+	params.op.uinfo.user_email = "user1@dbstore.com";
 	params.op.uinfo.id = "id";
 	params.op.uinfo.suspended = 123;
 	params.op.uinfo.max_buckets = 456;
@@ -110,6 +111,35 @@ TEST_F(DBstoreBaseTest, GetUser) {
 	ret = db->ProcessOp("GetUser", &params);
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(params.op.uinfo.tenant, "tenant");
+	ASSERT_EQ(params.op.uinfo.user_email, "user1@dbstore.com");
+	ASSERT_EQ(params.op.uinfo.id, "id");
+	ASSERT_EQ(params.op.uinfo.suspended, 123);
+	ASSERT_EQ(params.op.uinfo.max_buckets, 456);
+	ASSERT_EQ(params.op.uinfo.assumedrolearn, "role");
+	ASSERT_EQ(params.op.uinfo.placement_tags.back(), "tags");
+	RGWAccessKey k;
+	map<string, RGWAccessKey>::iterator it2 = params.op.uinfo.access_keys.begin();
+	k = it2->second;
+	ASSERT_EQ(k.id, "id1");
+	ASSERT_EQ(k.key, "key1");
+	it2++;
+	k = it2->second;
+	ASSERT_EQ(k.id, "id2");
+	ASSERT_EQ(k.key, "key2");
+
+}
+
+TEST_F(DBstoreBaseTest, GetUserQuery) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+
+	params.op.uinfo.query_str = "email";
+	params.op.uinfo.user_email = "user1@dbstore.com";
+
+	ret = db->ProcessOp("GetUser", &params);
+	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(params.op.uinfo.tenant, "tenant");
+	ASSERT_EQ(params.op.uinfo.user_email, "user1@dbstore.com");
 	ASSERT_EQ(params.op.uinfo.id, "id");
 	ASSERT_EQ(params.op.uinfo.suspended, 123);
 	ASSERT_EQ(params.op.uinfo.max_buckets, 456);

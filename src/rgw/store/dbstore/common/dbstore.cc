@@ -286,10 +286,22 @@ int DBstore::get_user(const std::string& query_str, const std::string& query_str
 		return -1;
 	}
 
-	// XXX: validate query_str with UserTable entries names
         DBOpParams params = {};
 
         InitializeParams("GetUser", &params);
+
+	params.op.uinfo.query_str = query_str;
+
+	// validate query_str with UserTable entries names
+	if (query_str == "username") {
+		params.op.uinfo.username = query_str_val;
+	} else if (query_str == "email") {
+		params.op.uinfo.user_email = query_str_val;
+	} else {
+		dbout(L_ERR)<<"In GetUser Invalid query string :" <<query_str.c_str()<<") \n";
+		return -1;
+	}
+
         ret = ProcessOp("GetUser", &params);
 
 	if (ret)

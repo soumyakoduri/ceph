@@ -679,7 +679,7 @@ int SQLInsertUser::Bind(struct DBOpParams *params)
 	SQL_BIND_TEXT(stmt, index, params->op.uinfo.ns.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.user.user_email.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.uinfo.ns.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.uinfo.user_email.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.user.suspended.c_str(), sdb);
 	SQL_BIND_INT(stmt, index, params->op.uinfo.suspended, sdb);
@@ -791,8 +791,13 @@ int SQLGetUser::Prepare(struct DBOpParams *params)
 	}
 
 	p_params.user_table = params->user_table;
+	p_params.user.query_str = params->op.uinfo.query_str;
 
-	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetUser");
+	if (params->op.uinfo.query_str == "email") { 
+		SQL_PREPARE(p_params, sdb, email_stmt, ret, "PrepareGetUser");
+	} else { // by default by username
+		SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetUser");
+	}
 out:
 	return ret;
 }
@@ -803,8 +808,13 @@ int SQLGetUser::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.user.username.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.uinfo.username.c_str(), sdb);
+	if (params->op.uinfo.query_str == "email") { 
+		SQL_BIND_INDEX(email_stmt, index, p_params.user.user_email.c_str(), sdb);
+		SQL_BIND_TEXT(email_stmt, index, params->op.uinfo.user_email.c_str(), sdb);
+	} else { // by default by username
+		SQL_BIND_INDEX(stmt, index, p_params.user.username.c_str(), sdb);
+		SQL_BIND_TEXT(stmt, index, params->op.uinfo.username.c_str(), sdb);
+	}
 
 out:
 	return rc;
@@ -814,7 +824,12 @@ int SQLGetUser::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
-	SQL_EXECUTE(params, stmt, list_user);
+	if (params->op.uinfo.query_str == "email") { 
+		SQL_EXECUTE(params, email_stmt, list_user);
+	} else { // by default by username
+		SQL_EXECUTE(params, stmt, list_user);
+	}
+	
 out:
 	return ret;
 }
