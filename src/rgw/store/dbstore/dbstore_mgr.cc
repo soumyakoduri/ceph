@@ -6,49 +6,49 @@
 #include "sqlite/sqliteDB.h"
 
 
-/* Given a tenant, find and return the DBstore handle.
+/* Given a tenant, find and return the DBStore handle.
  * If not found and 'create' set to true, create one
  * and return
  */
-DBstore* DBstoreManager::getDBstore (string tenant, bool create)
+DBStore* DBStoreManager::getDBStore (string tenant, bool create)
 {
-    map<string, DBstore*>::iterator iter;
-    DBstore *dbs = nullptr;
-    pair<map<string, DBstore*>::iterator,bool> ret;
+    map<string, DBStore*>::iterator iter;
+    DBStore *dbs = nullptr;
+    pair<map<string, DBStore*>::iterator,bool> ret;
 
     if (tenant.empty())
         return default_dbstore;
 
-    if (DBstoreHandles.empty())
+    if (DBStoreHandles.empty())
         goto not_found;
 
-    iter = DBstoreHandles.find(tenant);
+    iter = DBStoreHandles.find(tenant);
 
-    if (iter != DBstoreHandles.end())
+    if (iter != DBStoreHandles.end())
         return iter->second;
 
 not_found:
     if (!create)
         return NULL;
 
-    dbs = createDBstore(tenant);
+    dbs = createDBStore(tenant);
 
     return dbs;
 }
 
-/* Create DBstore instance */
-DBstore* DBstoreManager::createDBstore(string tenant) {
-    DBstore *dbs = nullptr;
-    pair<map<string, DBstore*>::iterator,bool> ret;
+/* Create DBStore instance */
+DBStore* DBStoreManager::createDBStore(string tenant) {
+    DBStore *dbs = nullptr;
+    pair<map<string, DBStore*>::iterator,bool> ret;
 
     /* Create the handle */
 #ifdef SQLITE_ENABLED
     dbs = new SQLiteDB(tenant);
 #else
-    dbs = new DBstore(tenant);
+    dbs = new DBStore(tenant);
 #endif
 
-    /* API is DBstore::Initialize(string logfile, int loglevel);
+    /* API is DBStore::Initialize(string logfile, int loglevel);
      * If none provided, by default write in to dbstore.log file
      * created in current working directory with loglevel L_EVENT.
      * XXX: need to align these logs to ceph location
@@ -62,7 +62,7 @@ DBstore* DBstoreManager::createDBstore(string tenant) {
 
     /* XXX: Do we need lock to protect this map?
      */
-    ret = DBstoreHandles.insert(pair<string, DBstore*>(tenant, dbs));
+    ret = DBStoreHandles.insert(pair<string, DBStore*>(tenant, dbs));
 
     /*
      * Its safe to check for already existing entry (just
@@ -78,51 +78,51 @@ DBstore* DBstoreManager::createDBstore(string tenant) {
     return dbs;
 }
 
-void DBstoreManager::deleteDBstore(string tenant) {
-    map<string, DBstore*>::iterator iter;
-    DBstore *dbs = nullptr;
+void DBStoreManager::deleteDBStore(string tenant) {
+    map<string, DBStore*>::iterator iter;
+    DBStore *dbs = nullptr;
 
-    if (tenant.empty() || DBstoreHandles.empty())
+    if (tenant.empty() || DBStoreHandles.empty())
         return;
 
     /* XXX: Check if we need to perform this operation under a lock */
-    iter = DBstoreHandles.find(tenant);
+    iter = DBStoreHandles.find(tenant);
 
-    if (iter == DBstoreHandles.end())
+    if (iter == DBStoreHandles.end())
         return;
 
     dbs = iter->second;
 
-    DBstoreHandles.erase(iter);
+    DBStoreHandles.erase(iter);
     dbs->Destroy();
     delete dbs;
 
     return;
 }
 
-void DBstoreManager::deleteDBstore(DBstore *dbs) {
+void DBStoreManager::deleteDBStore(DBStore *dbs) {
     if (!dbs)
         return;
 
-    (void)deleteDBstore(dbs->getDBname());
+    (void)deleteDBStore(dbs->getDBname());
 }
 
 
-void DBstoreManager::destroyAllHandles(){
-    map<string, DBstore*>::iterator iter;
-    DBstore *dbs = nullptr;
+void DBStoreManager::destroyAllHandles(){
+    map<string, DBStore*>::iterator iter;
+    DBStore *dbs = nullptr;
 
-    if (DBstoreHandles.empty())
+    if (DBStoreHandles.empty())
         return;
 
-    for (iter = DBstoreHandles.begin(); iter != DBstoreHandles.end();
+    for (iter = DBStoreHandles.begin(); iter != DBStoreHandles.end();
             ++iter) {
         dbs = iter->second;
         dbs->Destroy();
         delete dbs;
     }
 
-    DBstoreHandles.clear();
+    DBStoreHandles.clear();
 
     return;
 }

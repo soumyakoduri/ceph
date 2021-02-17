@@ -6,10 +6,10 @@
 
 #include "dbstore_mgr.h"
 #include <dbstore.h>
-#include <dbstore-log.h>
+#include <dbstore_log.h>
 
 struct thr_args {
-	class DBstore *dbs;
+	class DBStore *dbs;
 	int thr_id;
 };
 
@@ -19,7 +19,7 @@ void* process(void *arg)
 {
 	struct thr_args *t_args = (struct thr_args*)arg;
 
-	class DBstore *db = t_args->dbs;
+	class DBStore *db = t_args->dbs;
 	int thr_id = t_args->thr_id;
 	int ret = -1;
 
@@ -164,8 +164,8 @@ int main(int argc, char *argv[])
 	string tenant = "Redhat";
 	string logfile;
 
-	class DBstoreManager dbsm;
-        class DBstore *dbs;
+	class DBStoreManager dbsm;
+        class DBStore *dbs;
 	int rc = 0, tnum = 0;
 	void *res;
 
@@ -182,7 +182,7 @@ int main(int argc, char *argv[])
 		cout << "loglevel set to " << loglevel << "\n";
 	}
 
-        dbs = dbsm.getDBstore(tenant, true);
+        dbs = dbsm.getDBStore(tenant, true);
 
 	dbout(L_EVENT)<<"No. of threads being created = "<<num_thr<<"\n";
 

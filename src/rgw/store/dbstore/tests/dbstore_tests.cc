@@ -41,7 +41,7 @@ namespace gtest {
 		}
 
 		string tenant;
-		class DBstore *db;
+		class DBStore *db;
 		string db_type;
 		int ret;
 	};
@@ -49,17 +49,17 @@ namespace gtest {
 
 namespace {
 
-	class DBstoreBaseTest : public ::testing::Test {
+	class DBStoreBaseTest : public ::testing::Test {
 	protected:
 		int ret;
-		DBstore *db = nullptr;
+		DBStore *db = nullptr;
 		string user1 = "user1";
 		string bucket1 = "bucket1";
 		string object1 = "object1";
 		string data = "Hello World";
 		DBOpParams GlobalParams = {};
 
-		DBstoreBaseTest() {}
+		DBStoreBaseTest() {}
 		void SetUp() {
 			db = gtest::env->db;
 			ASSERT_TRUE(db != nullptr);
@@ -84,7 +84,7 @@ namespace {
 	};
 }
 
-TEST_F(DBstoreBaseTest, InsertUser) {
+TEST_F(DBStoreBaseTest, InsertUser) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -104,7 +104,7 @@ TEST_F(DBstoreBaseTest, InsertUser) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, GetUser) {
+TEST_F(DBStoreBaseTest, GetUser) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -129,7 +129,7 @@ TEST_F(DBstoreBaseTest, GetUser) {
 
 }
 
-TEST_F(DBstoreBaseTest, GetUserQuery) {
+TEST_F(DBStoreBaseTest, GetUserQuery) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -157,7 +157,7 @@ TEST_F(DBstoreBaseTest, GetUserQuery) {
 
 }
 
-TEST_F(DBstoreBaseTest, ListAllUsers) {
+TEST_F(DBStoreBaseTest, ListAllUsers) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -165,7 +165,7 @@ TEST_F(DBstoreBaseTest, ListAllUsers) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, InsertBucket) {
+TEST_F(DBStoreBaseTest, InsertBucket) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -173,7 +173,7 @@ TEST_F(DBstoreBaseTest, InsertBucket) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, ListBucket) {
+TEST_F(DBStoreBaseTest, ListBucket) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -181,7 +181,7 @@ TEST_F(DBstoreBaseTest, ListBucket) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, ListAllBuckets) {
+TEST_F(DBStoreBaseTest, ListAllBuckets) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -189,7 +189,7 @@ TEST_F(DBstoreBaseTest, ListAllBuckets) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, InsertObject) {
+TEST_F(DBStoreBaseTest, InsertObject) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -197,7 +197,7 @@ TEST_F(DBstoreBaseTest, InsertObject) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, ListObject) {
+TEST_F(DBStoreBaseTest, ListObject) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -205,7 +205,7 @@ TEST_F(DBstoreBaseTest, ListObject) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, ListAllObjects) {
+TEST_F(DBStoreBaseTest, ListAllObjects) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -213,7 +213,7 @@ TEST_F(DBstoreBaseTest, ListAllObjects) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, PutObjectData) {
+TEST_F(DBStoreBaseTest, PutObjectData) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -221,7 +221,7 @@ TEST_F(DBstoreBaseTest, PutObjectData) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, GetObjectData) {
+TEST_F(DBStoreBaseTest, GetObjectData) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -229,7 +229,7 @@ TEST_F(DBstoreBaseTest, GetObjectData) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, DeleteObjectData) {
+TEST_F(DBStoreBaseTest, DeleteObjectData) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -237,7 +237,7 @@ TEST_F(DBstoreBaseTest, DeleteObjectData) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, RemoveObject) {
+TEST_F(DBStoreBaseTest, RemoveObject) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -245,7 +245,7 @@ TEST_F(DBstoreBaseTest, RemoveObject) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, RemoveBucket) {
+TEST_F(DBStoreBaseTest, RemoveBucket) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
@@ -253,7 +253,7 @@ TEST_F(DBstoreBaseTest, RemoveBucket) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBstoreBaseTest, RemoveUser) {
+TEST_F(DBStoreBaseTest, RemoveUser) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 

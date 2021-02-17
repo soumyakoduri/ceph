@@ -15,13 +15,13 @@
 #define FMT_HEADER_ONLY 1
 #include "fmt/format.h"
 #include <map>
-#include "dbstore-log.h"
+#include "dbstore_log.h"
 #include "rgw/rgw_sal.h"
 #include "rgw/rgw_sal_dbstore.h"
 #include "rgw/rgw_common.h"
 
 using namespace std;
-class DBstore;
+class DBStore;
 
 struct DBOpInfo {
 	RGWUserInfo uinfo = {};
@@ -452,7 +452,7 @@ class DeleteObjectDataOp: public DBOp {
 	}
 };
 
-class DBstore {
+class DBStore {
 	private:
 	const string db_name;
 	const string user_table;
@@ -470,19 +470,19 @@ class DBstore {
 	void *db;
 
 	public:	
-	DBstore(string db_name) : db_name(db_name),
+	DBStore(string db_name) : db_name(db_name),
        				user_table(db_name+".user.table"),
 			        bucket_table(db_name+".bucket.table"),
 			        quota_table(db_name+".quota.table")
        			        {}
-/*	DBstore() {}*/
+/*	DBStore() {}*/
 
-	DBstore() : db_name("default_db"),
+	DBStore() : db_name("default_db"),
        		    user_table("user.table"),
 		    bucket_table("bucket.table"),
 		    quota_table("quota.table")
        		    {}
-	virtual	~DBstore() {}
+	virtual	~DBStore() {}
 
 	const string getDBname() { return db_name + ".db"; }
 	const string getUserTable() { return user_table; }

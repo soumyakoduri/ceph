@@ -16,27 +16,27 @@ using namespace std;
 const static string default_tenant = "default_ns";
 
 using namespace std;
-class DBstore;
+class DBStore;
 
-class DBstoreManager {
+class DBStoreManager {
 private:
-  map<string, DBstore*> DBstoreHandles;
-  DBstore *default_dbstore = NULL;
+  map<string, DBStore*> DBStoreHandles;
+  DBStore *default_dbstore = NULL;
 
 public:
-  DBstoreManager(): DBstoreHandles() {
-	default_dbstore = createDBstore(default_tenant);
+  DBStoreManager(): DBStoreHandles() {
+	default_dbstore = createDBStore(default_tenant);
   };
-  ~DBstoreManager() { destroyAllHandles(); };
+  ~DBStoreManager() { destroyAllHandles(); };
 
   /* XXX: TBD based on testing
-   * 1)  Lock to protect DBstoreHandles map.
-   * 2) Refcount of each DBstore to protect from
+   * 1)  Lock to protect DBStoreHandles map.
+   * 2) Refcount of each DBStore to protect from
    * being deleted while using it.
    */
-  DBstore* getDBstore (string tenant, bool create);
-  DBstore* createDBstore (string tenant);
-  void deleteDBstore (string tenant);
-  void deleteDBstore (DBstore* db);
+  DBStore* getDBStore (string tenant, bool create);
+  DBStore* createDBStore (string tenant);
+  void deleteDBStore (string tenant);
+  void deleteDBStore (DBStore* db);
   void destroyAllHandles();
 };

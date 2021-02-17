@@ -23,7 +23,7 @@ namespace rgw { namespace sal {
 
 class RGWDBStoreManager : public RGWStore {
 private:
-    class DBstoreManager *dbsm;
+    class DBStoreManager *dbsm;
 public:
     RGWDBStoreManager(): dbsm(nullptr) {}
     ~RGWDBStoreManager() { delete dbsm; }

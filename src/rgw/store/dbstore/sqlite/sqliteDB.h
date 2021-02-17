@@ -12,7 +12,7 @@
 
 using namespace std;
 
-class SQLiteDB : public DBstore, public DBOp{
+class SQLiteDB : public DBStore, public DBOp{
 	private:
 	sqlite3_mutex *mutex = NULL;
 
@@ -20,10 +20,10 @@ class SQLiteDB : public DBstore, public DBOp{
 	sqlite3_stmt *stmt = NULL;
 	DBOpPrepareParams PrepareParams;
 
-	SQLiteDB(string db_name) : DBstore(db_name) {
+	SQLiteDB(string db_name) : DBStore(db_name) {
 		InitPrepareParams(PrepareParams);
 	}
-	SQLiteDB(sqlite3 *dbi) : DBstore() {
+	SQLiteDB(sqlite3 *dbi) : DBStore() {
                 db = (void*)dbi;
 		InitPrepareParams(PrepareParams);
 	}

@@ -1,5 +1,5 @@
 # dbstore
-DBstore for Rados Gateway (RGW)
+DBStore for Rados Gateway (RGW)
 
 ## Pre-install
 fmt(-devel) and gtest(-devel) packages need to be installed

@@ -14,7 +14,7 @@ ENDIF(DEBUG_SYMS)
 set (CMAKE_INCLUDE_DIR ${CMAKE_INCLUDE_DIR} "${CMAKE_CURRENT_SOURCE_DIR}/common")
 
 set(dbstore_srcs
-    common/dbstore-log.h
+    common/dbstore_log.h
     common/dbstore.h
     common/dbstore.cc)
 
@@ -51,10 +51,10 @@ add_library(dbstore ${dbstore_mgr_srcs})
 target_link_libraries(dbstore ${CMAKE_LINK_LIBRARIES})
 
 # testing purposes
-set(main_srcs
-    main.cc)
+set(dbstore_main_srcs
+    dbstore_main.cc)
 
 set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} dbstore)
-add_executable(dbstore-bin ${main_srcs})
+add_executable(dbstore-bin ${dbstore_main_srcs})
 add_dependencies(dbstore-bin dbstore)
 target_link_libraries(dbstore-bin ${CMAKE_LINK_LIBRARIES})

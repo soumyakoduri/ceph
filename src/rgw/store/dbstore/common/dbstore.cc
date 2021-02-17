@@ -5,10 +5,10 @@
 
 using namespace std;
 
-map<string, class ObjectOp*> DBstore::objectmap = {};
+map<string, class ObjectOp*> DBStore::objectmap = {};
 
-map<string, class ObjectOp*> DBstore::getObjectMap() {
-	return DBstore::objectmap;
+map<string, class ObjectOp*> DBStore::getObjectMap() {
+	return DBStore::objectmap;
 }
 
 /* Custom Logging initialization */
@@ -37,7 +37,7 @@ static void LogDestroy() {
         return;
 }
 
-int DBstore::Initialize(string logfile, int loglevel)
+int DBStore::Initialize(string logfile, int loglevel)
 {
 	int ret = -1;
 
@@ -69,13 +69,13 @@ int DBstore::Initialize(string logfile, int loglevel)
                 return ret;
         }
 
-	dbout(L_FULLDEBUG)<< "DBstore successfully initialized - name:" \
+	dbout(L_FULLDEBUG)<< "DBStore successfully initialized - name:" \
 			<< db_name << "\n";
 
 	return ret;
 }
 
-int DBstore::Destroy()
+int DBStore::Destroy()
 {
 	if (!db)
 		return 0;
@@ -86,7 +86,7 @@ int DBstore::Destroy()
 
 	FreeDBOps();
 
-	dbout(L_FULLDEBUG)<<"DBstore successfully destroyed - name:" \
+	dbout(L_FULLDEBUG)<<"DBStore successfully destroyed - name:" \
 			<<db_name<<"\n";
 
 	LogDestroy();
@@ -94,7 +94,7 @@ int DBstore::Destroy()
 	return 0;
 }
 
-int DBstore::LockInit() {
+int DBStore::LockInit() {
 	int ret;
 	
 	ret = pthread_mutex_init(&mutex, NULL);
@@ -105,7 +105,7 @@ int DBstore::LockInit() {
 	return ret;
 }
 
-int DBstore::LockDestroy() {
+int DBStore::LockDestroy() {
 	int ret;
 	
 	ret = pthread_mutex_destroy(&mutex);
@@ -116,7 +116,7 @@ int DBstore::LockDestroy() {
 	return ret;
 }
 
-int DBstore::Lock() {
+int DBStore::Lock() {
 	int ret;
 
 	ret = pthread_mutex_lock(&mutex);
@@ -127,7 +127,7 @@ int DBstore::Lock() {
 	return ret;
 }
 
-int DBstore::Unlock() {
+int DBStore::Unlock() {
 	int ret;
 
 	ret = pthread_mutex_unlock(&mutex);
@@ -138,7 +138,7 @@ int DBstore::Unlock() {
 	return ret;
 }
 
-DBOp * DBstore::getDBOp(string Op, struct DBOpParams *params)
+DBOp * DBStore::getDBOp(string Op, struct DBOpParams *params)
 {
 	if (!Op.compare("InsertUser"))
 		return dbops.InsertUser;
@@ -157,9 +157,9 @@ DBOp * DBstore::getDBOp(string Op, struct DBOpParams *params)
 	map<string, class ObjectOp*>::iterator iter;
 	class ObjectOp* Ob;
 
-	iter = DBstore::objectmap.find(params->bucket_name);
+	iter = DBStore::objectmap.find(params->bucket_name);
 
-	if (iter == DBstore::objectmap.end()) {
+	if (iter == DBStore::objectmap.end()) {
 		dbout(L_EVENT)<<"No objectmap found for bucket: " \
 			     <<params->bucket_name<<"\n";
 		/* not found */
@@ -184,14 +184,14 @@ DBOp * DBstore::getDBOp(string Op, struct DBOpParams *params)
 	return NULL;
 }
 
-int DBstore::objectmapInsert(string bucket, void *ptr)
+int DBStore::objectmapInsert(string bucket, void *ptr)
 {
 	map<string, class ObjectOp*>::iterator iter;
 	class ObjectOp *Ob;
 
-	iter = DBstore::objectmap.find(bucket);
+	iter = DBStore::objectmap.find(bucket);
 
-	if (iter != DBstore::objectmap.end()) {
+	if (iter != DBStore::objectmap.end()) {
 		// entry already exists
 		// return success or replace it or
 		// return error ?
@@ -204,19 +204,19 @@ int DBstore::objectmapInsert(string bucket, void *ptr)
 	Ob = (class ObjectOp*) ptr;
 	Ob->InitializeObjectOps();
 
-	DBstore::objectmap.insert(pair<string, class ObjectOp*>(bucket, Ob));
+	DBStore::objectmap.insert(pair<string, class ObjectOp*>(bucket, Ob));
 
 	return 0;
 }
 
-int DBstore::objectmapDelete(string bucket)
+int DBStore::objectmapDelete(string bucket)
 {
 	map<string, class ObjectOp*>::iterator iter;
 	class ObjectOp *Ob;
 
-	iter = DBstore::objectmap.find(bucket);
+	iter = DBStore::objectmap.find(bucket);
 
-	if (iter == DBstore::objectmap.end()) {
+	if (iter == DBStore::objectmap.end()) {
 		// entry doesn't exist
 		// return success or return error ?
 		// return success for now
@@ -228,12 +228,12 @@ int DBstore::objectmapDelete(string bucket)
 	Ob = (class ObjectOp*) (iter->second);
 	Ob->FreeObjectOps();
 
-	DBstore::objectmap.erase(iter);
+	DBStore::objectmap.erase(iter);
 
 	return 0;
 }
 
-int DBstore::InitializeParams(string Op, DBOpParams *params)
+int DBStore::InitializeParams(string Op, DBOpParams *params)
 {
 	int ret = -1;
 
@@ -249,7 +249,7 @@ out:
 	return ret;
 }
 
-int DBstore::ProcessOp(string Op, struct DBOpParams *params) {
+int DBStore::ProcessOp(string Op, struct DBOpParams *params) {
 	int ret = -1;
 	class DBOp *db_op;
 
@@ -275,7 +275,7 @@ int DBstore::ProcessOp(string Op, struct DBOpParams *params) {
 	return ret;
 }
 
-int DBstore::get_user(const std::string& query_str, const std::string& query_str_val,
+int DBStore::get_user(const std::string& query_str, const std::string& query_str_val,
                       std::unique_ptr<RGWUser>* user) {
 	int ret = 0;
 	RGWUser *u;

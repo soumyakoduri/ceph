@@ -5,7 +5,7 @@ project(dbstore_tests)
 set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} gtest)
 
 set(dbstore_tests_srcs
-    dbstore-tests.cc)
+    dbstore_tests.cc)
 
 include_directories(${CMAKE_INCLUDE_DIR})
 
