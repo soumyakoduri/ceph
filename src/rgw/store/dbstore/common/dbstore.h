@@ -466,8 +466,9 @@ class DBStore {
 			       // made further granular by taking separate
 			       // locks for objectmap and db operations etc.
 
-        protected:
+    protected:
 	void *db;
+    CephContext *cct;
 
 	public:	
 	DBStore(string db_name) : db_name(db_name),
@@ -493,6 +494,11 @@ class DBStore {
 
 	struct DBOps dbops; // DB operations, make it private?
 
+    void set_context(CephContext *_cct) {
+      cct = _cct;
+    }
+
+    CephContext *ctx() { return cct; }
 	int Initialize(string logfile, int loglevel);
 	int Destroy();
 	int LockInit();
