@@ -34,6 +34,7 @@ public:
    * 2) Refcount of each DBStore to protect from
    * being deleted while using it.
    */
+  DBStore* getDBStore () { return default_dbstore; };
   DBStore* getDBStore (string tenant, bool create);
   DBStore* createDBStore (string tenant);
   void deleteDBStore (string tenant);
