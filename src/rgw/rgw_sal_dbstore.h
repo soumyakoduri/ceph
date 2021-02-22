@@ -17,6 +17,7 @@
 
 #include "rgw_sal.h"
 
+#include "store/dbstore/common/dbstore.h"
 #include "store/dbstore/dbstore_mgr.h"
 
 namespace rgw { namespace sal {
@@ -134,7 +135,7 @@ namespace rgw { namespace sal {
       virtual void finalize(void) override;
 
       virtual CephContext *ctx(void) override {
-        return NULL;  // return dbstore->ctx();
+        return dbstore->ctx();
       }
 
       virtual const std::string& get_luarocks_path() const override {

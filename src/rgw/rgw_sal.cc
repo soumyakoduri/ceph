@@ -55,14 +55,11 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
     store = newRGWDBStore();
 
     /* Initialize the dbstore with cct & dpp */
-    /*
-     * DBStore *db = static_cast<rgw::sal::RGWDBStore *>(store)->getDBStore();
-     *
-     * if (db.initialize(cct, dpp) < 0) {
-     * 	 delete static_cast<rgw::sal::RGWDBStore *>(store)->getDBStoreManager();
-     *   delete store; store = nullptr;
-     * }
-     */
+    DBStore *db = static_cast<rgw::sal::RGWDBStore *>(store)->getDBStore();
+
+    ldout(cct, 0) << "XXXXXXXXXXXXXXXX before set_ctx = " << cct << dendl;
+    db->set_context(cct);
+    ldout(cct, 0) << "XXXXXXXXXXXXXXXX dbstore->ctx() = " << db->ctx() << dendl;
   }
 
   return store;

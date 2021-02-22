@@ -17,7 +17,6 @@
 #include <map>
 #include "dbstore_log.h"
 #include "rgw/rgw_sal.h"
-#include "rgw/rgw_sal_dbstore.h"
 #include "rgw/rgw_common.h"
 
 using namespace std;
