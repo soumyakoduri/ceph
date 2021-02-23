@@ -24,6 +24,43 @@ namespace rgw { namespace sal {
 
   class RGWDBStore;
 
+  class RGWDBUser : public RGWUser {
+    private:
+      RGWDBStore *store;
+
+    public:
+      RGWDBUser(RGWDBStore *_st, const rgw_user& _u) : RGWUser(_u), store(_st) { }
+      RGWDBUser(RGWDBStore *_st, const RGWUserInfo& _i) : RGWUser(_i), store(_st) { }
+      RGWDBUser(RGWDBStore *_st) : store(_st) { }
+      RGWDBUser(RGWDBUser& _o) = default;
+      RGWDBUser() {}
+
+      virtual std::unique_ptr<RGWUser> clone() override {
+        return std::unique_ptr<RGWUser>(new RGWDBUser(*this));
+      }
+      int list_buckets(const DoutPrefixProvider *dpp, const std::string& marker, const std::string& end_marker,
+	  	     uint64_t max, bool need_stats, RGWBucketList& buckets,
+		     optional_yield y) override;
+      virtual RGWBucket* create_bucket(rgw_bucket& bucket, ceph::real_time creation_time) override;
+      virtual int read_attrs(const DoutPrefixProvider *dpp, optional_yield y, RGWAttrs* uattrs, RGWObjVersionTracker* tracker) override;
+      virtual int read_stats(optional_yield y, RGWStorageStats* stats,
+			   ceph::real_time *last_stats_sync = nullptr,
+			   ceph::real_time *last_stats_update = nullptr) override;
+      virtual int read_stats_async(RGWGetUserStats_CB *cb) override;
+      virtual int complete_flush_stats(optional_yield y) override;
+      virtual int read_usage(uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
+               bool *is_truncated, RGWUsageIter& usage_iter,
+               map<rgw_user_bucket, rgw_usage_log_entry>& usage) override;
+      virtual int trim_usage(uint64_t start_epoch, uint64_t end_epoch) override;
+
+      /* Placeholders */
+      virtual int load_by_id(const DoutPrefixProvider *dpp, optional_yield y) override;
+      virtual int store_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::PutParams& params = {}) override;
+      virtual int remove_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::RemoveParams& params = {}) override;
+
+//    friend class RGWDBBucket;
+  };
+
   class RGWDBStore : public RGWStore {
     private:
       /* DBStoreManager is used in case multiple
@@ -82,7 +119,6 @@ namespace rgw { namespace sal {
                                                  RGWObjectCtx& obj_ctx, std::unique_ptr<rgw::sal::RGWObject> _head_obj,
                                                  const DoutPrefixProvider *dpp, optional_yield y) override;
       virtual RGWLC* get_rgwlc(void) override { return NULL; }
-      virtual RGWCtl* get_ctl(void) override { return NULL; }
       virtual RGWCoroutinesManagerRegistry* get_cr_registry() override { return NULL; }
       virtual int delete_raw_obj(const rgw_raw_obj& obj) override;
       virtual int delete_raw_obj_aio(const rgw_raw_obj& obj, Completions* aio) override;
@@ -108,6 +144,11 @@ namespace rgw { namespace sal {
       virtual void wakeup_meta_sync_shards(set<int>& shard_ids) override { return; }
       virtual void wakeup_data_sync_shards(const rgw_zone_id& source_zone, map<int, set<string> >& shard_ids) override { return; }
       virtual int clear_usage() override { return 0; }
+      virtual int read_all_usage(uint64_t start_epoch, uint64_t end_epoch,
+                   uint32_t max_entries, bool *is_truncated,
+                   RGWUsageIter& usage_iter,
+                   map<rgw_user_bucket, rgw_usage_log_entry>& usage) override;
+      virtual int trim_all_usage(uint64_t start_epoch, uint64_t end_epoch) override;
       virtual int get_config_key_val(string name, bufferlist *bl) override;
       virtual int put_system_obj(const rgw_pool& pool, const string& oid,
                                  bufferlist& data, bool exclusive,

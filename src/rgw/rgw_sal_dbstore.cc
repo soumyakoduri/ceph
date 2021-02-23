@@ -29,6 +29,68 @@
 
 namespace rgw::sal {
 
+  int RGWDBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
+			       const string& end_marker, uint64_t max, bool need_stats,
+			       RGWBucketList &buckets, optional_yield y)
+  {
+    return 0;
+  }
+
+  RGWBucket* RGWDBUser::create_bucket(rgw_bucket& bucket,
+        				       ceph::real_time creation_time)
+  {
+    return NULL;
+  }
+
+  int RGWDBUser::read_attrs(const DoutPrefixProvider *dpp, optional_yield y, RGWAttrs* uattrs, RGWObjVersionTracker* tracker)
+  {
+    return 0;
+  }
+
+  int RGWDBUser::read_stats(optional_yield y, RGWStorageStats* stats,
+  			     ceph::real_time *last_stats_sync,
+			     ceph::real_time *last_stats_update)
+  {
+    return 0;
+  }
+
+  int RGWDBUser::read_stats_async(RGWGetUserStats_CB *cb)
+  {
+    return 0;
+  }
+
+  int RGWDBUser::complete_flush_stats(optional_yield y)
+  {
+    return 0;
+  }
+
+  int RGWDBUser::read_usage(uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
+               bool *is_truncated, RGWUsageIter& usage_iter,
+               map<rgw_user_bucket, rgw_usage_log_entry>& usage)
+  {
+    return 0;
+  }
+
+  int RGWDBUser::trim_usage(uint64_t start_epoch, uint64_t end_epoch)
+  {
+    return 0;
+  }
+
+  int RGWDBUser::load_by_id(const DoutPrefixProvider *dpp, optional_yield y)
+  {
+    return 0;
+  }
+
+  int RGWDBUser::store_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::PutParams& params)
+  {
+    return 0;
+  }
+
+  int RGWDBUser::remove_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::RemoveParams& params)
+  {
+    return 0;
+  }
+
   void RGWDBStore::finalize(void)
   {
     if (dbsm)
@@ -246,6 +308,19 @@ namespace rgw::sal {
   RGWDataSyncStatusManager* RGWDBStore::get_data_sync_manager(const rgw_zone_id& source_zone)
   {
     //  return rados->get_data_sync_manager(source_zone);
+    return 0;
+  }
+
+  int RGWDBStore::read_all_usage(uint64_t start_epoch, uint64_t end_epoch, 
+                   uint32_t max_entries, bool *is_truncated,
+                   RGWUsageIter& usage_iter,
+                   map<rgw_user_bucket, rgw_usage_log_entry>& usage)
+  {
+    return 0;
+  }
+
+  int RGWDBStore::trim_all_usage(uint64_t start_epoch, uint64_t end_epoch)
+  {
     return 0;
   }
 
