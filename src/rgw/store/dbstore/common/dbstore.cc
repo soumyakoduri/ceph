@@ -276,9 +276,8 @@ int DBStore::ProcessOp(string Op, struct DBOpParams *params) {
 }
 
 int DBStore::get_user(const std::string& query_str, const std::string& query_str_val,
-                      std::unique_ptr<RGWUser>* user) {
+                      RGWUserInfo& uinfo) {
 	int ret = 0;
-	RGWUser *u;
 
 	if (query_str.empty()) {
 		// not checking for query_str_val as the query can be to fetch
@@ -286,9 +285,8 @@ int DBStore::get_user(const std::string& query_str, const std::string& query_str
 		return -1;
 	}
 
-        DBOpParams params = {};
-
-        InitializeParams("GetUser", &params);
+    DBOpParams params = {};
+    InitializeParams("GetUser", &params);
 
 	params.op.get_query_str = query_str;
 
@@ -302,15 +300,12 @@ int DBStore::get_user(const std::string& query_str, const std::string& query_str
 		return -1;
 	}
 
-        ret = ProcessOp("GetUser", &params);
+    ret = ProcessOp("GetUser", &params);
 
 	if (ret)
 		goto out;
 
-	/* Create RGWUser from params.uinfo */
-//	u = new RGWDBUser(this, params.uinfo);
-
-	user->reset(u);
+    uinfo = params.op.user.uinfo;
 
 out:
 	return ret;

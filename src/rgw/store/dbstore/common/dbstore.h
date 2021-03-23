@@ -20,6 +20,7 @@
 #include "rgw/rgw_common.h"
 
 using namespace std;
+
 class DBStore;
 
 struct DBOpUserInfo {
@@ -537,6 +538,6 @@ class DBStore {
         virtual int ListAllObjects(DBOpParams *params) = 0;
 
 	int get_user(const std::string& query_str, const std::string& query_str_val,
-			std::unique_ptr<RGWUser>* user);
+			RGWUserInfo& user);
 };
 #endif

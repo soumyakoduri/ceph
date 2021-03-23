@@ -99,8 +99,7 @@ namespace rgw::sal {
 
   std::unique_ptr<RGWUser> RGWDBStore::get_user(const rgw_user &u)
   {
-    // return std::unique_ptr<RGWUser>(new RGWDBUser(this, u));
-    return NULL;
+    return std::unique_ptr<RGWUser>(new RGWDBUser(this, u));
   }
 
   int RGWDBStore::get_user_by_access_key(const DoutPrefixProvider *dpp, const std::string& key, optional_yield y, std::unique_ptr<RGWUser>* user)
@@ -110,7 +109,23 @@ namespace rgw::sal {
 
   int RGWDBStore::get_user_by_email(const DoutPrefixProvider *dpp, const std::string& email, optional_yield y, std::unique_ptr<RGWUser>* user)
   {
-    return 0;
+    RGWUserInfo uinfo;
+    RGWUser *u;
+    int ret = 0;
+
+    ret = getDBStore()->get_user(string("email"), email, uinfo);
+
+    if (ret < 0)
+      return ret;
+
+    u = new RGWDBUser(this, uinfo);
+
+    if (!u)
+      return -ENOMEM;
+
+    user->reset(u);
+
+    return ret;
   }
 
   int RGWDBStore::get_user_by_swift(const DoutPrefixProvider *dpp, const std::string& user_str, optional_yield y, std::unique_ptr<RGWUser>* user)

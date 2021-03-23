@@ -50,6 +50,7 @@ void* process(void *arg)
 	params.op.user.uinfo.assumed_role_arn = "role";
 	params.op.user.uinfo.placement_tags.push_back("tags1");
 	params.op.user.uinfo.placement_tags.push_back("tags2");
+    params.op.user.uinfo.email = "tenant@tenant.com";
 
 	RGWAccessKey k1("id1", "key1");
 	RGWAccessKey k2("id2", "key2");
