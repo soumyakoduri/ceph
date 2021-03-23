@@ -22,16 +22,23 @@
 using namespace std;
 class DBStore;
 
-struct DBOpInfo {
+struct DBOpUserInfo {
 	RGWUserInfo uinfo = {};
-	string get_query_str;
+};
+
+struct DBOpInfo {
+  DBOpUserInfo user;
+  string get_query_str;
 };
 
 struct DBOpParams {
-	string user_table;
-	string bucket_table;
-	string object_table;
-	DBOpInfo op;
+  /* Tables */
+  string user_table;
+  string bucket_table;
+  string object_table;
+
+  /* Ops*/
+  DBOpInfo op;
 
 	/* Below are subject to change */
 	string objectdata_table;
@@ -53,7 +60,7 @@ struct DBOpParams {
  * These identifiers are used in prepare and bind statements
  * to get the right index of each param.
  */
-struct DBUserPrepareParams {
+struct DBOpUserPrepareInfo {
 	string tenant = ":tenant";
 	string id = ":id";
 	string ns = ":ns";
@@ -79,17 +86,24 @@ struct DBUserPrepareParams {
 	string assumed_role_arn = ":assumed_role_arn";
 };
 
-struct DBOpPrepareParams {
-	string user_table = ":user_table";
-	string bucket_table = ":bucket_table";
-	string object_table = ":object_table";
-	string objectdata_table = ":objectdata_table";
-	string quota_table = ":quota_table";
-	DBUserPrepareParams user;
-
+struct DBOpPrepareInfo {
+    DBOpUserPrepareInfo user;
 	string get_query_str = ":get_query_str";
+};
+
+struct DBOpPrepareParams {
+  /* Tables */
+  string user_table = ":user_table";
+  string bucket_table = ":bucket_table";
+  string object_table = ":object_table";
+
+  /* Ops */
+  DBOpPrepareInfo op;
+
 
 	/* below subject to change */
+	string objectdata_table = ":objectdata_table";
+	string quota_table = ":quota_table";
 	string bucket_name = ":bucket";
 	string object = ":object";
 	string offset = ":offset";
@@ -254,17 +268,17 @@ class InsertUserOp : public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.user_table.c_str(),
-			       params.user.username.c_str(), params.user.tenant,
-			       params.user.id, params.user.ns, params.user.user_email,
-			       params.user.access_keys, params.user.swift_keys,
-			       params.user.subusers, params.user.suspended,
-			       params.user.max_buckets, params.user.op_mask,
-			       params.user.user_caps, params.user.admin, params.user.system,
-			       params.user.placement_name, params.user.placement_storage_class,
-			       params.user.placement_tags, params.user.bucket_quota,
-			       params.user.temp_url_keys, params.user.user_quota,
-			       params.user.type, params.user.mfa_ids,
-			       params.user.assumed_role_arn);
+			       params.op.user.username.c_str(), params.op.user.tenant,
+			       params.op.user.id, params.op.user.ns, params.op.user.user_email,
+			       params.op.user.access_keys, params.op.user.swift_keys,
+			       params.op.user.subusers, params.op.user.suspended,
+			       params.op.user.max_buckets, params.op.user.op_mask,
+			       params.op.user.user_caps, params.op.user.admin, params.op.user.system,
+			       params.op.user.placement_name, params.op.user.placement_storage_class,
+			       params.op.user.placement_tags, params.op.user.bucket_quota,
+			       params.op.user.temp_url_keys, params.op.user.user_quota,
+			       params.op.user.type, params.op.user.mfa_ids,
+			       params.op.user.assumed_role_arn);
 	}
 
 };
@@ -279,7 +293,7 @@ class RemoveUserOp: public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.user_table.c_str(),
-			       params.user.username.c_str());
+			       params.op.user.username.c_str());
 	}
 };
 
@@ -307,12 +321,12 @@ class GetUserOp: public DBOp {
 	virtual ~GetUserOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
-		if (params.get_query_str == "email") {
+		if (params.op.get_query_str == "email") {
 			return fmt::format(QueryByEmail.c_str(), params.user_table.c_str(),
-					   params.user.user_email.c_str());
+					   params.op.user.user_email.c_str());
 		} else {
 			return fmt::format(Query.c_str(), params.user_table.c_str(),
-					   params.user.username.c_str());
+					   params.op.user.username.c_str());
 		}
 	}
 };
@@ -327,7 +341,7 @@ class InsertBucketOp: public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.bucket_table.c_str(),
-			       	params.bucket_name.c_str(), params.user.username.c_str());
+			       	params.bucket_name.c_str(), params.op.user.username.c_str());
 	}
 };
 

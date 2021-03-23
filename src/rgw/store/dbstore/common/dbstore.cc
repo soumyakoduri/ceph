@@ -294,9 +294,9 @@ int DBStore::get_user(const std::string& query_str, const std::string& query_str
 
 	// validate query_str with UserTable entries names
 	if (query_str == "username") {
-		params.op.uinfo.display_name = query_str_val;
+		params.op.user.uinfo.display_name = query_str_val;
 	} else if (query_str == "email") {
-		params.op.uinfo.user_email = query_str_val;
+		params.op.user.uinfo.user_email = query_str_val;
 	} else {
 		dbout(L_ERR)<<"In GetUser Invalid query string :" <<query_str.c_str()<<") \n";
 		return -1;

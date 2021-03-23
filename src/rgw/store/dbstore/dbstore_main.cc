@@ -42,46 +42,46 @@ void* process(void *arg)
 
 	db->InitializeParams("InsertUser", &params);
 	
-	params.op.uinfo.display_name = user1;
-	params.op.uinfo.user_id.tenant = "tenant";
-	params.op.uinfo.user_id.id = "id";
-	params.op.uinfo.suspended = 123;
-	params.op.uinfo.max_buckets = 456;
-	params.op.uinfo.assumed_role_arn = "role";
-	params.op.uinfo.placement_tags.push_back("tags1");
-	params.op.uinfo.placement_tags.push_back("tags2");
+	params.op.user.uinfo.display_name = user1;
+	params.op.user.uinfo.user_id.tenant = "tenant";
+	params.op.user.uinfo.user_id.id = "id";
+	params.op.user.uinfo.suspended = 123;
+	params.op.user.uinfo.max_buckets = 456;
+	params.op.user.uinfo.assumed_role_arn = "role";
+	params.op.user.uinfo.placement_tags.push_back("tags1");
+	params.op.user.uinfo.placement_tags.push_back("tags2");
 
 	RGWAccessKey k1("id1", "key1");
 	RGWAccessKey k2("id2", "key2");
-	params.op.uinfo.access_keys.insert(make_pair("key1", k1));
-	params.op.uinfo.access_keys.insert(make_pair("key2", k2));
+	params.op.user.uinfo.access_keys.insert(make_pair("key1", k1));
+	params.op.user.uinfo.access_keys.insert(make_pair("key2", k2));
 
 	ret = db->ProcessOp("InsertUser", &params);
 	cout << "InsertUser return value: " <<  ret << "\n";
 
 	struct DBOpParams params2 = {};
-	params.op.uinfo.user_id.tenant = "tenant2";
+	params.op.user.uinfo.user_id.tenant = "tenant2";
 
 	db->InitializeParams("GetUser", &params2);
-	params2.op.uinfo.display_name = user1;
+	params2.op.user.uinfo.display_name = user1;
 	ret = db->ProcessOp("GetUser", &params2);
 
 	cout << "GetUser return value: " <<  ret << "\n";
 
-	cout << "tenant: " << params2.op.uinfo.user_id.tenant << "\n";
-	cout << "suspended: " << params2.op.uinfo.suspended << "\n";
-	cout << "assumed_role_arn: " << params2.op.uinfo.assumed_role_arn << "\n";
+	cout << "tenant: " << params2.op.user.uinfo.user_id.tenant << "\n";
+	cout << "suspended: " << params2.op.user.uinfo.suspended << "\n";
+	cout << "assumed_role_arn: " << params2.op.user.uinfo.assumed_role_arn << "\n";
 
-	list<string>::iterator it = params2.op.uinfo.placement_tags.begin();
+	list<string>::iterator it = params2.op.user.uinfo.placement_tags.begin();
 
-	while (it != params2.op.uinfo.placement_tags.end()) {
+	while (it != params2.op.user.uinfo.placement_tags.end()) {
 		cout << "list = " << *it << "\n";
 		it++;
 	}
 
-	map<string, RGWAccessKey>::iterator it2 = params2.op.uinfo.access_keys.begin();
+	map<string, RGWAccessKey>::iterator it2 = params2.op.user.uinfo.access_keys.begin();
 
-	while (it2 != params2.op.uinfo.access_keys.end()) {
+	while (it2 != params2.op.user.uinfo.access_keys.end()) {
 		cout << "keys = " << it2->first << "\n";
 		RGWAccessKey k = it2->second;
 		cout << "id = " << k.id << ", keys = " << k.key << "\n";
@@ -121,7 +121,7 @@ void* process(void *arg)
 
 	db->ProcessOp("GetObjectData", &params);
 
-	params.op.uinfo.display_name = user2;
+	params.op.user.uinfo.display_name = user2;
 	db->ProcessOp("InsertUser", &params);
 
 	params.bucket_name = bucketc;
@@ -147,7 +147,7 @@ void* process(void *arg)
 	params.bucket_name = bucketb;
 	db->ProcessOp("RemoveBucket", &params);
 
-	params.op.uinfo.display_name = user2;
+	params.op.user.uinfo.display_name = user2;
 	db->ProcessOp("RemoveUser", &params);
 
 	db->ListAllUsers(&params);
