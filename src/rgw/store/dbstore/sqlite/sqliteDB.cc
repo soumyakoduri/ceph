@@ -40,7 +40,7 @@ do {						\
 
 #define SQL_BIND_TEXT(stmt, index, str, sdb)			\
 do {								\
-	rc = sqlite3_bind_text(stmt, index, str, -1, SQLITE_STATIC); 	\
+	rc = sqlite3_bind_text(stmt, index, str, -1, SQLITE_TRANSIENT); 	\
 								\
 	if (rc != SQLITE_OK) {					      	\
 	        dbout(L_ERR)<<"sqlite bind text failed for index("     	\
@@ -151,6 +151,34 @@ static int list_callback(void *None, int argc, char **argv, char **aname)
         return 0;
 }
 
+enum ListUser {
+  UserName = 0,
+  Tenant,
+  ID,
+  NS,
+  UserEmail,
+  AccessKeysID,
+  AccessKeysSecret,
+  AccessKeys,
+  SwiftKeys,
+  SubUsers,
+  Suspended,
+  MaxBuckets,
+  OpMask,
+  UserCaps,
+  Admin,
+  System,
+  PlacementName,
+  PlacementStorageClass,
+  PlacementTags,
+  BucketQuota,
+  TempURLKeys,
+  UserQuota,
+  TYPE,
+  MfaIDs,
+  AssumedRoleARN
+};
+
 static int list_user(DBOpInfo &op, sqlite3_stmt *stmt) {
 	if (!stmt)
 		return -1;
@@ -162,59 +190,62 @@ static int list_user(DBOpInfo &op, sqlite3_stmt *stmt) {
 			ID TEXT ,		\ - 2
 			NS TEXT ,		\ - 3
 			UserEmail TEXT ,	\ - 4
-			AccessKeys BLOB ,	\ - 5
-			SwiftKeys BLOB ,	\ - 6
-			SubUsers BLOB ,		\ - 7
-			Suspended INTEGER ,	\ - 8
-			MaxBuckets INTEGER ,	\ - 9
-			OpMask	INTEGER ,	\ - 10
-			UserCaps BLOB ,		\ - 11
-			Admin	INTEGER ,	\ - 12
-			System INTEGER , 	\ - 13
-			PlacementName TEXT , 	\ - 14
-			PlacementStorageClass TEXT , 	\ - 15
-			PlacementTags BLOB ,	\ - 16
-			BucketQuota BLOB ,	\ - 17
-		        TempURLKeys BLOB ,	\ - 18
-			UserQuota BLOB ,	\ - 19
-			TYPE INTEGER ,		\ - 20
-			MfaIDs INTEGER ,	\ - 21
-			AssumedRoleARN TEXT \n);"; - 22
+			AccessKeysID TEXT ,	\ - 5
+			AccessKeysSecret TEXT ,	\ - 6
+			AccessKeys BLOB ,	\ - 7
+			SwiftKeys BLOB ,	\ - 8
+			SubUsers BLOB ,		\ - 9
+			Suspended INTEGER ,	\ - 10
+			MaxBuckets INTEGER ,	\ - 11
+			OpMask	INTEGER ,	\ - 12
+			UserCaps BLOB ,		\ - 13
+			Admin	INTEGER ,	\ - 14
+			System INTEGER , 	\ - 15
+			PlacementName TEXT , 	\ - 16
+			PlacementStorageClass TEXT , 	\ - 17
+			PlacementTags BLOB ,	\ - 18
+			BucketQuota BLOB ,	\ - 19
+		        TempURLKeys BLOB ,	\ - 20
+			UserQuota BLOB ,	\ - 21
+			TYPE INTEGER ,		\ - 22
+			MfaIDs INTEGER ,	\ - 23
+			AssumedRoleARN TEXT \n);"; - 24
 */
 
-	op.user.uinfo.display_name = (const char*)sqlite3_column_text(stmt, 0); // user_name
-	op.user.uinfo.user_id.tenant = (const char*)sqlite3_column_text(stmt, 1);
-	op.user.uinfo.user_id.id = (const char*)sqlite3_column_text(stmt, 2);
-	op.user.uinfo.user_id.ns = (const char*)sqlite3_column_text(stmt, 3);
-	op.user.uinfo.user_email = (const char*)sqlite3_column_text(stmt, 4);
+	op.user.uinfo.display_name = (const char*)sqlite3_column_text(stmt, UserName); // user_name
+	op.user.uinfo.user_id.tenant = (const char*)sqlite3_column_text(stmt, Tenant);
+	op.user.uinfo.user_id.id = (const char*)sqlite3_column_text(stmt, ID);
+	op.user.uinfo.user_id.ns = (const char*)sqlite3_column_text(stmt, NS);
+	op.user.uinfo.user_email = (const char*)sqlite3_column_text(stmt, UserEmail);
 
-	SQL_DECODE_BLOB_PARAM(stmt, 5, op.user.uinfo.access_keys, sdb);
-	SQL_DECODE_BLOB_PARAM(stmt, 6, op.user.uinfo.swift_keys, sdb);
-	SQL_DECODE_BLOB_PARAM(stmt, 7, op.user.uinfo.subusers, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, AccessKeys, op.user.uinfo.access_keys, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, SwiftKeys, op.user.uinfo.swift_keys, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, SubUsers, op.user.uinfo.subusers, sdb);
 
-	op.user.uinfo.suspended = sqlite3_column_int(stmt, 8);
-	op.user.uinfo.max_buckets = sqlite3_column_int(stmt, 9);
-	op.user.uinfo.op_mask = sqlite3_column_int(stmt, 10);
+	op.user.uinfo.suspended = sqlite3_column_int(stmt, Suspended);
+	op.user.uinfo.max_buckets = sqlite3_column_int(stmt, MaxBuckets);
+	op.user.uinfo.op_mask = sqlite3_column_int(stmt, OpMask);
 
-	SQL_DECODE_BLOB_PARAM(stmt, 11, op.user.uinfo.caps, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, UserCaps, op.user.uinfo.caps, sdb);
 
-	op.user.uinfo.admin = sqlite3_column_int(stmt, 12);
-	op.user.uinfo.system = sqlite3_column_int(stmt, 13);
+	op.user.uinfo.admin = sqlite3_column_int(stmt, Admin);
+	op.user.uinfo.system = sqlite3_column_int(stmt, System);
 
-	op.user.uinfo.default_placement.name = (const char*)sqlite3_column_text(stmt, 14);
-	op.user.uinfo.default_placement.storage_class = (const char*)sqlite3_column_text(stmt, 15);
+	op.user.uinfo.default_placement.name = (const char*)sqlite3_column_text(stmt, PlacementName);
 
-	SQL_DECODE_BLOB_PARAM(stmt, 16, op.user.uinfo.placement_tags, sdb);
+	op.user.uinfo.default_placement.storage_class = (const char*)sqlite3_column_text(stmt, PlacementStorageClass);
 
-	SQL_DECODE_BLOB_PARAM(stmt, 17, op.user.uinfo.bucket_quota, sdb);
-	SQL_DECODE_BLOB_PARAM(stmt, 18, op.user.uinfo.temp_url_keys, sdb);
-	SQL_DECODE_BLOB_PARAM(stmt, 19, op.user.uinfo.user_quota, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, PlacementTags, op.user.uinfo.placement_tags, sdb);
 
-	op.user.uinfo.type = sqlite3_column_int(stmt, 20);
+	SQL_DECODE_BLOB_PARAM(stmt, BucketQuota, op.user.uinfo.bucket_quota, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, TempURLKeys, op.user.uinfo.temp_url_keys, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, UserQuota, op.user.uinfo.user_quota, sdb);
 
-	SQL_DECODE_BLOB_PARAM(stmt, 21, op.user.uinfo.mfa_ids, sdb);
+	op.user.uinfo.type = sqlite3_column_int(stmt, TYPE);
 
-	op.user.uinfo.assumed_role_arn = (const char*)sqlite3_column_text(stmt, 22);
+	SQL_DECODE_BLOB_PARAM(stmt, MfaIDs, op.user.uinfo.mfa_ids, sdb);
+
+	op.user.uinfo.assumed_role_arn = (const char*)sqlite3_column_text(stmt, AssumedRoleARN);
 
 	return 0;
 }
@@ -696,8 +727,24 @@ int SQLInsertUser::Bind(struct DBOpParams *params)
 	SQL_BIND_INDEX(stmt, index, p_params.op.user.user_email.c_str(), sdb);
 	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_email.c_str(), sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.user.access_keys.c_str(), sdb);
-	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.user.uinfo.access_keys, sdb);
+    if (!params->op.user.uinfo.access_keys.empty()) {
+      string access_key;
+      string key;
+      map<string, RGWAccessKey>::const_iterator it =
+                    params->op.user.uinfo.access_keys.begin();
+      const RGWAccessKey& k = it->second;
+      access_key = k.id;
+      key = k.key;
+
+  	  SQL_BIND_INDEX(stmt, index, p_params.op.user.access_keys_id.c_str(), sdb);
+	  SQL_BIND_TEXT(stmt, index, access_key.c_str(), sdb);
+
+      SQL_BIND_INDEX(stmt, index, p_params.op.user.access_keys_secret.c_str(), sdb);
+	  SQL_BIND_TEXT(stmt, index, key.c_str(), sdb);
+
+   	  SQL_BIND_INDEX(stmt, index, p_params.op.user.access_keys.c_str(), sdb);
+	  SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.user.uinfo.access_keys, sdb);
+    }
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.user.swift_keys.c_str(), sdb);
 	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.user.uinfo.swift_keys, sdb);
@@ -817,6 +864,8 @@ int SQLGetUser::Prepare(struct DBOpParams *params)
 
 	if (params->op.get_query_str == "email") { 
 		SQL_PREPARE(p_params, sdb, email_stmt, ret, "PrepareGetUser");
+	} else if (params->op.get_query_str == "access_key") { 
+		SQL_PREPARE(p_params, sdb, ak_stmt, ret, "PrepareGetUser");
 	} else { // by default by username
 		SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetUser");
 	}
@@ -833,6 +882,17 @@ int SQLGetUser::Bind(struct DBOpParams *params)
 	if (params->op.get_query_str == "email") { 
 		SQL_BIND_INDEX(email_stmt, index, p_params.op.user.user_email.c_str(), sdb);
 		SQL_BIND_TEXT(email_stmt, index, params->op.user.uinfo.user_email.c_str(), sdb);
+	} else if (params->op.get_query_str == "access_key") { 
+      if (!params->op.user.uinfo.access_keys.empty()) {
+        string access_key;
+        map<string, RGWAccessKey>::const_iterator it =
+                    params->op.user.uinfo.access_keys.begin();
+        const RGWAccessKey& k = it->second;
+        access_key = k.id;
+
+	    SQL_BIND_INDEX(ak_stmt, index, p_params.op.user.access_keys_id.c_str(), sdb);
+		SQL_BIND_TEXT(ak_stmt, index, access_key.c_str(), sdb);
+      }
 	} else { // by default by username
 		SQL_BIND_INDEX(stmt, index, p_params.op.user.username.c_str(), sdb);
 		SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.display_name.c_str(), sdb);
@@ -848,6 +908,8 @@ int SQLGetUser::Execute(struct DBOpParams *params)
 
 	if (params->op.get_query_str == "email") { 
 		SQL_EXECUTE(params, email_stmt, list_user);
+ 	} else if (params->op.get_query_str == "access_key") { 
+		SQL_EXECUTE(params, ak_stmt, list_user);
 	} else { // by default by username
 		SQL_EXECUTE(params, stmt, list_user);
 	}

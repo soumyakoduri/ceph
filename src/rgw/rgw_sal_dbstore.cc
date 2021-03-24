@@ -104,6 +104,22 @@ namespace rgw::sal {
 
   int RGWDBStore::get_user_by_access_key(const DoutPrefixProvider *dpp, const std::string& key, optional_yield y, std::unique_ptr<RGWUser>* user)
   {
+    RGWUserInfo uinfo;
+    RGWUser *u;
+    int ret = 0;
+
+    ret = getDBStore()->get_user(string("access_key"), key, uinfo);
+
+    if (ret < 0)
+      return ret;
+
+    u = new RGWDBUser(this, uinfo);
+
+    if (!u)
+      return -ENOMEM;
+
+    user->reset(u);
+
     return 0;
   }
 
@@ -130,6 +146,7 @@ namespace rgw::sal {
 
   int RGWDBStore::get_user_by_swift(const DoutPrefixProvider *dpp, const std::string& user_str, optional_yield y, std::unique_ptr<RGWUser>* user)
   {
+    /* Swift keys and subusers are not supported for now */
     return 0;
   }
 

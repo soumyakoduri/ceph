@@ -295,6 +295,11 @@ int DBStore::get_user(const std::string& query_str, const std::string& query_str
 		params.op.user.uinfo.display_name = query_str_val;
 	} else if (query_str == "email") {
 		params.op.user.uinfo.user_email = query_str_val;
+	} else if (query_str == "access_key") {
+        RGWAccessKey k(query_str_val, "");
+        map<string, RGWAccessKey> keys;
+        keys[query_str_val] = k;
+		params.op.user.uinfo.access_keys = keys;
 	} else {
 		dbout(L_ERR)<<"In GetUser Invalid query string :" <<query_str.c_str()<<") \n";
 		return -1;

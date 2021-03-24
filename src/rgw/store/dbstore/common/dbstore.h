@@ -28,6 +28,11 @@ struct DBOpUserInfo {
 };
 
 struct DBOpInfo {
+  /* Support only single access_key for now. So store
+   * it separately as primary access_key_id & secret to
+   * be able to query easily.
+   *
+   * XXX: Swift keys and subuser not supported for now */
   DBOpUserInfo user;
   string get_query_str;
 };
@@ -67,6 +72,15 @@ struct DBOpUserPrepareInfo {
 	string ns = ":ns";
 	string username = ":username";
 	string user_email = ":user_email";
+    /* Support only single access_key for now. So store
+     * it separately as primary access_key_id & secret to
+     * be able to query easily.
+     *
+     * In future, when need to support & query from multiple
+     * access keys, better to maintain them in a separate table.
+     */
+	string access_keys_id = ":access_keys_id";
+	string access_keys_secret = ":access_keys_secret";
 	string access_keys = ":access_keys";
 	string swift_keys = ":swift_keys";
 	string subusers = ":subusers";
@@ -147,6 +161,8 @@ class DBOp {
 			ID TEXT ,		\
 			NS TEXT ,		\
 			UserEmail TEXT ,	\
+			AccessKeysID TEXT ,	\
+			AccessKeysSecret TEXT ,	\
 			AccessKeys BLOB ,	\
 			SwiftKeys BLOB ,	\
 			SubUsers BLOB ,		\
@@ -257,12 +273,13 @@ class InsertUserOp : public DBOp {
 	 * record, will use another query.
 	 */
 	const string Query = "INSERT OR REPLACE INTO '{}'	\
-	       		(UserName, Tenant, ID, NS, UserEmail, AccessKeys, SwiftKeys, \
+	       		(UserName, Tenant, ID, NS, UserEmail, \
+                 AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
 			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
 			 System, PlacementName, PlacementStorageClass, PlacementTags, \
 			 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN )\
-		         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
-				 {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {});";
+		         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+				 {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {});";
 
 	public:
 	virtual ~InsertUserOp() {}
@@ -271,7 +288,8 @@ class InsertUserOp : public DBOp {
 		return fmt::format(Query.c_str(), params.user_table.c_str(),
 			       params.op.user.username.c_str(), params.op.user.tenant,
 			       params.op.user.id, params.op.user.ns, params.op.user.user_email,
-			       params.op.user.access_keys, params.op.user.swift_keys,
+			       params.op.user.access_keys_id, params.op.user.access_keys_secret,
+                   params.op.user.access_keys, params.op.user.swift_keys,
 			       params.op.user.subusers, params.op.user.suspended,
 			       params.op.user.max_buckets, params.op.user.op_mask,
 			       params.op.user.user_caps, params.op.user.admin, params.op.user.system,
@@ -303,20 +321,28 @@ class GetUserOp: public DBOp {
 	/* If below query columns are updated, make sure to update the indexes
 	 * in list_user() cbk in sqliteDB.cc */
 	const string Query = "SELECT \
-	       		 UserName, Tenant, ID, NS, UserEmail, AccessKeys, SwiftKeys, \
-			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
-			 System, PlacementName, PlacementStorageClass, PlacementTags, \
-			 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
-			 from '{}' where UserName = {}";
+	       		 UserName, Tenant, ID, NS, UserEmail, \
+                 AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
+    			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
+    			 System, PlacementName, PlacementStorageClass, PlacementTags, \
+	    		 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
+		    	 from '{}' where UserName = {}";
 
 	const string QueryByEmail = "SELECT \
-	       		 UserName, Tenant, ID, NS, UserEmail, AccessKeys, SwiftKeys, \
-			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
-			 System, PlacementName, PlacementStorageClass, PlacementTags, \
-			 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
-			 from '{}' where UserEmail = {}";
+	       		 UserName, Tenant, ID, NS, UserEmail, \
+                 AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
+    			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
+	    		 System, PlacementName, PlacementStorageClass, PlacementTags, \
+		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
+			     from '{}' where UserEmail = {}";
 
-	public:
+	const string QueryByAccessKeys = "SELECT \
+	       		 UserName, Tenant, ID, NS, UserEmail, \
+                 AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
+    			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
+	    		 System, PlacementName, PlacementStorageClass, PlacementTags, \
+		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
+    			 from '{}' where AccessKeysID = {}";
 
 	public:
 	virtual ~GetUserOp() {}
@@ -325,6 +351,10 @@ class GetUserOp: public DBOp {
 		if (params.op.get_query_str == "email") {
 			return fmt::format(QueryByEmail.c_str(), params.user_table.c_str(),
 					   params.op.user.user_email.c_str());
+		} else if (params.op.get_query_str == "access_key") {
+			return fmt::format(QueryByAccessKeys.c_str(),
+                         params.user_table.c_str(),
+					     params.op.user.access_keys_id.c_str());
 		} else {
 			return fmt::format(Query.c_str(), params.user_table.c_str(),
 					   params.op.user.username.c_str());
