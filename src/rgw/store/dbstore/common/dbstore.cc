@@ -300,6 +300,8 @@ int DBStore::get_user(const std::string& query_str, const std::string& query_str
         map<string, RGWAccessKey> keys;
         keys[query_str_val] = k;
 		params.op.user.uinfo.access_keys = keys;
+	} else if (query_str == "user_id") {
+		params.op.user.uinfo.user_id = uinfo.user_id;
 	} else {
 		dbout(L_ERR)<<"In GetUser Invalid query string :" <<query_str.c_str()<<") \n";
 		return -1;

@@ -344,6 +344,14 @@ class GetUserOp: public DBOp {
 		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
     			 from '{}' where AccessKeysID = {}";
 
+	const string QueryByUserID = "SELECT \
+	       		 UserName, Tenant, ID, NS, UserEmail, \
+                 AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
+    			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
+	    		 System, PlacementName, PlacementStorageClass, PlacementTags, \
+		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
+    			 from '{}' where Tenant = {} and ID = {} and NS = {}";
+
 	public:
 	virtual ~GetUserOp() {}
 
@@ -355,6 +363,12 @@ class GetUserOp: public DBOp {
 			return fmt::format(QueryByAccessKeys.c_str(),
                          params.user_table.c_str(),
 					     params.op.user.access_keys_id.c_str());
+		} else if (params.op.get_query_str == "user_id") {
+			return fmt::format(QueryByUserID.c_str(),
+                         params.user_table.c_str(),
+					     params.op.user.tenant.c_str(),
+                         params.op.user.id.c_str(),
+                         params.op.user.ns.c_str());
 		} else {
 			return fmt::format(Query.c_str(), params.user_table.c_str(),
 					   params.op.user.username.c_str());

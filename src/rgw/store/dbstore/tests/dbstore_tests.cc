@@ -207,6 +207,32 @@ TEST_F(DBStoreBaseTest, GetUserQueryByAccessKey) {
 	ASSERT_EQ(k.key, "key2");
 }
 
+TEST_F(DBStoreBaseTest, GetUserQueryByUserID) {
+	int ret = -1;
+    RGWUserInfo uinfo;
+    uinfo.user_id.tenant = "tenant";
+    uinfo.user_id.id = "id";
+
+	ret = db->get_user("user_id", "", uinfo);
+	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(uinfo.user_id.tenant, "tenant");
+	ASSERT_EQ(uinfo.user_email, "user1@dbstore.com");
+	ASSERT_EQ(uinfo.user_id.id, "id");
+	ASSERT_EQ(uinfo.suspended, 123);
+	ASSERT_EQ(uinfo.max_buckets, 456);
+	ASSERT_EQ(uinfo.assumed_role_arn, "role");
+	ASSERT_EQ(uinfo.placement_tags.back(), "tags");
+	RGWAccessKey k;
+	map<string, RGWAccessKey>::iterator it2 = uinfo.access_keys.begin();
+	k = it2->second;
+	ASSERT_EQ(k.id, "id1");
+	ASSERT_EQ(k.key, "key1");
+	it2++;
+	k = it2->second;
+	ASSERT_EQ(k.id, "id2");
+	ASSERT_EQ(k.key, "key2");
+}
+
 TEST_F(DBStoreBaseTest, ListAllUsers) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;

@@ -78,7 +78,11 @@ namespace rgw::sal {
 
   int RGWDBUser::load_by_id(const DoutPrefixProvider *dpp, optional_yield y)
   {
-    return 0;
+    int ret = 0;
+
+    ret = store->getDBStore()->get_user(string("user_id"), "", info);
+
+    return ret;
   }
 
   int RGWDBUser::store_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::PutParams& params)

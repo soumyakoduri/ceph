@@ -866,6 +866,8 @@ int SQLGetUser::Prepare(struct DBOpParams *params)
 		SQL_PREPARE(p_params, sdb, email_stmt, ret, "PrepareGetUser");
 	} else if (params->op.get_query_str == "access_key") { 
 		SQL_PREPARE(p_params, sdb, ak_stmt, ret, "PrepareGetUser");
+	} else if (params->op.get_query_str == "user_id") { 
+		SQL_PREPARE(p_params, sdb, userid_stmt, ret, "PrepareGetUser");
 	} else { // by default by username
 		SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetUser");
 	}
@@ -893,6 +895,15 @@ int SQLGetUser::Bind(struct DBOpParams *params)
 	    SQL_BIND_INDEX(ak_stmt, index, p_params.op.user.access_keys_id.c_str(), sdb);
 		SQL_BIND_TEXT(ak_stmt, index, access_key.c_str(), sdb);
       }
+	} else if (params->op.get_query_str == "user_id") { 
+		SQL_BIND_INDEX(userid_stmt, index, p_params.op.user.tenant.c_str(), sdb);
+		SQL_BIND_TEXT(userid_stmt, index, params->op.user.uinfo.user_id.tenant.c_str(), sdb);
+
+    	SQL_BIND_INDEX(userid_stmt, index, p_params.op.user.id.c_str(), sdb);
+    	SQL_BIND_TEXT(userid_stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
+
+	    SQL_BIND_INDEX(userid_stmt, index, p_params.op.user.ns.c_str(), sdb);
+    	SQL_BIND_TEXT(userid_stmt, index, params->op.user.uinfo.user_id.ns.c_str(), sdb);
 	} else { // by default by username
 		SQL_BIND_INDEX(stmt, index, p_params.op.user.username.c_str(), sdb);
 		SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.display_name.c_str(), sdb);
@@ -910,6 +921,8 @@ int SQLGetUser::Execute(struct DBOpParams *params)
 		SQL_EXECUTE(params, email_stmt, list_user);
  	} else if (params->op.get_query_str == "access_key") { 
 		SQL_EXECUTE(params, ak_stmt, list_user);
+ 	} else if (params->op.get_query_str == "user_id") { 
+		SQL_EXECUTE(params, userid_stmt, list_user);
 	} else { // by default by username
 		SQL_EXECUTE(params, stmt, list_user);
 	}
