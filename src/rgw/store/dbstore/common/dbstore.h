@@ -67,10 +67,10 @@ struct DBOpParams {
  * to get the right index of each param.
  */
 struct DBOpUserPrepareInfo {
+	string user_id = ":user_id";
 	string tenant = ":tenant";
-	string id = ":id";
 	string ns = ":ns";
-	string username = ":username";
+	string display_name = ":display_name";
 	string user_email = ":user_email";
     /* Support only single access_key for now. So store
      * it separately as primary access_key_id & secret to
@@ -156,10 +156,10 @@ class DBOp {
 	private:
 	const string CreateUserTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' (	\
-			UserName TEXT PRIMARY KEY NOT NULL UNIQUE , \
-	       		Tenant TEXT ,		\
-			ID TEXT ,		\
+			UserID TEXT NOT NULL UNIQUE,		\
+	       	Tenant TEXT ,		\
 			NS TEXT ,		\
+			DisplayName TEXT , \
 			UserEmail TEXT ,	\
 			AccessKeysID TEXT ,	\
 			AccessKeysSecret TEXT ,	\
@@ -180,14 +180,15 @@ class DBOp {
 			UserQuota BLOB ,	\
 			TYPE INTEGER ,		\
 			MfaIDs BLOB ,	\
-			AssumedRoleARN TEXT \n);";
+			AssumedRoleARN TEXT , \
+            PRIMARY KEY (UserID, Tenant, NS) \n);";
 
 	const string CreateBucketTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' ( \
 			BucketName TEXT PRIMARY KEY NOT NULL UNIQUE , \
-			UserName TEXT NOT NULL, \
-			FOREIGN KEY (UserName) \
-				REFERENCES '{}' (UserName) ON DELETE CASCADE ON UPDATE CASCADE \n);";
+			UserID TEXT NOT NULL, \
+			FOREIGN KEY (UserID) \
+				REFERENCES '{}' (UserID) ON DELETE CASCADE ON UPDATE CASCADE \n);";
 	const string CreateObjectTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' ( \
 			BucketName TEXT NOT NULL , \
@@ -208,7 +209,7 @@ class DBOp {
 
 	const string CreateQuotaTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' ( \
-			ID INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE , \
+			QuotaID INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE , \
 			MaxSizeSoftThreshold INTEGER ,	\
 			MaxObjsSoftThreshold INTEGER ,	\
 			MaxSize	INTEGER ,		\
@@ -273,7 +274,7 @@ class InsertUserOp : public DBOp {
 	 * record, will use another query.
 	 */
 	const string Query = "INSERT OR REPLACE INTO '{}'	\
-	       		(UserName, Tenant, ID, NS, UserEmail, \
+	       		(UserID, Tenant, NS, DisplayName, UserEmail, \
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
 			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
 			 System, PlacementName, PlacementStorageClass, PlacementTags, \
@@ -286,8 +287,8 @@ class InsertUserOp : public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.user_table.c_str(),
-			       params.op.user.username.c_str(), params.op.user.tenant,
-			       params.op.user.id, params.op.user.ns, params.op.user.user_email,
+			       params.op.user.user_id.c_str(), params.op.user.tenant, params.op.user.ns,
+                   params.op.user.display_name, params.op.user.user_email,
 			       params.op.user.access_keys_id, params.op.user.access_keys_secret,
                    params.op.user.access_keys, params.op.user.swift_keys,
 			       params.op.user.subusers, params.op.user.suspended,
@@ -305,14 +306,14 @@ class InsertUserOp : public DBOp {
 class RemoveUserOp: public DBOp {
 	private:
 	const string Query =
-	"DELETE from '{}' where UserName = {}";
+	"DELETE from '{}' where UserID = {}";
 
 	public:
 	virtual ~RemoveUserOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.user_table.c_str(),
-			       params.op.user.username.c_str());
+			       params.op.user.user_id.c_str());
 	}
 };
 
@@ -321,15 +322,15 @@ class GetUserOp: public DBOp {
 	/* If below query columns are updated, make sure to update the indexes
 	 * in list_user() cbk in sqliteDB.cc */
 	const string Query = "SELECT \
-	       		 UserName, Tenant, ID, NS, UserEmail, \
+	       	     UserID, Tenant, NS, DisplayName, UserEmail, \
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
     			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
     			 System, PlacementName, PlacementStorageClass, PlacementTags, \
 	    		 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
-		    	 from '{}' where UserName = {}";
+		    	 from '{}' where DisplayName = {}";
 
 	const string QueryByEmail = "SELECT \
-	       		 UserName, Tenant, ID, NS, UserEmail, \
+	       	     UserID, Tenant, NS, DisplayName, UserEmail, \
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
     			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
 	    		 System, PlacementName, PlacementStorageClass, PlacementTags, \
@@ -337,7 +338,7 @@ class GetUserOp: public DBOp {
 			     from '{}' where UserEmail = {}";
 
 	const string QueryByAccessKeys = "SELECT \
-	       		 UserName, Tenant, ID, NS, UserEmail, \
+	       	     UserID, Tenant, NS, DisplayName, UserEmail, \
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
     			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
 	    		 System, PlacementName, PlacementStorageClass, PlacementTags, \
@@ -345,12 +346,12 @@ class GetUserOp: public DBOp {
     			 from '{}' where AccessKeysID = {}";
 
 	const string QueryByUserID = "SELECT \
-	       		 UserName, Tenant, ID, NS, UserEmail, \
+	       	     UserID, Tenant, NS, DisplayName, UserEmail, \
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
     			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
 	    		 System, PlacementName, PlacementStorageClass, PlacementTags, \
 		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
-    			 from '{}' where Tenant = {} and ID = {} and NS = {}";
+    			 from '{}' where Tenant = {} and UserID = {} and NS = {}";
 
 	public:
 	virtual ~GetUserOp() {}
@@ -367,11 +368,11 @@ class GetUserOp: public DBOp {
 			return fmt::format(QueryByUserID.c_str(),
                          params.user_table.c_str(),
 					     params.op.user.tenant.c_str(),
-                         params.op.user.id.c_str(),
+                         params.op.user.user_id.c_str(),
                          params.op.user.ns.c_str());
 		} else {
 			return fmt::format(Query.c_str(), params.user_table.c_str(),
-					   params.op.user.username.c_str());
+					   params.op.user.display_name.c_str());
 		}
 	}
 };
@@ -379,14 +380,14 @@ class GetUserOp: public DBOp {
 class InsertBucketOp: public DBOp {
 	private:
 	const string Query =
-	"INSERT OR REPLACE INTO '{}' (BucketName, UserName) VALUES ({}, {})";
+	"INSERT OR REPLACE INTO '{}' (BucketName, UserID) VALUES ({}, {})";
 
 	public:
 	virtual ~InsertBucketOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.bucket_table.c_str(),
-			       	params.bucket_name.c_str(), params.op.user.username.c_str());
+			       	params.bucket_name.c_str(), params.op.user.user_id);
 	}
 };
 

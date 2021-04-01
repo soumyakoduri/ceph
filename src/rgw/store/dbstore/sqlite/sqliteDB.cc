@@ -152,10 +152,10 @@ static int list_callback(void *None, int argc, char **argv, char **aname)
 }
 
 enum ListUser {
-  UserName = 0,
+  UserID = 0,
   Tenant,
-  ID,
   NS,
+  DisplayName,
   UserEmail,
   AccessKeysID,
   AccessKeysSecret,
@@ -185,10 +185,10 @@ static int list_user(DBOpInfo &op, sqlite3_stmt *stmt) {
 
 	cout<<sqlite3_column_text(stmt, 0)<<"\n";
 /* Ensure the column names match with the user table defined in dbstore.h                     
-			UserName TEXT PRIMARY KEY NOT NULL UNIQUE , \ - 0
+			UserID TEXT ,		\ - 0
 	       		Tenant TEXT ,		\ - 1
-			ID TEXT ,		\ - 2
-			NS TEXT ,		\ - 3
+			NS TEXT ,		\ - 2
+			DisplayName TEXT , \ - 3
 			UserEmail TEXT ,	\ - 4
 			AccessKeysID TEXT ,	\ - 5
 			AccessKeysSecret TEXT ,	\ - 6
@@ -212,10 +212,10 @@ static int list_user(DBOpInfo &op, sqlite3_stmt *stmt) {
 			AssumedRoleARN TEXT \n);"; - 24
 */
 
-	op.user.uinfo.display_name = (const char*)sqlite3_column_text(stmt, UserName); // user_name
 	op.user.uinfo.user_id.tenant = (const char*)sqlite3_column_text(stmt, Tenant);
-	op.user.uinfo.user_id.id = (const char*)sqlite3_column_text(stmt, ID);
+	op.user.uinfo.user_id.id = (const char*)sqlite3_column_text(stmt, UserID);
 	op.user.uinfo.user_id.ns = (const char*)sqlite3_column_text(stmt, NS);
+	op.user.uinfo.display_name = (const char*)sqlite3_column_text(stmt, DisplayName); // user_name
 	op.user.uinfo.user_email = (const char*)sqlite3_column_text(stmt, UserEmail);
 
 	SQL_DECODE_BLOB_PARAM(stmt, AccessKeys, op.user.uinfo.access_keys, sdb);
@@ -709,19 +709,19 @@ int SQLInsertUser::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	cout << "username prepare = " << p_params.op.user.username.c_str() << "\n";
-	cout << "username = " << params->op.user.uinfo.display_name.c_str() << "\n";
+	cout << "userid prepare = " << p_params.op.user.user_id.c_str() << "\n";
+	cout << "userid = " << params->op.user.uinfo.user_id.id.c_str() << "\n";
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.user.tenant.c_str(), sdb);
 	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.tenant.c_str(), sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.user.id.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.user.user_id.c_str(), sdb);
 	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.user.ns.c_str(), sdb);
 	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.ns.c_str(), sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.user.username.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.user.display_name.c_str(), sdb);
 	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.display_name.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.user.user_email.c_str(), sdb);
@@ -833,8 +833,8 @@ int SQLRemoveUser::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.user.username.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.display_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.user.user_id.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
 
 out:
 	return rc;
@@ -899,13 +899,13 @@ int SQLGetUser::Bind(struct DBOpParams *params)
 		SQL_BIND_INDEX(userid_stmt, index, p_params.op.user.tenant.c_str(), sdb);
 		SQL_BIND_TEXT(userid_stmt, index, params->op.user.uinfo.user_id.tenant.c_str(), sdb);
 
-    	SQL_BIND_INDEX(userid_stmt, index, p_params.op.user.id.c_str(), sdb);
+    	SQL_BIND_INDEX(userid_stmt, index, p_params.op.user.user_id.c_str(), sdb);
     	SQL_BIND_TEXT(userid_stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
 
 	    SQL_BIND_INDEX(userid_stmt, index, p_params.op.user.ns.c_str(), sdb);
     	SQL_BIND_TEXT(userid_stmt, index, params->op.user.uinfo.user_id.ns.c_str(), sdb);
 	} else { // by default by username
-		SQL_BIND_INDEX(stmt, index, p_params.op.user.username.c_str(), sdb);
+		SQL_BIND_INDEX(stmt, index, p_params.op.user.display_name.c_str(), sdb);
 		SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.display_name.c_str(), sdb);
 	}
 
@@ -955,9 +955,9 @@ int SQLInsertBucket::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.user.username.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.user.user_id.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.display_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.bucket_name.c_str(), sdb);
 

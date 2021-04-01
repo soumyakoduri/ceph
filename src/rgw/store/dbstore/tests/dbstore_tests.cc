@@ -54,6 +54,7 @@ namespace {
 		int ret;
 		DBStore *db = nullptr;
 		string user1 = "user1";
+        string user_id1 = "user_id1";
 		string bucket1 = "bucket1";
 		string object1 = "object1";
 		string data = "Hello World";
@@ -65,6 +66,7 @@ namespace {
 			ASSERT_TRUE(db != nullptr);
 
 			GlobalParams.op.user.uinfo.display_name = user1;
+			GlobalParams.op.user.uinfo.user_id.id = user_id1;
 			GlobalParams.bucket_name = bucket1;
 			GlobalParams.object = object1;
 			GlobalParams.offset = 0;
@@ -90,7 +92,6 @@ TEST_F(DBStoreBaseTest, InsertUser) {
 
 	params.op.user.uinfo.user_id.tenant = "tenant";
 	params.op.user.uinfo.user_email = "user1@dbstore.com";
-	params.op.user.uinfo.user_id.id = "id";
 	params.op.user.uinfo.suspended = 123;
 	params.op.user.uinfo.max_buckets = 456;
 	params.op.user.uinfo.assumed_role_arn = "role";
@@ -112,7 +113,7 @@ TEST_F(DBStoreBaseTest, GetUser) {
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(params.op.user.uinfo.user_id.tenant, "tenant");
 	ASSERT_EQ(params.op.user.uinfo.user_email, "user1@dbstore.com");
-	ASSERT_EQ(params.op.user.uinfo.user_id.id, "id");
+	ASSERT_EQ(params.op.user.uinfo.user_id.id, "user_id1");
 	ASSERT_EQ(params.op.user.uinfo.suspended, 123);
 	ASSERT_EQ(params.op.user.uinfo.max_buckets, 456);
 	ASSERT_EQ(params.op.user.uinfo.assumed_role_arn, "role");
@@ -140,7 +141,7 @@ TEST_F(DBStoreBaseTest, GetUserQuery) {
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(params.op.user.uinfo.user_id.tenant, "tenant");
 	ASSERT_EQ(params.op.user.uinfo.user_email, "user1@dbstore.com");
-	ASSERT_EQ(params.op.user.uinfo.user_id.id, "id");
+	ASSERT_EQ(params.op.user.uinfo.user_id.id, "user_id1");
 	ASSERT_EQ(params.op.user.uinfo.suspended, 123);
 	ASSERT_EQ(params.op.user.uinfo.max_buckets, 456);
 	ASSERT_EQ(params.op.user.uinfo.assumed_role_arn, "role");
@@ -166,7 +167,7 @@ TEST_F(DBStoreBaseTest, GetUserQueryByEmail) {
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(uinfo.user_id.tenant, "tenant");
 	ASSERT_EQ(uinfo.user_email, "user1@dbstore.com");
-	ASSERT_EQ(uinfo.user_id.id, "id");
+	ASSERT_EQ(uinfo.user_id.id, "user_id1");
 	ASSERT_EQ(uinfo.suspended, 123);
 	ASSERT_EQ(uinfo.max_buckets, 456);
 	ASSERT_EQ(uinfo.assumed_role_arn, "role");
@@ -191,7 +192,7 @@ TEST_F(DBStoreBaseTest, GetUserQueryByAccessKey) {
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(uinfo.user_id.tenant, "tenant");
 	ASSERT_EQ(uinfo.user_email, "user1@dbstore.com");
-	ASSERT_EQ(uinfo.user_id.id, "id");
+	ASSERT_EQ(uinfo.user_id.id, "user_id1");
 	ASSERT_EQ(uinfo.suspended, 123);
 	ASSERT_EQ(uinfo.max_buckets, 456);
 	ASSERT_EQ(uinfo.assumed_role_arn, "role");
@@ -211,13 +212,13 @@ TEST_F(DBStoreBaseTest, GetUserQueryByUserID) {
 	int ret = -1;
     RGWUserInfo uinfo;
     uinfo.user_id.tenant = "tenant";
-    uinfo.user_id.id = "id";
+    uinfo.user_id.id = "user_id1";
 
 	ret = db->get_user("user_id", "", uinfo);
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(uinfo.user_id.tenant, "tenant");
 	ASSERT_EQ(uinfo.user_email, "user1@dbstore.com");
-	ASSERT_EQ(uinfo.user_id.id, "id");
+	ASSERT_EQ(uinfo.user_id.id, "user_id1");
 	ASSERT_EQ(uinfo.suspended, 123);
 	ASSERT_EQ(uinfo.max_buckets, 456);
 	ASSERT_EQ(uinfo.assumed_role_arn, "role");

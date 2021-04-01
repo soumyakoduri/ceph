@@ -69,7 +69,7 @@ void* process(void *arg)
 	cout << "GetUser return value: " <<  ret << "\n";
 
 	cout << "tenant: " << params2.op.user.uinfo.user_id.tenant << "\n";
-	cout << "suspended: " << params2.op.user.uinfo.suspended << "\n";
+	cout << "suspended: " << (int)params2.op.user.uinfo.suspended << "\n";
 	cout << "assumed_role_arn: " << params2.op.user.uinfo.assumed_role_arn << "\n";
 
 	list<string>::iterator it = params2.op.user.uinfo.placement_tags.begin();
