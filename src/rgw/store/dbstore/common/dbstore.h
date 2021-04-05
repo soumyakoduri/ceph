@@ -155,6 +155,20 @@ class ObjectOp {
 class DBOp {
 	private:
 	const string CreateUserTableQ =
+        /* Corresponds to RGWUser
+         *
+         * For now only UserID is made Primary key.
+         * If multiple tenants are stored in single .db handle, should
+         * make both (UserID, Tenant) as Primary Key.
+         *
+         * XXX:
+         * - AccessKeys, SwiftKeys, Subusers (map<>) are stored as blob.
+         *   To enable easy query, first accesskey is stored in separate fields
+         *   AccessKeysID, AccessKeysSecret.
+         *   In future, may be have separate table to store these keys and
+         *   query on that table.
+         * - Quota stored as blob .. should be linked to quota table.
+         */
 		"CREATE TABLE IF NOT EXISTS '{}' (	\
 			UserID TEXT NOT NULL UNIQUE,		\
 	       	Tenant TEXT ,		\
@@ -181,13 +195,67 @@ class DBOp {
 			TYPE INTEGER ,		\
 			MfaIDs BLOB ,	\
 			AssumedRoleARN TEXT , \
-            PRIMARY KEY (UserID, Tenant, NS) \n);";
+            PRIMARY KEY (UserID) \n);";
 
 	const string CreateBucketTableQ =
+        /* Corresponds to RGWBucket
+         *
+         *  For now only BucketName is made Primary key.
+         *  If multiple tenants are stored in single .db handle, should
+         *  make both (BucketName, Tenant) as Primary Key. Also should
+         *  reference (UserID, Tenant) as Foreign key.
+         *
+         * leaving below RADOS specific fields
+         *   - rgw_data_placement_target explicit_placement (struct rgw_bucket)
+         *   - rgw::BucketLayout layout (struct RGWBucketInfo)
+         *   - const static uint32_t NUM_SHARDS_BLIND_BUCKET (struct RGWBucketInfo),
+         *     should be '0' indicating no sharding.
+         *   - cls_rgw_reshard_status reshard_status (struct RGWBucketInfo)
+         *
+         * XXX:
+         *   - Quota stored as blob .. should be linked to quota table.
+         *   - WebsiteConf stored as BLOB..if required, should be split
+         *   - Storing bucket_version (struct RGWBucket), objv_tracker
+         *     (struct RGWBucketInfo) separately. Are they same?
+         *
+         */
 		"CREATE TABLE IF NOT EXISTS '{}' ( \
-			BucketName TEXT PRIMARY KEY NOT NULL UNIQUE , \
-			UserID TEXT NOT NULL, \
-			FOREIGN KEY (UserID) \
+			BucketName TEXT NOT NULL UNIQUE , \
+            Tenant TEXT,        \
+            Marker TEXT,        \
+            BucketID TEXT,      \
+            Size   INTEGER,     \
+            SizeRounded INTEGER,\
+            CreationTime TEXT,  \
+            Count  INTEGER,     \
+			PlacementName TEXT , 	\
+			PlacementStorageClass TEXT , 	\
+			OwnerID TEXT NOT NULL, \
+            Flags   INTEGER,       \
+            Zonegroup TEXT,         \
+            HasInstanceObj BOOLEAN, \
+            ObjVersionTrackerReadVer  INTEGER, \
+            ObjVersionTrackerReadTag  TEXT,     \
+            ObjVersionTrackerWriteVer  INTEGER, \
+            ObjVersionTrackerWriteTag  TEXT,     \
+            Quota   BLOB,       \
+            RequesterPays BOOLEAN,  \
+            HasWebsite  BOOLEAN,    \
+            WebsiteConf BLOB,   \
+            SwiftVersioning BOOLEAN, \
+            SwiftVerLocation TEXT,  \
+            MdsearchConfig  BLOB,   \
+            NewBucketInstanceID TEXT,\
+            ObjectLockEnabled BOOLEAN, \
+            ObjectLockRuleExist BOOLEAN, \
+            ObjectLockRule  BLOB, \
+            SyncPolicyInfoGroups BLOB, \
+            Attrs   BLOB,   \
+            BucketVersion   INTEGER,    \
+            BucketVersionTag TEXT,      \
+            Mtime   TEXT,   \
+            PRIMARY KEY (BucketName) \
+			FOREIGN KEY (OwnerID) \
 				REFERENCES '{}' (UserID) ON DELETE CASCADE ON UPDATE CASCADE \n);";
 	const string CreateObjectTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' ( \
@@ -380,7 +448,7 @@ class GetUserOp: public DBOp {
 class InsertBucketOp: public DBOp {
 	private:
 	const string Query =
-	"INSERT OR REPLACE INTO '{}' (BucketName, UserID) VALUES ({}, {})";
+	"INSERT OR REPLACE INTO '{}' (BucketName, OwnerID) VALUES ({}, {})";
 
 	public:
 	virtual ~InsertBucketOp() {}
