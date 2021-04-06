@@ -157,11 +157,11 @@ DBOp * DBStore::getDBOp(string Op, struct DBOpParams *params)
 	map<string, class ObjectOp*>::iterator iter;
 	class ObjectOp* Ob;
 
-	iter = DBStore::objectmap.find(params->bucket_name);
+	iter = DBStore::objectmap.find(params->op.bucket.ent.bucket.name);
 
 	if (iter == DBStore::objectmap.end()) {
 		dbout(L_EVENT)<<"No objectmap found for bucket: " \
-			     <<params->bucket_name<<"\n";
+			     <<params->op.bucket.ent.bucket.name<<"\n";
 		/* not found */
 		return NULL;
 	}

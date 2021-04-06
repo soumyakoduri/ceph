@@ -67,7 +67,7 @@ namespace {
 
 			GlobalParams.op.user.uinfo.display_name = user1;
 			GlobalParams.op.user.uinfo.user_id.id = user_id1;
-			GlobalParams.bucket_name = bucket1;
+			GlobalParams.op.bucket.ent.bucket.name = bucket1;
 			GlobalParams.object = object1;
 			GlobalParams.offset = 0;
 			GlobalParams.data = data;

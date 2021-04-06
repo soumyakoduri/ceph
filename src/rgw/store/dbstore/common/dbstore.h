@@ -17,7 +17,7 @@
 #include <map>
 #include "dbstore_log.h"
 #include "rgw/rgw_sal.h"
-#include "rgw/rgw_common.h"
+//#include "rgw/rgw_common.h"
 
 using namespace std;
 
@@ -25,6 +25,15 @@ class DBStore;
 
 struct DBOpUserInfo {
 	RGWUserInfo uinfo = {};
+};
+
+struct DBOpBucketInfo {
+    RGWBucketEnt ent;
+    RGWBucketInfo info;
+    RGWUser* owner = nullptr;
+    rgw::sal::RGWAttrs attrs;
+    obj_version bucket_version;
+    ceph::real_time mtime;
 };
 
 struct DBOpInfo {
@@ -35,6 +44,7 @@ struct DBOpInfo {
    * XXX: Swift keys and subuser not supported for now */
   DBOpUserInfo user;
   string get_query_str;
+  DBOpBucketInfo bucket;
 };
 
 struct DBOpParams {
@@ -49,7 +59,6 @@ struct DBOpParams {
 	/* Below are subject to change */
 	string objectdata_table;
 	string quota_table;
-	string bucket_name;
 	string object;
 	size_t offset;
 	string data;
@@ -101,9 +110,47 @@ struct DBOpUserPrepareInfo {
 	string assumed_role_arn = ":assumed_role_arn";
 };
 
+struct DBOpBucketPrepareInfo {
+	string bucket_name = ":bucket_name";
+	string tenant = ":tenant";
+	string marker = ":marker";
+    string bucket_id = ":bucket_id";
+    string size = ":size";
+    string size_rounded = ":size_rounded";
+    string creation_time = ":creation_time";
+    string count = ":count";
+    string placement_name = ":placement_name";
+    string placement_storage_class = ":placement_storage_class";
+    /* ownerid - maps to DBOpUserPrepareInfo */
+    string flags = ":flags";
+    string zonegroup = ":zonegroup";
+    string has_instance_obj = ":has_instance_obj";
+    string objv_tracker_read_ver = ":objv_tracker_read_ver";
+    string objv_tracker_read_tag = ":objv_tracker_read_tag";
+    string objv_tracker_write_ver = ":objv_tracker_write_ver";
+    string objv_tracker_write_tag = ":objv_tracker_write_tag";
+    string quota = ":quota";
+    string requester_pays = ":requester_pays";
+    string has_website = ":has_website";
+    string website_conf = ":website_conf";
+    string swift_versioning = ":swift_versioning";
+    string swift_ver_location = ":swift_ver_location";
+    string mdsearch_config = ":mdsearch_config";
+    string new_bucket_instance_id = ":new_bucket_instance_id";
+    string obj_lock_enabled = ":obj_lock_enabled";
+    string obj_lock_rule_exist = "obj_lock_rule_exist";
+    string obj_lock_rule = "obj_lock_rule";
+    string sync_policy_info_groups = ":sync_policy_info_groups";
+    string attrs = ":attrs";
+    string bucket_ver = ":bucket_vers";
+    string bucket_ver_tag = ":bucket_ver_tag";
+    string mtime = ":mtime";
+};
+
 struct DBOpPrepareInfo {
     DBOpUserPrepareInfo user;
 	string get_query_str = ":get_query_str";
+    DBOpBucketPrepareInfo bucket;
 };
 
 struct DBOpPrepareParams {
@@ -119,7 +166,6 @@ struct DBOpPrepareParams {
 	/* below subject to change */
 	string objectdata_table = ":objectdata_table";
 	string quota_table = ":quota_table";
-	string bucket_name = ":bucket";
 	string object = ":object";
 	string offset = ":offset";
 	string data = ":data";
@@ -448,14 +494,39 @@ class GetUserOp: public DBOp {
 class InsertBucketOp: public DBOp {
 	private:
 	const string Query =
-	"INSERT OR REPLACE INTO '{}' (BucketName, OwnerID) VALUES ({}, {})";
+	"INSERT OR REPLACE INTO '{}' \
+       (BucketName, Tenant, Marker, BucketID, Size, SizeRounded, CreationTime, \
+        Count, PlacementName, PlacementStorageClass, OwnerID, Flags, Zonegroup, \
+        HasInstanceObj, ObjVersionTrackerReadVer, ObjVersionTrackerReadTag, \
+        ObjVersionTrackerWriteVer, ObjVersionTrackerWriteTag, \
+        Quota, RequesterPays, HasWebsite, WebsiteConf, \
+        SwiftVersioning, SwiftVerLocation, \
+        MdsearchConfig, NewBucketInstanceID, \
+        ObjectLockEnabled, ObjectLockRuleExist, ObjectLockRule, \
+        SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime) \
+       VALUES ({}, {})";
 
 	public:
 	virtual ~InsertBucketOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.bucket_table.c_str(),
-			       	params.bucket_name.c_str(), params.op.user.user_id);
+		       	params.op.bucket.bucket_name, params.op.bucket.tenant,
+                params.op.bucket.marker, params.op.bucket.bucket_id,
+                params.op.bucket.size, params.op.bucket.size_rounded,
+                params.op.bucket.creation_time, params.op.bucket.count,
+                params.op.bucket.placement_name, params.op.bucket.placement_storage_class,
+                params.op.user.user_id,
+                params.op.bucket.flags, params.op.bucket.zonegroup, params.op.bucket.has_instance_obj,
+                params.op.bucket.objv_tracker_read_ver, params.op.bucket.objv_tracker_read_tag,
+                params.op.bucket.objv_tracker_write_ver, params.op.bucket.objv_tracker_write_tag,
+                params.op.bucket.quota, params.op.bucket.requester_pays, params.op.bucket.has_website,
+                params.op.bucket.website_conf, params.op.bucket.swift_versioning,
+                params.op.bucket.swift_ver_location, params.op.bucket.mdsearch_config,
+                params.op.bucket.new_bucket_instance_id, params.op.bucket.obj_lock_enabled,
+                params.op.bucket.obj_lock_rule_exist, params.op.bucket.obj_lock_rule,
+                params.op.bucket.sync_policy_info_groups, params.op.bucket.attrs,
+                params.op.bucket.bucket_ver, params.op.bucket.bucket_ver_tag, params.op.bucket.mtime);
 	}
 };
 
@@ -469,7 +540,7 @@ class RemoveBucketOp: public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.bucket_table.c_str(),
-			       params.bucket_name.c_str());
+			       params.op.bucket.bucket_name.c_str());
 	}
 };
 
@@ -483,7 +554,7 @@ class ListBucketOp: public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.bucket_table.c_str(),
-			       params.bucket_name.c_str());
+			       params.op.bucket.bucket_name.c_str());
 	}
 };
 
@@ -497,7 +568,7 @@ class InsertObjectOp: public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(),
-		 	params.object_table.c_str(), params.bucket_name.c_str(),
+		 	params.object_table.c_str(), params.op.bucket.bucket_name.c_str(),
 		        params.object.c_str());
 	}
 };
@@ -512,7 +583,7 @@ class RemoveObjectOp: public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.object_table.c_str(),
-			       params.bucket_name.c_str(), params.object.c_str());
+			       params.op.bucket.bucket_name.c_str(), params.object.c_str());
 	}
 };
 
@@ -527,7 +598,7 @@ class ListObjectOp: public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.object_table.c_str(),
-			       params.bucket_name.c_str(), params.object.c_str());
+			       params.op.bucket.bucket_name.c_str(), params.object.c_str());
 	}
 };
 
@@ -543,7 +614,7 @@ class PutObjectDataOp: public DBOp {
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(),
 		 	params.objectdata_table.c_str(),
-		       	params.bucket_name.c_str(), params.object.c_str(),
+		       	params.op.bucket.bucket_name.c_str(), params.object.c_str(),
 		       	params.offset.c_str(), params.data.c_str(),
 			params.datalen.c_str());
 	}
@@ -559,7 +630,7 @@ class GetObjectDataOp: public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(),
-		 	params.objectdata_table.c_str(), params.bucket_name.c_str(),
+		 	params.objectdata_table.c_str(), params.op.bucket.bucket_name.c_str(),
 		        params.object.c_str());
 	}
 };
@@ -574,7 +645,7 @@ class DeleteObjectDataOp: public DBOp {
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(),
-	 		params.objectdata_table.c_str(), params.bucket_name.c_str(),
+	 		params.objectdata_table.c_str(), params.op.bucket.bucket_name.c_str(),
 	        	params.object.c_str());
 	}
 };
