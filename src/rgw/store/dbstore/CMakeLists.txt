@@ -25,7 +25,8 @@ set(dbstore_mgr_srcs
 
 add_library(dbstore_lib ${dbstore_srcs})
 target_include_directories(dbstore_lib PUBLIC "${CMAKE_SOURCE_DIR}/src/fmt/include")
-#target_link_libraries(dbstore_lib PUBLIC rgw_a)
+target_include_directories(dbstore_lib PUBLIC "${CMAKE_SOURCE_DIR}/src/rgw")
+target_link_libraries(dbstore_lib PUBLIC spawn)
 
 set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} dbstore_lib)
 
@@ -33,6 +34,7 @@ IF(USE_SQLITE)
   add_subdirectory(sqlite)
   set(CMAKE_INCLUDE_DIR ${CMAKE_INCLUDE_DIR} "${CMAKE_CURRENT_SOURCE_DIR}/sqlite")
   add_compile_definitions(SQLITE_ENABLED=1)
+  set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} rgw_a)
   set (CMAKE_LINK_LIBRARIES ${CMAKE_LINK_LIBRARIES} sqlite_db)
   add_dependencies(sqlite_db dbstore_lib)
 ENDIF()

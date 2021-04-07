@@ -320,6 +320,7 @@ target_link_libraries(radosgw
 if(WITH_RADOSGW_BEAST_OPENSSL)
   # used by rgw_asio_frontend.cc
   target_link_libraries(radosgw PRIVATE OpenSSL::SSL)
+  target_link_libraries(rgw_a PRIVATE OpenSSL::SSL)
 endif()
 set_target_properties(radosgw PROPERTIES OUTPUT_NAME radosgw VERSION 2.0.0
   SOVERSION 2)
@@ -406,10 +407,13 @@ target_link_libraries(rgw
 if(WITH_RADOSGW_AMQP_ENDPOINT)
   target_link_libraries(rgw PRIVATE RabbitMQ::RabbitMQ)
   target_link_libraries(rgw PRIVATE OpenSSL::SSL)
+  target_link_libraries(rgw_a PRIVATE RabbitMQ::RabbitMQ)
+  target_link_libraries(rgw_a PRIVATE OpenSSL::SSL)
 endif()
 
 if(WITH_RADOSGW_KAFKA_ENDPOINT)
   target_link_libraries(rgw PRIVATE RDKafka::RDKafka)
+  target_link_libraries(rgw_a PRIVATE RDKafka::RDKafka)
 endif()
 
 target_link_libraries(rgw PRIVATE ${LUA_LIBRARIES})
