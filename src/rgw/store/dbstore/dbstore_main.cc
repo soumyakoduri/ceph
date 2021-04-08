@@ -88,9 +88,10 @@ void* process(void *arg)
 		it2++;
 	}
 
-/*	params.bucket_name = bucketa;
+	params.op.bucket.ent.bucket.name = bucketa;
 	db->ProcessOp("InsertBucket", &params);
 
+/*
 	params.object = objecta1;
 	
 	db->ProcessOp("InsertObject", &params);

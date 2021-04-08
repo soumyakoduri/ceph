@@ -956,12 +956,100 @@ int SQLInsertBucket::Bind(struct DBOpParams *params)
 	struct DBOpPrepareParams p_params = PrepareParams;
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.user.user_id.c_str(), sdb);
-
 	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
-
 	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.tenant.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.tenant.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.marker.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.marker.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_id.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.bucket_id.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.size.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.ent.size, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.size_rounded.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.ent.size_rounded, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.creation_time.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.ent.creation_time, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.count.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.ent.count, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.placement_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.placement_rule.name.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.placement_storage_class.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.placement_rule.storage_class.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.flags.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.info.flags, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.zonegroup.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.zonegroup.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.has_instance_obj.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.info.has_instance_obj, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.objv_tracker_read_ver.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.info.objv_tracker.read_version.ver, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.objv_tracker_read_tag.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.objv_tracker.read_version.tag.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.objv_tracker_write_ver.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.info.objv_tracker.write_version.ver, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.objv_tracker_write_tag.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.objv_tracker.write_version.tag.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.quota.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.info.quota, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.requester_pays.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.info.requester_pays, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.has_website.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.info.has_website, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.website_conf.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.info.website_conf, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.swift_versioning.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.info.swift_versioning, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.swift_ver_location.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.swift_ver_location.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.mdsearch_config.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.info.mdsearch_config, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.new_bucket_instance_id.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.new_bucket_instance_id.c_str(), sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.obj_lock.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.info.obj_lock, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.sync_policy_info_groups.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.info.sync_policy, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.attrs.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.attrs, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_ver.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.bucket.bucket_version.ver, sdb);
+
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_ver_tag.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.bucket_version.tag.c_str(), sdb);
+
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.mtime.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.mtime, sdb);
 
 out:
 	return rc;

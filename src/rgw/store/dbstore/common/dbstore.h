@@ -137,9 +137,7 @@ struct DBOpBucketPrepareInfo {
     string swift_ver_location = ":swift_ver_location";
     string mdsearch_config = ":mdsearch_config";
     string new_bucket_instance_id = ":new_bucket_instance_id";
-    string obj_lock_enabled = ":obj_lock_enabled";
-    string obj_lock_rule_exist = "obj_lock_rule_exist";
-    string obj_lock_rule = "obj_lock_rule";
+    string obj_lock = ":obj_lock";
     string sync_policy_info_groups = ":sync_policy_info_groups";
     string attrs = ":attrs";
     string bucket_ver = ":bucket_vers";
@@ -272,7 +270,7 @@ class DBOp {
             BucketID TEXT,      \
             Size   INTEGER,     \
             SizeRounded INTEGER,\
-            CreationTime TEXT,  \
+            CreationTime BLOB,  \
             Count  INTEGER,     \
 			PlacementName TEXT , 	\
 			PlacementStorageClass TEXT , 	\
@@ -292,14 +290,12 @@ class DBOp {
             SwiftVerLocation TEXT,  \
             MdsearchConfig  BLOB,   \
             NewBucketInstanceID TEXT,\
-            ObjectLockEnabled BOOLEAN, \
-            ObjectLockRuleExist BOOLEAN, \
-            ObjectLockRule  BLOB, \
+            ObjectLock BLOB, \
             SyncPolicyInfoGroups BLOB, \
             Attrs   BLOB,   \
             BucketVersion   INTEGER,    \
             BucketVersionTag TEXT,      \
-            Mtime   TEXT,   \
+            Mtime   BLOB,   \
             PRIMARY KEY (BucketName) \
 			FOREIGN KEY (OwnerID) \
 				REFERENCES '{}' (UserID) ON DELETE CASCADE ON UPDATE CASCADE \n);";
@@ -501,10 +497,11 @@ class InsertBucketOp: public DBOp {
         ObjVersionTrackerWriteVer, ObjVersionTrackerWriteTag, \
         Quota, RequesterPays, HasWebsite, WebsiteConf, \
         SwiftVersioning, SwiftVerLocation, \
-        MdsearchConfig, NewBucketInstanceID, \
-        ObjectLockEnabled, ObjectLockRuleExist, ObjectLockRule, \
+        MdsearchConfig, NewBucketInstanceID, ObjectLock, \
         SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime) \
-       VALUES ({}, {})";
+       VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+               {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+               {}, {}, {}, {}, {}, {}, {}, {}, {}, {})";
 
 	public:
 	virtual ~InsertBucketOp() {}
@@ -523,10 +520,10 @@ class InsertBucketOp: public DBOp {
                 params.op.bucket.quota, params.op.bucket.requester_pays, params.op.bucket.has_website,
                 params.op.bucket.website_conf, params.op.bucket.swift_versioning,
                 params.op.bucket.swift_ver_location, params.op.bucket.mdsearch_config,
-                params.op.bucket.new_bucket_instance_id, params.op.bucket.obj_lock_enabled,
-                params.op.bucket.obj_lock_rule_exist, params.op.bucket.obj_lock_rule,
+                params.op.bucket.new_bucket_instance_id, params.op.bucket.obj_lock,
                 params.op.bucket.sync_policy_info_groups, params.op.bucket.attrs,
-                params.op.bucket.bucket_ver, params.op.bucket.bucket_ver_tag, params.op.bucket.mtime);
+                params.op.bucket.bucket_ver, params.op.bucket.bucket_ver_tag,
+                params.op.bucket.mtime);
 	}
 };
 
