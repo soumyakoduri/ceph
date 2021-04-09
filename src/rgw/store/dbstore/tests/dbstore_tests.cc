@@ -47,6 +47,7 @@ namespace gtest {
 	};
 }
 
+ceph::real_time bucket_mtime = real_clock::now();
 namespace {
 
 	class DBStoreBaseTest : public ::testing::Test {
@@ -246,16 +247,34 @@ TEST_F(DBStoreBaseTest, InsertBucket) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
+	params.op.bucket.ent.bucket.name = "bucket1";
+    params.op.bucket.ent.bucket.tenant = "tenant";
+
+    params.op.bucket.ent.size = 1024;
+
+    params.op.bucket.info.has_instance_obj = false;
+    params.op.bucket.info.objv_tracker.read_version.ver = 1;
+    params.op.bucket.info.objv_tracker.read_version.tag = "read_tag";
+
+    params.op.bucket.mtime = bucket_mtime;
+
 	ret = db->ProcessOp("InsertBucket", &params);
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBStoreBaseTest, ListBucket) {
+TEST_F(DBStoreBaseTest, GetBucket) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
-	ret = db->ProcessOp("ListBucket", &params);
+	ret = db->ProcessOp("GetBucket", &params);
 	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(params.op.bucket.ent.bucket.name, "bucket1");
+	ASSERT_EQ(params.op.bucket.ent.bucket.tenant, "tenant");
+	ASSERT_EQ(params.op.bucket.ent.size, 1024);
+	ASSERT_EQ(params.op.bucket.info.has_instance_obj, false);
+	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.ver, 1);
+	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.tag, "read_tag");
+	ASSERT_EQ(params.op.bucket.mtime, bucket_mtime);
 }
 
 TEST_F(DBStoreBaseTest, ListAllBuckets) {

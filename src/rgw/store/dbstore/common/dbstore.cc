@@ -150,8 +150,8 @@ DBOp * DBStore::getDBOp(string Op, struct DBOpParams *params)
 		return dbops.InsertBucket;
 	if (!Op.compare("RemoveBucket"))
 		return dbops.RemoveBucket;
-	if (!Op.compare("ListBucket"))
-		return dbops.ListBucket;
+	if (!Op.compare("GetBucket"))
+		return dbops.GetBucket;
 
 	/* Object Operations */
 	map<string, class ObjectOp*>::iterator iter;

@@ -176,7 +176,7 @@ struct DBOps {
 	class GetUserOp *GetUser;
 	class InsertBucketOp *InsertBucket;
 	class RemoveBucketOp *RemoveBucket;
-	class ListBucketOp *ListBucket;
+	class GetBucketOp *GetBucket;
 };
 
 class ObjectOp {
@@ -541,13 +541,21 @@ class RemoveBucketOp: public DBOp {
 	}
 };
 
-class ListBucketOp: public DBOp {
+class GetBucketOp: public DBOp {
 	private:
-	const string Query =
-	"SELECT  * from '{}' where BucketName = {}";
+	const string Query = "SELECT  \
+        BucketName, Tenant, Marker, BucketID, Size, SizeRounded, CreationTime, \
+        Count, PlacementName, PlacementStorageClass, OwnerID, Flags, Zonegroup, \
+        HasInstanceObj, ObjVersionTrackerReadVer, ObjVersionTrackerReadTag, \
+        ObjVersionTrackerWriteVer, ObjVersionTrackerWriteTag, \
+        Quota, RequesterPays, HasWebsite, WebsiteConf, \
+        SwiftVersioning, SwiftVerLocation, \
+        MdsearchConfig, NewBucketInstanceID, ObjectLock, \
+        SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime \
+        from '{}' where BucketName = {}";
 
 	public:
-	virtual ~ListBucketOp() {}
+	virtual ~GetBucketOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.bucket_table.c_str(),

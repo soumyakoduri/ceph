@@ -134,7 +134,7 @@ void* process(void *arg)
 	db->ProcessOp("InsertObject", &params);
 
 	db->ProcessOp("GetUser", &params);
-	db->ProcessOp("ListBucket", &params);
+	db->ProcessOp("GetBucket", &params);
 	db->ProcessOp("ListObject", &params);
 
 	db->ListAllUsers(&params);

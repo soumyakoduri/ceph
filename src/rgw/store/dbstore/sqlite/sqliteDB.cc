@@ -179,6 +179,41 @@ enum ListUser {
   AssumedRoleARN
 };
 
+enum GetBucket {
+  BucketName = 0,
+  Bucket_Tenant, //Tenant
+  Marker,
+  BucketID,
+  Size,
+  SizeRounded,
+  CreationTime,
+  Count,
+  Bucket_PlacementName,
+  Bucket_PlacementStorageClass,
+  OwnerID,
+  Flags,
+  Zonegroup,
+  HasInstanceObj,
+  ObjVersionTrackerReadVer,
+  ObjVersionTrackerReadTag,
+  ObjVersionTrackerWriteVer,
+  ObjVersionTrackerWriteTag,
+  Quota,
+  RequesterPays,
+  HasWebsite,
+  WebsiteConf,
+  SwiftVersioning,
+  SwiftVerLocation,
+  MdsearchConfig,
+  NewBucketInstanceID,
+  ObjectLock,
+  SyncPolicyInfoGroups,
+  Attrs,
+  BucketVersion,
+  BucketVersionTag,
+  Mtime
+};
+
 static int list_user(DBOpInfo &op, sqlite3_stmt *stmt) {
 	if (!stmt)
 		return -1;
@@ -257,6 +292,39 @@ static int list_bucket(DBOpInfo &op, sqlite3_stmt *stmt) {
 	cout<<sqlite3_column_text(stmt, 0)<<", ";
 	cout<<sqlite3_column_text(stmt, 1)<<"\n";
 
+	op.bucket.ent.bucket.name = (const char*)sqlite3_column_text(stmt, BucketName);
+	op.bucket.ent.bucket.tenant = (const char*)sqlite3_column_text(stmt, Bucket_Tenant);
+	op.bucket.ent.bucket.marker = (const char*)sqlite3_column_text(stmt, Marker);
+	op.bucket.ent.bucket.bucket_id = (const char*)sqlite3_column_text(stmt, BucketID);
+	op.bucket.ent.size = sqlite3_column_int(stmt, Size);
+	op.bucket.ent.size_rounded = sqlite3_column_int(stmt, SizeRounded);
+	SQL_DECODE_BLOB_PARAM(stmt, CreationTime, op.bucket.ent.creation_time, sdb);
+	op.bucket.ent.count = sqlite3_column_int(stmt, Count);
+	op.bucket.ent.placement_rule.name = (const char*)sqlite3_column_text(stmt, Bucket_PlacementName);
+	op.bucket.ent.placement_rule.storage_class = (const char*)sqlite3_column_text(stmt, Bucket_PlacementStorageClass);
+	op.bucket.info.owner.id = (const char*)sqlite3_column_text(stmt, OwnerID);
+	op.bucket.info.flags = sqlite3_column_int(stmt, Flags);
+	op.bucket.info.zonegroup = (const char*)sqlite3_column_text(stmt, Zonegroup);
+	op.bucket.info.has_instance_obj = sqlite3_column_int(stmt, HasInstanceObj);
+	op.bucket.info.objv_tracker.read_version.ver = sqlite3_column_int(stmt, ObjVersionTrackerReadVer);
+	op.bucket.info.objv_tracker.read_version.tag = (const char*)sqlite3_column_text(stmt, ObjVersionTrackerReadTag);
+	op.bucket.info.objv_tracker.write_version.ver = sqlite3_column_int(stmt, ObjVersionTrackerWriteVer);
+	op.bucket.info.objv_tracker.write_version.tag = (const char*)sqlite3_column_text(stmt, ObjVersionTrackerWriteTag);
+	SQL_DECODE_BLOB_PARAM(stmt, Quota, op.bucket.info.quota, sdb);
+	op.bucket.info.requester_pays = sqlite3_column_int(stmt, RequesterPays);
+	op.bucket.info.has_website = sqlite3_column_int(stmt, HasWebsite);
+	SQL_DECODE_BLOB_PARAM(stmt, WebsiteConf, op.bucket.info.website_conf, sdb);
+	op.bucket.info.swift_versioning = sqlite3_column_int(stmt, SwiftVersioning);
+	op.bucket.info.swift_ver_location = (const char*)sqlite3_column_text(stmt, SwiftVerLocation);
+	SQL_DECODE_BLOB_PARAM(stmt, MdsearchConfig, op.bucket.info.mdsearch_config, sdb);
+	op.bucket.info.new_bucket_instance_id = (const char*)sqlite3_column_text(stmt, NewBucketInstanceID);
+	SQL_DECODE_BLOB_PARAM(stmt, ObjectLock, op.bucket.info.obj_lock, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, SyncPolicyInfoGroups, op.bucket.info.sync_policy, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, Attrs, op.bucket.attrs, sdb);
+	op.bucket.bucket_version.ver = sqlite3_column_int(stmt, BucketVersion);
+	op.bucket.bucket_version.tag = (const char*)sqlite3_column_text(stmt, BucketVersionTag);
+	SQL_DECODE_BLOB_PARAM(stmt, Mtime, op.bucket.mtime, sdb);
+
 	return 0;
 }
 
@@ -300,7 +368,7 @@ int SQLiteDB::InitializeDBOps()
         dbops.GetUser = new SQLGetUser(&this->db);
         dbops.InsertBucket = new SQLInsertBucket(&this->db);
         dbops.RemoveBucket = new SQLRemoveBucket(&this->db);
-        dbops.ListBucket = new SQLListBucket(&this->db);
+        dbops.GetBucket = new SQLGetBucket(&this->db);
 
 	return 0;
 }
@@ -312,7 +380,7 @@ int SQLiteDB::FreeDBOps()
         delete dbops.GetUser;
         delete dbops.InsertBucket;
         delete dbops.RemoveBucket;
-        delete dbops.ListBucket;
+        delete dbops.GetBucket;
 
 	return 0;
 }
@@ -1112,25 +1180,25 @@ out:
 	return ret;
 }
 
-int SQLListBucket::Prepare(struct DBOpParams *params)
+int SQLGetBucket::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
 	if (!*sdb) {
-		dbout(L_ERR)<<"In SQLListBucket - no db\n";
+		dbout(L_ERR)<<"In SQLGetBucket - no db\n";
 		goto out;
 	}
 
 	p_params.bucket_table = params->bucket_table;
 
-	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareListBucket");
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetBucket");
 
 out:
 	return ret;
 }
 
-int SQLListBucket::Bind(struct DBOpParams *params)
+int SQLGetBucket::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
@@ -1144,7 +1212,7 @@ out:
 	return rc;
 }
 
-int SQLListBucket::Execute(struct DBOpParams *params)
+int SQLGetBucket::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 

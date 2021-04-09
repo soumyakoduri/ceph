@@ -154,14 +154,14 @@ class SQLRemoveBucket : public SQLiteDB, public RemoveBucketOp {
         int Bind(DBOpParams *params);
 };
 
-class SQLListBucket : public SQLiteDB, public ListBucketOp {
+class SQLGetBucket : public SQLiteDB, public GetBucketOp {
 	private:
 	sqlite3 **sdb = NULL;
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLListBucket(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
-	~SQLListBucket() {
+	SQLGetBucket(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	~SQLGetBucket() {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
