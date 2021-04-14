@@ -302,6 +302,11 @@ static int list_bucket(DBOpInfo &op, sqlite3_stmt *stmt) {
 	op.bucket.ent.count = sqlite3_column_int(stmt, Count);
 	op.bucket.ent.placement_rule.name = (const char*)sqlite3_column_text(stmt, Bucket_PlacementName);
 	op.bucket.ent.placement_rule.storage_class = (const char*)sqlite3_column_text(stmt, Bucket_PlacementStorageClass);
+
+    op.bucket.info.bucket = op.bucket.ent.bucket;
+    op.bucket.info.placement_rule = op.bucket.ent.placement_rule;
+    op.bucket.info.creation_time = op.bucket.ent.creation_time;
+
 	op.bucket.info.owner.id = (const char*)sqlite3_column_text(stmt, OwnerID);
 	op.bucket.info.flags = sqlite3_column_int(stmt, Flags);
 	op.bucket.info.zonegroup = (const char*)sqlite3_column_text(stmt, Zonegroup);
@@ -936,7 +941,7 @@ int SQLGetUser::Prepare(struct DBOpParams *params)
 		SQL_PREPARE(p_params, sdb, ak_stmt, ret, "PrepareGetUser");
 	} else if (params->op.get_query_str == "user_id") { 
 		SQL_PREPARE(p_params, sdb, userid_stmt, ret, "PrepareGetUser");
-	} else { // by default by username
+	} else { // by default by userid
 		SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetUser");
 	}
 out:
@@ -972,9 +977,9 @@ int SQLGetUser::Bind(struct DBOpParams *params)
 
 	    SQL_BIND_INDEX(userid_stmt, index, p_params.op.user.ns.c_str(), sdb);
     	SQL_BIND_TEXT(userid_stmt, index, params->op.user.uinfo.user_id.ns.c_str(), sdb);
-	} else { // by default by username
-		SQL_BIND_INDEX(stmt, index, p_params.op.user.display_name.c_str(), sdb);
-		SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.display_name.c_str(), sdb);
+	} else { // by default by userid
+		SQL_BIND_INDEX(stmt, index, p_params.op.user.user_id.c_str(), sdb);
+		SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
 	}
 
 out:
@@ -991,7 +996,7 @@ int SQLGetUser::Execute(struct DBOpParams *params)
 		SQL_EXECUTE(params, ak_stmt, list_user);
  	} else if (params->op.get_query_str == "user_id") { 
 		SQL_EXECUTE(params, userid_stmt, list_user);
-	} else { // by default by username
+	} else { // by default by userid
 		SQL_EXECUTE(params, stmt, list_user);
 	}
 	
@@ -1027,16 +1032,16 @@ int SQLInsertBucket::Bind(struct DBOpParams *params)
 	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.tenant.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.tenant.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.tenant.c_str(), sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.marker.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.marker.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.marker.c_str(), sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_id.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.bucket_id.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.bucket_id.c_str(), sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.size.c_str(), sdb);
 	SQL_BIND_INT(stmt, index, params->op.bucket.ent.size, sdb);
@@ -1045,16 +1050,16 @@ int SQLInsertBucket::Bind(struct DBOpParams *params)
 	SQL_BIND_INT(stmt, index, params->op.bucket.ent.size_rounded, sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.creation_time.c_str(), sdb);
-	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.ent.creation_time, sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.info.creation_time, sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.count.c_str(), sdb);
 	SQL_BIND_INT(stmt, index, params->op.bucket.ent.count, sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.placement_name.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.placement_rule.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.placement_rule.name.c_str(), sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.placement_storage_class.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.placement_rule.storage_class.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.placement_rule.storage_class.c_str(), sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.flags.c_str(), sdb);
 	SQL_BIND_INT(stmt, index, params->op.bucket.info.flags, sdb);
@@ -1130,7 +1135,7 @@ int SQLInsertBucket::Execute(struct DBOpParams *params)
 
 	ObPtr = new SQLObjectOp(sdb);
 
-	objectmapInsert(params->op.bucket.ent.bucket.name, ObPtr);
+	objectmapInsert(params->op.bucket.info.bucket.name, ObPtr);
 
 	SQL_EXECUTE(params, stmt, NULL);
 out:
@@ -1163,7 +1168,7 @@ int SQLRemoveBucket::Bind(struct DBOpParams *params)
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
 out:
 	return rc;
@@ -1173,7 +1178,7 @@ int SQLRemoveBucket::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
-	objectmapDelete(params->op.bucket.ent.bucket.name);
+	objectmapDelete(params->op.bucket.info.bucket.name);
 
 	SQL_EXECUTE(params, stmt, NULL);
 out:
@@ -1206,7 +1211,7 @@ int SQLGetBucket::Bind(struct DBOpParams *params)
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
 out:
 	return rc;
@@ -1233,7 +1238,7 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.ent.bucket.name;
+    bucket_name = params->op.bucket.info.bucket.name;
 	p_params.object_table = bucket_name + ".object.table";
 	copy.object_table = bucket_name + ".object.table";
 
@@ -1257,7 +1262,7 @@ int SQLInsertObject::Bind(struct DBOpParams *params)
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
 out:
 	return rc;
@@ -1284,7 +1289,7 @@ int SQLRemoveObject::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.ent.bucket.name;
+    bucket_name = params->op.bucket.info.bucket.name;
 	p_params.object_table = bucket_name + ".object.table";
 	copy.object_table = bucket_name + ".object.table";
 
@@ -1308,7 +1313,7 @@ int SQLRemoveObject::Bind(struct DBOpParams *params)
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
 out:
 	return rc;
@@ -1335,7 +1340,7 @@ int SQLListObject::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.ent.bucket.name;
+    bucket_name = params->op.bucket.info.bucket.name;
 	p_params.object_table = bucket_name + ".object.table";
 	copy.object_table = bucket_name + ".object.table";
 
@@ -1360,7 +1365,7 @@ int SQLListObject::Bind(struct DBOpParams *params)
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
 out:
 	return rc;
@@ -1387,7 +1392,7 @@ int SQLPutObjectData::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.ent.bucket.name;
+    bucket_name = params->op.bucket.info.bucket.name;
 	p_params.object_table = bucket_name + ".object.table";
 	p_params.objectdata_table = bucket_name + ".objectdata.table";
 	copy.object_table = bucket_name + ".object.table";
@@ -1413,7 +1418,7 @@ int SQLPutObjectData::Bind(struct DBOpParams *params)
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.offset.c_str(), sdb);
 
@@ -1452,7 +1457,7 @@ int SQLGetObjectData::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.ent.bucket.name;
+    bucket_name = params->op.bucket.info.bucket.name;
 	p_params.object_table = bucket_name + ".object.table";
 	p_params.objectdata_table = bucket_name + ".objectdata.table";
 	copy.object_table = bucket_name + ".object.table";
@@ -1478,7 +1483,7 @@ int SQLGetObjectData::Bind(struct DBOpParams *params)
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 out:
 	return rc;
 }
@@ -1504,7 +1509,7 @@ int SQLDeleteObjectData::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.ent.bucket.name;
+    bucket_name = params->op.bucket.info.bucket.name;
 	p_params.object_table = bucket_name + ".object.table";
 	p_params.objectdata_table = bucket_name + ".objectdata.table";
 	copy.object_table = bucket_name + ".object.table";
@@ -1530,7 +1535,7 @@ int SQLDeleteObjectData::Bind(struct DBOpParams *params)
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.ent.bucket.name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 out:
 	return rc;
 }

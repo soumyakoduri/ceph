@@ -157,11 +157,11 @@ DBOp * DBStore::getDBOp(string Op, struct DBOpParams *params)
 	map<string, class ObjectOp*>::iterator iter;
 	class ObjectOp* Ob;
 
-	iter = DBStore::objectmap.find(params->op.bucket.ent.bucket.name);
+	iter = DBStore::objectmap.find(params->op.bucket.info.bucket.name);
 
 	if (iter == DBStore::objectmap.end()) {
 		dbout(L_EVENT)<<"No objectmap found for bucket: " \
-			     <<params->op.bucket.ent.bucket.name<<"\n";
+			     <<params->op.bucket.info.bucket.name<<"\n";
 		/* not found */
 		return NULL;
 	}
@@ -313,6 +313,56 @@ int DBStore::get_user(const std::string& query_str, const std::string& query_str
 		goto out;
 
     uinfo = params.op.user.uinfo;
+
+out:
+	return ret;
+}
+
+int DBStore::get_bucket_info(const std::string& query_str,
+                             const std::string& query_str_val,
+                             RGWBucketInfo& info) {
+	int ret = 0;
+
+	if (query_str.empty()) {
+		// not checking for query_str_val as the query can be to fetch
+		// entries with null values
+		return -1;
+	}
+
+    DBOpParams params = {};
+    DBOpParams params2 = {};
+    InitializeParams("GetBucket", &params);
+
+    if (query_str == "name") {
+		params.op.bucket.info.bucket.name = info.bucket.name;
+	} else {
+		dbout(L_ERR)<<"In GetBucket Invalid query string :" <<query_str.c_str()<<") \n";
+		return -1;
+	}
+
+    ret = ProcessOp("GetBucket", &params);
+
+	if (ret) {
+		dbout(L_ERR)<<"In GetBucket failed err:(" <<ret<<") \n";
+		goto out;
+    }
+
+    /* Now fetch Owner(RGWUser) from info.owner.id */
+    InitializeParams("GetUser", &params2);
+
+    params2.op.user.uinfo.user_id.id = params.op.bucket.info.owner.id;
+
+    ret = ProcessOp("GetUser", &params2);
+
+	if (ret) {
+		dbout(L_ERR)<<"In GetUser failed err:(" <<ret<<") \n";
+		goto out;
+    }
+
+
+    params.op.bucket.info.owner = params2.op.user.uinfo.user_id;
+
+    info = params.op.bucket.info;
 
 out:
 	return ret;

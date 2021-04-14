@@ -437,7 +437,7 @@ class GetUserOp: public DBOp {
     			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
     			 System, PlacementName, PlacementStorageClass, PlacementTags, \
 	    		 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
-		    	 from '{}' where DisplayName = {}";
+		    	 from '{}' where UserID = {}";
 
 	const string QueryByEmail = "SELECT \
 	       	     UserID, Tenant, NS, DisplayName, UserEmail, \
@@ -482,7 +482,7 @@ class GetUserOp: public DBOp {
                          params.op.user.ns.c_str());
 		} else {
 			return fmt::format(Query.c_str(), params.user_table.c_str(),
-					   params.op.user.display_name.c_str());
+					   params.op.user.user_id.c_str());
 		}
 	}
 };
@@ -728,5 +728,7 @@ class DBStore {
 
 	int get_user(const std::string& query_str, const std::string& query_str_val,
 			RGWUserInfo& user);
+    int get_bucket_info(const std::string& query_str, const std::string& query_str_val,
+                        RGWBucketInfo& info);
 };
 #endif

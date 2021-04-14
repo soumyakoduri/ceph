@@ -68,7 +68,7 @@ namespace {
 
 			GlobalParams.op.user.uinfo.display_name = user1;
 			GlobalParams.op.user.uinfo.user_id.id = user_id1;
-			GlobalParams.op.bucket.ent.bucket.name = bucket1;
+			GlobalParams.op.bucket.info.bucket.name = bucket1;
 			GlobalParams.object = object1;
 			GlobalParams.offset = 0;
 			GlobalParams.data = data;
@@ -247,8 +247,8 @@ TEST_F(DBStoreBaseTest, InsertBucket) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
-	params.op.bucket.ent.bucket.name = "bucket1";
-    params.op.bucket.ent.bucket.tenant = "tenant";
+	params.op.bucket.info.bucket.name = "bucket1";
+    params.op.bucket.info.bucket.tenant = "tenant";
 
     params.op.bucket.ent.size = 1024;
 
@@ -268,13 +268,31 @@ TEST_F(DBStoreBaseTest, GetBucket) {
 
 	ret = db->ProcessOp("GetBucket", &params);
 	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(params.op.bucket.info.bucket.name, "bucket1");
+	ASSERT_EQ(params.op.bucket.info.bucket.tenant, "tenant");
+	ASSERT_EQ(params.op.bucket.ent.size, 1024);
 	ASSERT_EQ(params.op.bucket.ent.bucket.name, "bucket1");
 	ASSERT_EQ(params.op.bucket.ent.bucket.tenant, "tenant");
-	ASSERT_EQ(params.op.bucket.ent.size, 1024);
 	ASSERT_EQ(params.op.bucket.info.has_instance_obj, false);
 	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.ver, 1);
 	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.tag, "read_tag");
 	ASSERT_EQ(params.op.bucket.mtime, bucket_mtime);
+	ASSERT_EQ(params.op.bucket.info.owner.id, "user_id1");
+}
+TEST_F(DBStoreBaseTest, GetBucketQueryByName) {
+	int ret = -1;
+    RGWBucketInfo binfo;
+    binfo.bucket.name = "bucket1";
+
+	ret = db->get_bucket_info("name", "", binfo);
+	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(binfo.bucket.name, "bucket1");
+	ASSERT_EQ(binfo.bucket.tenant, "tenant");
+	ASSERT_EQ(binfo.has_instance_obj, false);
+	ASSERT_EQ(binfo.objv_tracker.read_version.ver, 1);
+	ASSERT_EQ(binfo.objv_tracker.read_version.tag, "read_tag");
+	ASSERT_EQ(binfo.owner.id, "user_id1");
+	ASSERT_EQ(binfo.owner.tenant, "tenant");
 }
 
 TEST_F(DBStoreBaseTest, ListAllBuckets) {

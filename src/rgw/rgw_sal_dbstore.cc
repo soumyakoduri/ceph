@@ -107,7 +107,11 @@ int RGWDBBucket::remove_bucket(const DoutPrefixProvider *dpp, bool delete_childr
 
 int RGWDBBucket::get_bucket_info(const DoutPrefixProvider *dpp, optional_yield y)
 {
-  return 0;
+    int ret = 0;
+
+    ret = store->getDBStore()->get_bucket_info(string("name"), "", info);
+
+    return ret;
 }
 
 int RGWDBBucket::get_bucket_stats(int shard_id,
@@ -320,20 +324,42 @@ int RGWDBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max
   }
 
 
-  int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const rgw_bucket& b, std::unique_ptr<RGWBucket>* bucket, optional_yield y)
-  {
-    return 0;
+int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const rgw_bucket& b, std::unique_ptr<RGWBucket>* bucket, optional_yield y)
+{
+  int ret;
+  RGWBucket* bp;
+
+  bp = new RGWDBBucket(this, b, u);
+  ret = bp->get_bucket_info(dpp, y);
+  if (ret < 0) {
+    delete bp;
+    return ret;
   }
 
-  int RGWDBStore::get_bucket(RGWUser* u, const RGWBucketInfo& i, std::unique_ptr<RGWBucket>* bucket)
-  {
-    return 0;
-  }
+  bucket->reset(bp);
+  return 0;
+}
 
-  int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const std::string& tenant, const std::string& name, std::unique_ptr<RGWBucket>* bucket, optional_yield y)
-  {
-    return 0;
-  }
+int RGWDBStore::get_bucket(RGWUser* u, const RGWBucketInfo& i, std::unique_ptr<RGWBucket>* bucket)
+{
+  RGWBucket* bp;
+
+  bp = new RGWDBBucket(this, i, u);
+  /* Don't need to fetch the bucket info, use the provided one */
+
+  bucket->reset(bp);
+  return 0;
+}
+
+int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const std::string& tenant, const std::string& name, std::unique_ptr<RGWBucket>* bucket, optional_yield y)
+{
+  rgw_bucket b;
+
+  b.tenant = tenant;
+  b.name = name;
+
+  return get_bucket(dpp, u, b, bucket, y);
+}
 
   int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
                                 RGWUser& u, const rgw_bucket& b,
