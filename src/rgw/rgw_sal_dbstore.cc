@@ -361,7 +361,7 @@ int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const std:
   return get_bucket(dpp, u, b, bucket, y);
 }
 
-  int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
+int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
                                 RGWUser& u, const rgw_bucket& b,
                                 const string& zonegroup_id,
                                 rgw_placement_rule& placement_rule,
@@ -377,9 +377,84 @@ int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const std:
                                 req_info& req_info,
                                 std::unique_ptr<RGWBucket>* bucket_out,
                                 optional_yield y)
-  {
-    return 0;
+{
+  int ret;
+  bufferlist in_data;
+  RGWBucketInfo master_info;
+  rgw_bucket *pmaster_bucket;
+  uint32_t *pmaster_num_shards;
+  real_time creation_time;
+  std::unique_ptr<RGWBucket> bucket;
+  obj_version objv, *pobjv = NULL;
+
+  /* If it exists, look it up; otherwise create it */
+  ret = get_bucket(dpp, &u, b, &bucket, y);
+  if (ret < 0 && ret != -ENOENT)
+    return ret;
+
+  if (ret != -ENOENT) {
+    RGWAccessControlPolicy old_policy(ctx());
+    *existed = true;
+    if (swift_ver_location.empty()) {
+      swift_ver_location = bucket->get_info().swift_ver_location;
+    }
+    placement_rule.inherit_from(bucket->get_info().placement_rule);
+
+    // don't allow changes to the acl policy
+/*    int r = rgw_op_get_bucket_policy_from_attr(dpp, this, u, bucket->get_attrs(),
+					       &old_policy, y);
+    if (r >= 0 && old_policy != policy) {
+      bucket_out->swap(bucket);
+      return -EEXIST;
+    }*/
+  } else {
+    bucket = std::unique_ptr<RGWBucket>(new RGWDBBucket(this, b, &u));
+    *existed = false;
+    bucket->set_attrs(attrs);
   }
+
+  /*
+   * XXX: If not master zone, fwd the request to master zone.
+   * For now DBStore has single zone.
+   */
+  std::string zid = zonegroup_id;
+  /* if (zid.empty()) {
+    zid = svc()->zone->get_zonegroup().get_id();
+  } */
+
+  if (*existed) {
+    rgw_placement_rule selected_placement_rule;
+    /* XXX: Handle this when zone is implemented
+    ret = svc()->zone->select_bucket_placement(u.get_info(),
+					       zid, placement_rule,
+					       &selected_placement_rule, nullptr, y);
+    if (selected_placement_rule != info.placement_rule) {
+      ret = -EEXIST;
+      bucket_out->swap(bucket);
+      return ret;
+    } */
+  } else {
+
+    ret = getDBStore()->create_bucket(u.get_info(), bucket->get_key(),
+				    zid, placement_rule, swift_ver_location, pquota_info,
+				    attrs, info, pobjv, &ep_objv, creation_time,
+				    pmaster_bucket, pmaster_num_shards, y, dpp,
+				    exclusive);
+    if (ret == -EEXIST) {
+      *existed = true;
+      ret = 0;
+    } else if (ret != 0) {
+      return ret;
+    }
+  }
+
+  bucket->set_version(ep_objv);
+  bucket->get_info() = info;
+
+  bucket_out->swap(bucket);
+
+  return ret;
+}
 
   bool RGWDBStore::is_meta_master()
   {

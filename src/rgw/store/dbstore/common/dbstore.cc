@@ -368,3 +368,89 @@ out:
 	return ret;
 }
 
+int DBStore::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
+                            const string& zonegroup_id,
+                            const rgw_placement_rule& placement_rule,
+                            const string& swift_ver_location,
+                            const RGWQuotaInfo * pquota_info,
+			    map<std::string, bufferlist>& attrs,
+                            RGWBucketInfo& info,
+                            obj_version *pobjv,
+                            obj_version *pep_objv,
+                            real_time creation_time,
+                            rgw_bucket *pmaster_bucket,
+                            uint32_t *pmaster_num_shards,
+			    optional_yield y,
+                            const DoutPrefixProvider *dpp,
+			    bool exclusive)
+{
+  /*
+   * XXX: Simple creation for now.
+   *
+   * Referring to RGWRados::create_bucket(), 
+   * Check if bucket already exists, select_bucket_placement,
+   * is explicit put/remove instance info needed? - should not be ideally
+   */
+
+    DBOpParams params = {};
+    InitializeParams("CreateBucket", &params);
+    int ret = 0;
+
+   /* Check if the bucket already exists and return the old info, caller will have a use for it */
+   RGWBucketInfo orig_info;
+   orig_info.bucket.name = bucket.name;
+   ret = get_bucket_info(string("name"), "", orig_info);
+
+   if (!ret && !orig_info.owner.id.empty()) {
+     /* already exists. Return the old info */
+
+     info = std::move(orig_info);
+     return ret;
+   }
+
+    /* Since bucket_id is optional..not generating it for now to check
+     * if there are any dependencies.
+     */
+
+    RGWObjVersionTracker& objv_tracker = info.objv_tracker;
+
+    objv_tracker.read_version.clear();
+
+    if (pobjv) {
+      objv_tracker.write_version = *pobjv;
+    } else {
+      objv_tracker.generate_new_write_ver(cct);
+    }
+
+    info.bucket = bucket;
+    info.owner = owner.user_id;
+    info.zonegroup = zonegroup_id;
+    info.placement_rule = placement_rule;
+    info.swift_ver_location = swift_ver_location;
+    info.swift_versioning = (!swift_ver_location.empty());
+
+    info.requester_pays = false;
+    if (real_clock::is_zero(creation_time)) {
+      info.creation_time = ceph::real_clock::now();
+    } else {
+      info.creation_time = creation_time;
+    }
+    if (pquota_info) {
+      info.quota = *pquota_info;
+    }
+
+    params.op.bucket.info = info;
+    params.op.bucket.attrs = attrs;
+    params.op.bucket.mtime = ceph::real_time();
+    params.op.user.uinfo.user_id.id = owner.user_id.id;
+
+    ret = ProcessOp("InsertBucket", &params);
+
+	if (ret) {
+		dbout(L_ERR)<<"In InsertBucket failed err:(" <<ret<<") \n";
+		goto out;
+    }
+
+out:
+    return ret;
+}

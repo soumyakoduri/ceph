@@ -28,7 +28,7 @@ struct DBOpUserInfo {
 };
 
 struct DBOpBucketInfo {
-    RGWBucketEnt ent;
+    RGWBucketEnt ent; // maybe not needed. not used in create/get_bucket
     RGWBucketInfo info;
     RGWUser* owner = nullptr;
     rgw::sal::RGWAttrs attrs;
@@ -730,5 +730,20 @@ class DBStore {
 			RGWUserInfo& user);
     int get_bucket_info(const std::string& query_str, const std::string& query_str_val,
                         RGWBucketInfo& info);
+    int create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
+                            const string& zonegroup_id,
+                            const rgw_placement_rule& placement_rule,
+                            const string& swift_ver_location,
+                            const RGWQuotaInfo * pquota_info,
+			    map<std::string, bufferlist>& attrs,
+                            RGWBucketInfo& info,
+                            obj_version *pobjv,
+                            obj_version *pep_objv,
+                            real_time creation_time,
+                            rgw_bucket *pmaster_bucket,
+                            uint32_t *pmaster_num_shards,
+			    optional_yield y,
+                            const DoutPrefixProvider *dpp,
+			    bool exclusive);
 };
 #endif

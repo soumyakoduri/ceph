@@ -279,20 +279,50 @@ TEST_F(DBStoreBaseTest, GetBucket) {
 	ASSERT_EQ(params.op.bucket.mtime, bucket_mtime);
 	ASSERT_EQ(params.op.bucket.info.owner.id, "user_id1");
 }
+
+TEST_F(DBStoreBaseTest, CreateBucket) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+    RGWBucketInfo info;
+    RGWUserInfo owner;
+    rgw_bucket bucket;
+    obj_version objv;
+    rgw_placement_rule rule;
+    map<std::string, bufferlist> attrs;
+
+    owner.user_id.id = "user_id1";
+    bucket.name = "bucket2";
+    bucket.tenant = "tenant";
+
+    objv.ver = 2;
+    objv.tag = "write_tag";
+
+    rule.name = "rule1";
+    rule.storage_class = "sc1";
+
+	ret = db->create_bucket(owner, bucket, "zid", rule, "swift_ver", NULL,
+                            attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
+                            null_yield, NULL, false);
+	ASSERT_EQ(ret, 0);
+}
+
 TEST_F(DBStoreBaseTest, GetBucketQueryByName) {
 	int ret = -1;
     RGWBucketInfo binfo;
-    binfo.bucket.name = "bucket1";
+    binfo.bucket.name = "bucket2";
 
 	ret = db->get_bucket_info("name", "", binfo);
 	ASSERT_EQ(ret, 0);
-	ASSERT_EQ(binfo.bucket.name, "bucket1");
+	ASSERT_EQ(binfo.bucket.name, "bucket2");
 	ASSERT_EQ(binfo.bucket.tenant, "tenant");
-	ASSERT_EQ(binfo.has_instance_obj, false);
-	ASSERT_EQ(binfo.objv_tracker.read_version.ver, 1);
-	ASSERT_EQ(binfo.objv_tracker.read_version.tag, "read_tag");
 	ASSERT_EQ(binfo.owner.id, "user_id1");
-	ASSERT_EQ(binfo.owner.tenant, "tenant");
+	ASSERT_EQ(binfo.objv_tracker.write_version.ver, 2);
+	ASSERT_EQ(binfo.objv_tracker.write_version.tag, "write_tag");
+	ASSERT_EQ(binfo.zonegroup, "zid");
+	ASSERT_EQ(binfo.creation_time, bucket_mtime);
+	ASSERT_EQ(binfo.placement_rule.name, "rule1");
+	ASSERT_EQ(binfo.placement_rule.storage_class, "sc1");
+
 }
 
 TEST_F(DBStoreBaseTest, ListAllBuckets) {

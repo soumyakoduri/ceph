@@ -1132,10 +1132,15 @@ int SQLInsertBucket::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 	class SQLObjectOp *ObPtr = NULL;
+    string bucket_name = params->op.bucket.info.bucket.name;
 
 	ObPtr = new SQLObjectOp(sdb);
 
-	objectmapInsert(params->op.bucket.info.bucket.name, ObPtr);
+	objectmapInsert(bucket_name, ObPtr);
+
+	params->object_table = bucket_name + ".object.table";
+
+	(void)createObjectTable(params);
 
 	SQL_EXECUTE(params, stmt, NULL);
 out:
@@ -1240,9 +1245,6 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 
     bucket_name = params->op.bucket.info.bucket.name;
 	p_params.object_table = bucket_name + ".object.table";
-	copy.object_table = bucket_name + ".object.table";
-
-	(void)createObjectTable(&copy);
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareInsertObject");
 
