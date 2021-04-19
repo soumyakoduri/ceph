@@ -29,7 +29,7 @@
 
 extern "C" {
 extern rgw::sal::Store* newStore(void);
-extern rgw::sal::RGWStore* newRGWDBStore(void);
+extern rgw::sal::Store* newRGWDBStore(void);
 }
 
 rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* dpp, CephContext* cct, const std::string svc, bool use_gc_thread, bool use_lc_thread, bool quota_threads, bool run_sync_thread, bool run_reshard_thread, bool use_cache, bool use_gc)

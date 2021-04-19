@@ -24,25 +24,25 @@ namespace rgw { namespace sal {
 
   class RGWDBStore;
 
-  class RGWDBUser : public RGWUser {
+  class DBUser : public User {
     private:
       RGWDBStore *store;
 
     public:
-      RGWDBUser(RGWDBStore *_st, const rgw_user& _u) : RGWUser(_u), store(_st) { }
-      RGWDBUser(RGWDBStore *_st, const RGWUserInfo& _i) : RGWUser(_i), store(_st) { }
-      RGWDBUser(RGWDBStore *_st) : store(_st) { }
-      RGWDBUser(RGWDBUser& _o) = default;
-      RGWDBUser() {}
+      DBUser(RGWDBStore *_st, const rgw_user& _u) : User(_u), store(_st) { }
+      DBUser(RGWDBStore *_st, const RGWUserInfo& _i) : User(_i), store(_st) { }
+      DBUser(RGWDBStore *_st) : store(_st) { }
+      DBUser(DBUser& _o) = default;
+      DBUser() {}
 
-      virtual std::unique_ptr<RGWUser> clone() override {
-        return std::unique_ptr<RGWUser>(new RGWDBUser(*this));
+      virtual std::unique_ptr<User> clone() override {
+        return std::unique_ptr<User>(new DBUser(*this));
       }
       int list_buckets(const DoutPrefixProvider *dpp, const std::string& marker, const std::string& end_marker,
-	  	     uint64_t max, bool need_stats, RGWBucketList& buckets,
+	  	     uint64_t max, bool need_stats, BucketList& buckets,
 		     optional_yield y) override;
-      virtual RGWBucket* create_bucket(rgw_bucket& bucket, ceph::real_time creation_time) override;
-      virtual int read_attrs(const DoutPrefixProvider *dpp, optional_yield y, RGWAttrs* uattrs, RGWObjVersionTracker* tracker) override;
+      virtual Bucket* create_bucket(rgw_bucket& bucket, ceph::real_time creation_time) override;
+      virtual int read_attrs(const DoutPrefixProvider *dpp, optional_yield y, Attrs* uattrs, RGWObjVersionTracker* tracker) override;
       virtual int read_stats(optional_yield y, RGWStorageStats* stats,
 			   ceph::real_time *last_stats_sync = nullptr,
 			   ceph::real_time *last_stats_update = nullptr) override;
@@ -58,67 +58,67 @@ namespace rgw { namespace sal {
       virtual int store_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::PutParams& params = {}) override;
       virtual int remove_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::RemoveParams& params = {}) override;
 
-      friend class RGWDBBucket;
+      friend class DBBucket;
   };
 
-class RGWDBBucket : public RGWBucket {
+class DBBucket : public Bucket {
   private:
     RGWDBStore *store;
     RGWAccessControlPolicy acls;
 
   public:
-    RGWDBBucket(RGWDBStore *_st)
+    DBBucket(RGWDBStore *_st)
       : store(_st),
         acls() {
     }
 
-    RGWDBBucket(RGWDBStore *_st, RGWUser* _u)
-      : RGWBucket(_u),
+    DBBucket(RGWDBStore *_st, User* _u)
+      : Bucket(_u),
 	store(_st),
         acls() {
     }
 
-    RGWDBBucket(RGWDBStore *_st, const rgw_bucket& _b)
-      : RGWBucket(_b),
+    DBBucket(RGWDBStore *_st, const rgw_bucket& _b)
+      : Bucket(_b),
 	store(_st),
         acls() {
     }
 
-    RGWDBBucket(RGWDBStore *_st, const RGWBucketEnt& _e)
-      : RGWBucket(_e),
+    DBBucket(RGWDBStore *_st, const RGWBucketEnt& _e)
+      : Bucket(_e),
 	store(_st),
         acls() {
     }
 
-    RGWDBBucket(RGWDBStore *_st, const RGWBucketInfo& _i)
-      : RGWBucket(_i),
+    DBBucket(RGWDBStore *_st, const RGWBucketInfo& _i)
+      : Bucket(_i),
 	store(_st),
         acls() {
     }
 
-    RGWDBBucket(RGWDBStore *_st, const rgw_bucket& _b, RGWUser* _u)
-      : RGWBucket(_b, _u),
+    DBBucket(RGWDBStore *_st, const rgw_bucket& _b, User* _u)
+      : Bucket(_b, _u),
 	store(_st),
         acls() {
     }
 
-    RGWDBBucket(RGWDBStore *_st, const RGWBucketEnt& _e, RGWUser* _u)
-      : RGWBucket(_e, _u),
+    DBBucket(RGWDBStore *_st, const RGWBucketEnt& _e, User* _u)
+      : Bucket(_e, _u),
 	store(_st),
         acls() {
     }
 
-    RGWDBBucket(RGWDBStore *_st, const RGWBucketInfo& _i, RGWUser* _u)
-      : RGWBucket(_i, _u),
+    DBBucket(RGWDBStore *_st, const RGWBucketInfo& _i, User* _u)
+      : Bucket(_i, _u),
 	store(_st),
         acls() {
     }
 
-    ~RGWDBBucket() { }
+    ~DBBucket() { }
 
-    virtual std::unique_ptr<RGWObject> get_object(const rgw_obj_key& k) override;
+    virtual std::unique_ptr<Object> get_object(const rgw_obj_key& k) override;
     virtual int list(const DoutPrefixProvider *dpp, ListParams&, int, ListResults&, optional_yield y) override;
-    RGWObject* create_object(const rgw_obj_key& key /* Attributes */) override;
+    Object* create_object(const rgw_obj_key& key /* Attributes */) override;
     virtual int remove_bucket(const DoutPrefixProvider *dpp, bool delete_children, std::string prefix, std::string delimiter, bool forward_to_master, req_info* req_info, optional_yield y) override;
     virtual RGWAccessControlPolicy& get_acl(void) override { return acls; }
     virtual int set_acl(const DoutPrefixProvider *dpp, RGWAccessControlPolicy& acl, optional_yield y) override;
@@ -133,16 +133,16 @@ class RGWDBBucket : public RGWBucket {
     virtual int sync_user_stats(optional_yield y) override;
     virtual int update_container_stats(const DoutPrefixProvider *dpp) override;
     virtual int check_bucket_shards(const DoutPrefixProvider *dpp) override;
-    virtual int link(const DoutPrefixProvider *dpp, RGWUser* new_user, optional_yield y, bool update_entrypoint, RGWObjVersionTracker* objv) override;
-    virtual int unlink(const DoutPrefixProvider *dpp, RGWUser* new_user, optional_yield y, bool update_entrypoint = true) override;
-    virtual int chown(const DoutPrefixProvider *dpp, RGWUser* new_user, RGWUser* old_user, optional_yield y, const std::string* marker = nullptr) override;
+    virtual int link(const DoutPrefixProvider *dpp, User* new_user, optional_yield y, bool update_entrypoint, RGWObjVersionTracker* objv) override;
+    virtual int unlink(const DoutPrefixProvider *dpp, User* new_user, optional_yield y, bool update_entrypoint = true) override;
+    virtual int chown(const DoutPrefixProvider *dpp, User* new_user, User* old_user, optional_yield y, const std::string* marker = nullptr) override;
     virtual int put_instance_info(const DoutPrefixProvider *dpp, bool exclusive, ceph::real_time mtime) override;
     virtual int remove_entrypoint(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y) override;
     virtual int remove_instance_info(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y) override;
-    virtual bool is_owner(RGWUser* user) override;
+    virtual bool is_owner(User* user) override;
     virtual int check_empty(const DoutPrefixProvider *dpp, optional_yield y) override;
     virtual int check_quota(RGWQuotaInfo& user_quota, RGWQuotaInfo& bucket_quota, uint64_t obj_size, optional_yield y, bool check_size_only = false) override;
-    virtual int set_instance_attrs(const DoutPrefixProvider *dpp, RGWAttrs& attrs, optional_yield y) override;
+    virtual int set_instance_attrs(const DoutPrefixProvider *dpp, Attrs& attrs, optional_yield y) override;
     virtual int try_refresh_info(const DoutPrefixProvider *dpp, ceph::real_time *pmtime) override;
     virtual int read_usage(uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
 			   bool *is_truncated, RGWUsageIter& usage_iter,
@@ -153,14 +153,14 @@ class RGWDBBucket : public RGWBucket {
     virtual int rebuild_index() override;
     virtual int set_tag_timeout(uint64_t timeout) override;
     virtual int purge_instance(const DoutPrefixProvider *dpp) override;
-    virtual std::unique_ptr<RGWBucket> clone() override {
-      return std::make_unique<RGWDBBucket>(*this);
+    virtual std::unique_ptr<Bucket> clone() override {
+      return std::make_unique<DBBucket>(*this);
     }
 
     friend class RGWDBStore;
 };
 
-  class RGWDBStore : public RGWStore {
+  class RGWDBStore : public Store {
     private:
       /* DBStoreManager is used in case multiple
        * connections are needed one for each tenant.
@@ -176,35 +176,35 @@ class RGWDBBucket : public RGWBucket {
       RGWDBStore(): dbsm(nullptr) {}
       ~RGWDBStore() { delete dbsm; }
 
-      virtual std::unique_ptr<RGWUser> get_user(const rgw_user& u) override;
-      virtual int get_user_by_access_key(const DoutPrefixProvider *dpp, const std::string& key, optional_yield y, std::unique_ptr<RGWUser>* user) override;
-      virtual int get_user_by_email(const DoutPrefixProvider *dpp, const std::string& email, optional_yield y, std::unique_ptr<RGWUser>* user) override;
-      virtual int get_user_by_swift(const DoutPrefixProvider *dpp, const std::string& user_str, optional_yield y, std::unique_ptr<RGWUser>* user) override;
-      virtual std::unique_ptr<RGWObject> get_object(const rgw_obj_key& k) override;
-      virtual int get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const rgw_bucket& b, std::unique_ptr<RGWBucket>* bucket, optional_yield y) override;
-      virtual int get_bucket(RGWUser* u, const RGWBucketInfo& i, std::unique_ptr<RGWBucket>* bucket) override;
-      virtual int get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const std::string& tenant, const std::string&name, std::unique_ptr<RGWBucket>* bucket, optional_yield y) override;
+      virtual std::unique_ptr<User> get_user(const rgw_user& u) override;
+      virtual int get_user_by_access_key(const DoutPrefixProvider *dpp, const std::string& key, optional_yield y, std::unique_ptr<User>* user) override;
+      virtual int get_user_by_email(const DoutPrefixProvider *dpp, const std::string& email, optional_yield y, std::unique_ptr<User>* user) override;
+      virtual int get_user_by_swift(const DoutPrefixProvider *dpp, const std::string& user_str, optional_yield y, std::unique_ptr<User>* user) override;
+      virtual std::unique_ptr<Object> get_object(const rgw_obj_key& k) override;
+      virtual int get_bucket(const DoutPrefixProvider *dpp, User* u, const rgw_bucket& b, std::unique_ptr<Bucket>* bucket, optional_yield y) override;
+      virtual int get_bucket(User* u, const RGWBucketInfo& i, std::unique_ptr<Bucket>* bucket) override;
+      virtual int get_bucket(const DoutPrefixProvider *dpp, User* u, const std::string& tenant, const std::string&name, std::unique_ptr<Bucket>* bucket, optional_yield y) override;
       virtual int create_bucket(const DoutPrefixProvider *dpp, 
-                                RGWUser& u, const rgw_bucket& b,
+                                User& u, const rgw_bucket& b,
                                 const std::string& zonegroup_id,
                                 rgw_placement_rule& placement_rule,
                                 std::string& swift_ver_location,
                                 const RGWQuotaInfo * pquota_info,
                                 const RGWAccessControlPolicy& policy,
-                                RGWAttrs& attrs,
+                                Attrs& attrs,
                                  RGWBucketInfo& info,
                                  obj_version& ep_objv,
                                  bool exclusive,
                                  bool obj_lock_enabled,
                                  bool *existed,
                                  req_info& req_info,
-                                 std::unique_ptr<RGWBucket>* bucket,
+                                 std::unique_ptr<Bucket>* bucket,
                                  optional_yield y) override;
       virtual bool is_meta_master() override;
-      virtual int forward_request_to_master(RGWUser* user, obj_version *objv,
+      virtual int forward_request_to_master(User* user, obj_version *objv,
                           bufferlist& in_data, JSONParser *jp, req_info& info,
                           optional_yield y) override;
-      virtual int defer_gc(const DoutPrefixProvider *dpp, RGWObjectCtx *rctx, RGWBucket* bucket, RGWObject* obj,
+      virtual int defer_gc(const DoutPrefixProvider *dpp, RGWObjectCtx *rctx, Bucket* bucket, Object* obj,
                            optional_yield y) override;
       virtual Zone* get_zone() { return NULL; }
       virtual std::string zone_unique_id(uint64_t unique_num) override;
@@ -212,10 +212,10 @@ class RGWDBBucket : public RGWBucket {
       virtual int cluster_stat(RGWClusterStat& stats) override;
       virtual std::unique_ptr<Lifecycle> get_lifecycle(void) override;
       virtual std::unique_ptr<Completions> get_completions(void) override;
-      virtual std::unique_ptr<Notification> get_notification(rgw::sal::RGWObject* obj, struct req_state* s, rgw::notify::EventType event_type) override;
-      virtual std::unique_ptr<GCChain> get_gc_chain(rgw::sal::RGWObject* obj) override;
-      virtual std::unique_ptr<Writer> get_writer(Aio *aio, rgw::sal::RGWBucket* bucket,
-                                                 RGWObjectCtx& obj_ctx, std::unique_ptr<rgw::sal::RGWObject> _head_obj,
+      virtual std::unique_ptr<Notification> get_notification(rgw::sal::Object* obj, struct req_state* s, rgw::notify::EventType event_type) override;
+      virtual std::unique_ptr<GCChain> get_gc_chain(rgw::sal::Object* obj) override;
+      virtual std::unique_ptr<Writer> get_writer(Aio *aio, rgw::sal::Bucket* bucket,
+                                                 RGWObjectCtx& obj_ctx, std::unique_ptr<rgw::sal::Object> _head_obj,
                                                  const DoutPrefixProvider *dpp, optional_yield y) override;
       virtual RGWLC* get_rgwlc(void) override { return NULL; }
       virtual RGWCoroutinesManagerRegistry* get_cr_registry() override { return NULL; }

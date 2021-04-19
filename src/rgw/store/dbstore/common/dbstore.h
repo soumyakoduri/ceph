@@ -31,7 +31,7 @@ struct DBOpBucketInfo {
     RGWBucketEnt ent; // maybe not needed. not used in create/get_bucket
     RGWBucketInfo info;
     RGWUser* owner = nullptr;
-    rgw::sal::RGWAttrs attrs;
+    rgw::sal::Attrs attrs;
     obj_version bucket_version;
     ceph::real_time mtime;
 };

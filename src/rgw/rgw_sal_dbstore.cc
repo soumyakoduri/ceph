@@ -29,54 +29,54 @@
 
 namespace rgw::sal {
 
-  int RGWDBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
+  int DBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
 			       const string& end_marker, uint64_t max, bool need_stats,
-			       RGWBucketList &buckets, optional_yield y)
+			       BucketList &buckets, optional_yield y)
   {
     return 0;
   }
 
-  RGWBucket* RGWDBUser::create_bucket(rgw_bucket& bucket,
+  Bucket* DBUser::create_bucket(rgw_bucket& bucket,
         				       ceph::real_time creation_time)
   {
     return NULL;
   }
 
-  int RGWDBUser::read_attrs(const DoutPrefixProvider *dpp, optional_yield y, RGWAttrs* uattrs, RGWObjVersionTracker* tracker)
+  int DBUser::read_attrs(const DoutPrefixProvider *dpp, optional_yield y, Attrs* uattrs, RGWObjVersionTracker* tracker)
   {
     return 0;
   }
 
-  int RGWDBUser::read_stats(optional_yield y, RGWStorageStats* stats,
+  int DBUser::read_stats(optional_yield y, RGWStorageStats* stats,
   			     ceph::real_time *last_stats_sync,
 			     ceph::real_time *last_stats_update)
   {
     return 0;
   }
 
-  int RGWDBUser::read_stats_async(RGWGetUserStats_CB *cb)
+  int DBUser::read_stats_async(RGWGetUserStats_CB *cb)
   {
     return 0;
   }
 
-  int RGWDBUser::complete_flush_stats(optional_yield y)
+  int DBUser::complete_flush_stats(optional_yield y)
   {
     return 0;
   }
 
-  int RGWDBUser::read_usage(uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
+  int DBUser::read_usage(uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
                bool *is_truncated, RGWUsageIter& usage_iter,
                map<rgw_user_bucket, rgw_usage_log_entry>& usage)
   {
     return 0;
   }
 
-  int RGWDBUser::trim_usage(uint64_t start_epoch, uint64_t end_epoch)
+  int DBUser::trim_usage(uint64_t start_epoch, uint64_t end_epoch)
   {
     return 0;
   }
 
-  int RGWDBUser::load_by_id(const DoutPrefixProvider *dpp, optional_yield y)
+  int DBUser::load_by_id(const DoutPrefixProvider *dpp, optional_yield y)
   {
     int ret = 0;
 
@@ -85,27 +85,27 @@ namespace rgw::sal {
     return ret;
   }
 
-  int RGWDBUser::store_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::PutParams& params)
+  int DBUser::store_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::PutParams& params)
   {
     return 0;
   }
 
-  int RGWDBUser::remove_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::RemoveParams& params)
+  int DBUser::remove_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::RemoveParams& params)
   {
     return 0;
   }
 
-RGWObject *RGWDBBucket::create_object(const rgw_obj_key &key)
+Object *DBBucket::create_object(const rgw_obj_key &key)
 {
   return nullptr;
 }
 
-int RGWDBBucket::remove_bucket(const DoutPrefixProvider *dpp, bool delete_children, std::string prefix, std::string delimiter, bool forward_to_master, req_info* req_info, optional_yield y)
+int DBBucket::remove_bucket(const DoutPrefixProvider *dpp, bool delete_children, std::string prefix, std::string delimiter, bool forward_to_master, req_info* req_info, optional_yield y)
 {
   return 0;
 }
 
-int RGWDBBucket::get_bucket_info(const DoutPrefixProvider *dpp, optional_yield y)
+int DBBucket::get_bucket_info(const DoutPrefixProvider *dpp, optional_yield y)
 {
     int ret = 0;
 
@@ -114,7 +114,7 @@ int RGWDBBucket::get_bucket_info(const DoutPrefixProvider *dpp, optional_yield y
     return ret;
 }
 
-int RGWDBBucket::get_bucket_stats(int shard_id,
+int DBBucket::get_bucket_stats(int shard_id,
 				     std::string *bucket_ver, std::string *master_ver,
 				     std::map<RGWObjCategory, RGWStorageStats>& stats,
 				     std::string *max_marker, bool *syncstopped)
@@ -122,89 +122,89 @@ int RGWDBBucket::get_bucket_stats(int shard_id,
   return 0;
 }
 
-int RGWDBBucket::get_bucket_stats_async(int shard_id, RGWGetBucketStats_CB *ctx)
+int DBBucket::get_bucket_stats_async(int shard_id, RGWGetBucketStats_CB *ctx)
 {
   return 0;
 }
 
-int RGWDBBucket::read_bucket_stats(const DoutPrefixProvider *dpp, optional_yield y)
+int DBBucket::read_bucket_stats(const DoutPrefixProvider *dpp, optional_yield y)
 {
   return 0;
 }
 
-int RGWDBBucket::sync_user_stats(optional_yield y)
+int DBBucket::sync_user_stats(optional_yield y)
 {
   return 0;
 }
 
-int RGWDBBucket::update_container_stats(const DoutPrefixProvider *dpp)
+int DBBucket::update_container_stats(const DoutPrefixProvider *dpp)
 {
   return 0;
 }
 
-int RGWDBBucket::check_bucket_shards(const DoutPrefixProvider *dpp)
+int DBBucket::check_bucket_shards(const DoutPrefixProvider *dpp)
 {
   return 0;
 }
 
-int RGWDBBucket::link(const DoutPrefixProvider *dpp, RGWUser* new_user, optional_yield y, bool update_entrypoint, RGWObjVersionTracker* objv)
+int DBBucket::link(const DoutPrefixProvider *dpp, User* new_user, optional_yield y, bool update_entrypoint, RGWObjVersionTracker* objv)
 {
   return 0;
 }
 
-int RGWDBBucket::unlink(const DoutPrefixProvider *dpp, RGWUser* new_user, optional_yield y, bool update_entrypoint)
+int DBBucket::unlink(const DoutPrefixProvider *dpp, User* new_user, optional_yield y, bool update_entrypoint)
 {
   return 0;
 }
 
-int RGWDBBucket::chown(const DoutPrefixProvider *dpp, RGWUser* new_user, RGWUser* old_user, optional_yield y, const std::string* marker)
+int DBBucket::chown(const DoutPrefixProvider *dpp, User* new_user, User* old_user, optional_yield y, const std::string* marker)
 {
   return 0;
 }
 
-int RGWDBBucket::put_instance_info(const DoutPrefixProvider *dpp, bool exclusive, ceph::real_time _mtime)
+int DBBucket::put_instance_info(const DoutPrefixProvider *dpp, bool exclusive, ceph::real_time _mtime)
 {
   return 0;
 }
 
-int RGWDBBucket::remove_entrypoint(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y)
+int DBBucket::remove_entrypoint(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y)
 {
   return 0;
 }
 
-int RGWDBBucket::remove_instance_info(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y)
+int DBBucket::remove_instance_info(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y)
 {
   return 0;
 }
 
 /* Make sure to call get_bucket_info() if you need it first */
-bool RGWDBBucket::is_owner(RGWUser* user)
+bool DBBucket::is_owner(User* user)
 {
   return (info.owner.compare(user->get_id()) == 0);
 }
 
-int RGWDBBucket::check_empty(const DoutPrefixProvider *dpp, optional_yield y)
+int DBBucket::check_empty(const DoutPrefixProvider *dpp, optional_yield y)
 {
   return 0;
 }
 
-int RGWDBBucket::check_quota(RGWQuotaInfo& user_quota, RGWQuotaInfo& bucket_quota, uint64_t obj_size,
+int DBBucket::check_quota(RGWQuotaInfo& user_quota, RGWQuotaInfo& bucket_quota, uint64_t obj_size,
 				optional_yield y, bool check_size_only)
 {
   return 0;
 }
 
-int RGWDBBucket::set_instance_attrs(const DoutPrefixProvider *dpp, RGWAttrs& attrs, optional_yield y)
+int DBBucket::set_instance_attrs(const DoutPrefixProvider *dpp, Attrs& attrs, optional_yield y)
 {
   return 0;
 }
 
-int RGWDBBucket::try_refresh_info(const DoutPrefixProvider *dpp, ceph::real_time *pmtime)
+int DBBucket::try_refresh_info(const DoutPrefixProvider *dpp, ceph::real_time *pmtime)
 {
   return 0;
 }
 
-int RGWDBBucket::read_usage(uint64_t start_epoch, uint64_t end_epoch,
+int DBBucket::read_usage(uint64_t start_epoch, uint64_t end_epoch,
 			       uint32_t max_entries, bool *is_truncated,
 			       RGWUsageIter& usage_iter,
 			       map<rgw_user_bucket, rgw_usage_log_entry>& usage)
@@ -212,48 +212,48 @@ int RGWDBBucket::read_usage(uint64_t start_epoch, uint64_t end_epoch,
   return 0;
 }
 
-int RGWDBBucket::trim_usage(uint64_t start_epoch, uint64_t end_epoch)
+int DBBucket::trim_usage(uint64_t start_epoch, uint64_t end_epoch)
 {
   return 0;
 }
 
-int RGWDBBucket::remove_objs_from_index(std::list<rgw_obj_index_key>& objs_to_unlink)
+int DBBucket::remove_objs_from_index(std::list<rgw_obj_index_key>& objs_to_unlink)
 {
   return 0;
 }
 
-int RGWDBBucket::check_index(std::map<RGWObjCategory, RGWStorageStats>& existing_stats, std::map<RGWObjCategory, RGWStorageStats>& calculated_stats)
+int DBBucket::check_index(std::map<RGWObjCategory, RGWStorageStats>& existing_stats, std::map<RGWObjCategory, RGWStorageStats>& calculated_stats)
 {
   return 0;
 }
 
-int RGWDBBucket::rebuild_index()
+int DBBucket::rebuild_index()
 {
   return 0;
 }
 
-int RGWDBBucket::set_tag_timeout(uint64_t timeout)
+int DBBucket::set_tag_timeout(uint64_t timeout)
 {
   return 0;
 }
 
-int RGWDBBucket::purge_instance(const DoutPrefixProvider *dpp)
+int DBBucket::purge_instance(const DoutPrefixProvider *dpp)
 {
   return 0;
 }
 
-int RGWDBBucket::set_acl(const DoutPrefixProvider *dpp, RGWAccessControlPolicy &acl, optional_yield y)
+int DBBucket::set_acl(const DoutPrefixProvider *dpp, RGWAccessControlPolicy &acl, optional_yield y)
 {
   return 0;
 }
 
-std::unique_ptr<RGWObject> RGWDBBucket::get_object(const rgw_obj_key& k)
+std::unique_ptr<Object> DBBucket::get_object(const rgw_obj_key& k)
 {
   return nullptr;
-//  return std::unique_ptr<RGWObject>(new RGWDBObject(this->store, k, this));
+//  return std::unique_ptr<Object>(new DBObject(this->store, k, this));
 }
 
-int RGWDBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, ListResults& results, optional_yield y)
+int DBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, ListResults& results, optional_yield y)
 {
   return 0;
 }
@@ -264,15 +264,15 @@ int RGWDBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max
       dbsm->destroyAllHandles();
   }
 
-  std::unique_ptr<RGWUser> RGWDBStore::get_user(const rgw_user &u)
+  std::unique_ptr<User> RGWDBStore::get_user(const rgw_user &u)
   {
-    return std::unique_ptr<RGWUser>(new RGWDBUser(this, u));
+    return std::unique_ptr<User>(new DBUser(this, u));
   }
 
-  int RGWDBStore::get_user_by_access_key(const DoutPrefixProvider *dpp, const std::string& key, optional_yield y, std::unique_ptr<RGWUser>* user)
+  int RGWDBStore::get_user_by_access_key(const DoutPrefixProvider *dpp, const std::string& key, optional_yield y, std::unique_ptr<User>* user)
   {
     RGWUserInfo uinfo;
-    RGWUser *u;
+    User *u;
     int ret = 0;
 
     ret = getDBStore()->get_user(string("access_key"), key, uinfo);
@@ -280,7 +280,7 @@ int RGWDBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max
     if (ret < 0)
       return ret;
 
-    u = new RGWDBUser(this, uinfo);
+    u = new DBUser(this, uinfo);
 
     if (!u)
       return -ENOMEM;
@@ -290,10 +290,10 @@ int RGWDBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max
     return 0;
   }
 
-  int RGWDBStore::get_user_by_email(const DoutPrefixProvider *dpp, const std::string& email, optional_yield y, std::unique_ptr<RGWUser>* user)
+  int RGWDBStore::get_user_by_email(const DoutPrefixProvider *dpp, const std::string& email, optional_yield y, std::unique_ptr<User>* user)
   {
     RGWUserInfo uinfo;
-    RGWUser *u;
+    User *u;
     int ret = 0;
 
     ret = getDBStore()->get_user(string("email"), email, uinfo);
@@ -301,7 +301,7 @@ int RGWDBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max
     if (ret < 0)
       return ret;
 
-    u = new RGWDBUser(this, uinfo);
+    u = new DBUser(this, uinfo);
 
     if (!u)
       return -ENOMEM;
@@ -311,25 +311,25 @@ int RGWDBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max
     return ret;
   }
 
-  int RGWDBStore::get_user_by_swift(const DoutPrefixProvider *dpp, const std::string& user_str, optional_yield y, std::unique_ptr<RGWUser>* user)
+  int RGWDBStore::get_user_by_swift(const DoutPrefixProvider *dpp, const std::string& user_str, optional_yield y, std::unique_ptr<User>* user)
   {
     /* Swift keys and subusers are not supported for now */
     return 0;
   }
 
-  std::unique_ptr<RGWObject> RGWDBStore::get_object(const rgw_obj_key& k)
+  std::unique_ptr<Object> RGWDBStore::get_object(const rgw_obj_key& k)
   {
-    // return std::unique_ptr<RGWObject>(new RGWDBObject(this, k));
+    // return std::unique_ptr<Object>(new DBObject(this, k));
     return NULL;
   }
 
 
-int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const rgw_bucket& b, std::unique_ptr<RGWBucket>* bucket, optional_yield y)
+int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, User* u, const rgw_bucket& b, std::unique_ptr<Bucket>* bucket, optional_yield y)
 {
   int ret;
-  RGWBucket* bp;
+  Bucket* bp;
 
-  bp = new RGWDBBucket(this, b, u);
+  bp = new DBBucket(this, b, u);
   ret = bp->get_bucket_info(dpp, y);
   if (ret < 0) {
     delete bp;
@@ -340,18 +340,18 @@ int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const rgw_
   return 0;
 }
 
-int RGWDBStore::get_bucket(RGWUser* u, const RGWBucketInfo& i, std::unique_ptr<RGWBucket>* bucket)
+int RGWDBStore::get_bucket(User* u, const RGWBucketInfo& i, std::unique_ptr<Bucket>* bucket)
 {
-  RGWBucket* bp;
+  Bucket* bp;
 
-  bp = new RGWDBBucket(this, i, u);
+  bp = new DBBucket(this, i, u);
   /* Don't need to fetch the bucket info, use the provided one */
 
   bucket->reset(bp);
   return 0;
 }
 
-int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const std::string& tenant, const std::string& name, std::unique_ptr<RGWBucket>* bucket, optional_yield y)
+int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, User* u, const std::string& tenant, const std::string& name, std::unique_ptr<Bucket>* bucket, optional_yield y)
 {
   rgw_bucket b;
 
@@ -362,20 +362,20 @@ int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, RGWUser* u, const std:
 }
 
 int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
-                                RGWUser& u, const rgw_bucket& b,
+                                User& u, const rgw_bucket& b,
                                 const string& zonegroup_id,
                                 rgw_placement_rule& placement_rule,
                                 string& swift_ver_location,
                                 const RGWQuotaInfo * pquota_info,
                                 const RGWAccessControlPolicy& policy,
-                                RGWAttrs& attrs,
+                                Attrs& attrs,
                                 RGWBucketInfo& info,
                                 obj_version& ep_objv,
                                 bool exclusive,
                                 bool obj_lock_enabled,
                                 bool *existed,
                                 req_info& req_info,
-                                std::unique_ptr<RGWBucket>* bucket_out,
+                                std::unique_ptr<Bucket>* bucket_out,
                                 optional_yield y)
 {
   int ret;
@@ -384,7 +384,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
   rgw_bucket *pmaster_bucket;
   uint32_t *pmaster_num_shards;
   real_time creation_time;
-  std::unique_ptr<RGWBucket> bucket;
+  std::unique_ptr<Bucket> bucket;
   obj_version objv, *pobjv = NULL;
 
   /* If it exists, look it up; otherwise create it */
@@ -408,7 +408,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
       return -EEXIST;
     }*/
   } else {
-    bucket = std::unique_ptr<RGWBucket>(new RGWDBBucket(this, b, &u));
+    bucket = std::unique_ptr<Bucket>(new DBBucket(this, b, &u));
     *existed = false;
     bucket->set_attrs(attrs);
   }
@@ -462,7 +462,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
     return 0;
   }
 
-  int RGWDBStore::forward_request_to_master(RGWUser* user, obj_version *objv,
+  int RGWDBStore::forward_request_to_master(User* user, obj_version *objv,
                                             bufferlist& in_data,
                                             JSONParser *jp, req_info& info,
                                             optional_yield y)
@@ -470,7 +470,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
     return 0;
   }
 
-  int RGWDBStore::defer_gc(const DoutPrefixProvider *dpp, RGWObjectCtx *rctx, RGWBucket* bucket, RGWObject* obj, optional_yield y)
+  int RGWDBStore::defer_gc(const DoutPrefixProvider *dpp, RGWObjectCtx *rctx, Bucket* bucket, Object* obj, optional_yield y)
   {
     return 0;
   }
@@ -504,7 +504,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
     return 0;
   }
 
-  std::unique_ptr<Notification> RGWDBStore::get_notification(rgw::sal::RGWObject* obj,
+  std::unique_ptr<Notification> RGWDBStore::get_notification(rgw::sal::Object* obj,
                                                              struct req_state* s,
                                                              rgw::notify::EventType event_type)
   {
@@ -512,14 +512,14 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
     return 0;
   }
 
-  std::unique_ptr<GCChain> RGWDBStore::get_gc_chain(rgw::sal::RGWObject* obj)
+  std::unique_ptr<GCChain> RGWDBStore::get_gc_chain(rgw::sal::Object* obj)
   {
     //  return std::unique_ptr<GCChain>(new DBGCChain(this, obj));
     return 0;
   }
 
-  std::unique_ptr<Writer> RGWDBStore::get_writer(Aio *aio, rgw::sal::RGWBucket* bucket,
-                                                 RGWObjectCtx& obj_ctx, std::unique_ptr<rgw::sal::RGWObject> _head_obj,
+  std::unique_ptr<Writer> RGWDBStore::get_writer(Aio *aio, rgw::sal::Bucket* bucket,
+                                                 RGWObjectCtx& obj_ctx, std::unique_ptr<rgw::sal::Object> _head_obj,
                                                  const DoutPrefixProvider *dpp, optional_yield y)
   {
     //  return std::unique_ptr<Writer>(new DBWriter(aio, this, bucket, obj_ctx, std::move(_head_obj), dpp, y));
