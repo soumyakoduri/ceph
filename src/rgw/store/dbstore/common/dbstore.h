@@ -672,6 +672,7 @@ class DBStore {
     protected:
 	void *db;
     CephContext *cct;
+    uint64_t max_bucket_id = 0;
 
 	public:	
 	DBStore(string db_name) : db_name(db_name),
@@ -745,5 +746,9 @@ class DBStore {
 			    optional_yield y,
                             const DoutPrefixProvider *dpp,
 			    bool exclusive);
+
+    int next_bucket_id() { return ++max_bucket_id; };
+
+    int remove_bucket(const RGWBucketInfo info);
 };
 #endif

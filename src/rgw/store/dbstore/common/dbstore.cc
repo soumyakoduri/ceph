@@ -422,6 +422,10 @@ int DBStore::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
       objv_tracker.generate_new_write_ver(cct);
     }
 
+    uint64_t bid = next_bucket_id();
+    string s = getDBname() + "." + std::to_string(bid);
+    bucket.marker = bucket.bucket_id = s;
+
     info.bucket = bucket;
     info.owner = owner.user_id;
     info.zonegroup = zonegroup_id;
@@ -454,3 +458,23 @@ int DBStore::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
 out:
     return ret;
 }
+
+int DBStore::remove_bucket(const RGWBucketInfo info) {
+	int ret = 0;
+
+    DBOpParams params = {};
+    InitializeParams("RemoveBucket", &params);
+
+	params.op.bucket.info.bucket.name = info.bucket.name;
+
+    ret = ProcessOp("RemoveBucket", &params);
+
+	if (ret) {
+		dbout(L_ERR)<<"In RemoveBucket failed err:(" <<ret<<") \n";
+		goto out;
+    }
+
+out:
+	return ret;
+}
+

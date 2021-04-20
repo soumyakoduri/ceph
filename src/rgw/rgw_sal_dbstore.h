@@ -39,8 +39,7 @@ namespace rgw { namespace sal {
         return std::unique_ptr<User>(new DBUser(*this));
       }
       int list_buckets(const DoutPrefixProvider *dpp, const std::string& marker, const std::string& end_marker,
-	  	     uint64_t max, bool need_stats, BucketList& buckets,
-		     optional_yield y) override;
+	  	     uint64_t max, bool need_stats, BucketList& buckets, optional_yield y) override;
       virtual Bucket* create_bucket(rgw_bucket& bucket, ceph::real_time creation_time) override;
       virtual int read_attrs(const DoutPrefixProvider *dpp, optional_yield y, Attrs* uattrs, RGWObjVersionTracker* tracker) override;
       virtual int read_stats(optional_yield y, RGWStorageStats* stats,

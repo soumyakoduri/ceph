@@ -102,7 +102,17 @@ Object *DBBucket::create_object(const rgw_obj_key &key)
 
 int DBBucket::remove_bucket(const DoutPrefixProvider *dpp, bool delete_children, std::string prefix, std::string delimiter, bool forward_to_master, req_info* req_info, optional_yield y)
 {
-  return 0;
+  int ret;
+
+  ret = get_bucket_info(dpp, y);
+  if (ret < 0)
+    return ret;
+
+  /* XXX: handle delete_children */
+  
+  ret = store->getDBStore()->remove_bucket(info);
+
+  return ret;
 }
 
 int DBBucket::get_bucket_info(const DoutPrefixProvider *dpp, optional_yield y)
@@ -435,6 +445,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
     } */
   } else {
 
+    /* XXX: We may not need to send all these params. Cleanup the unused ones */
     ret = getDBStore()->create_bucket(u.get_info(), bucket->get_key(),
 				    zid, placement_rule, swift_ver_location, pquota_info,
 				    attrs, info, pobjv, &ep_objv, creation_time,
