@@ -17,6 +17,7 @@
 #include <map>
 #include "dbstore_log.h"
 #include "rgw/rgw_sal.h"
+#include "rgw/rgw_bucket.h"
 //#include "rgw/rgw_common.h"
 
 using namespace std;
@@ -34,6 +35,10 @@ struct DBOpBucketInfo {
     rgw::sal::Attrs attrs;
     obj_version bucket_version;
     ceph::real_time mtime;
+    // used for list query
+    string min_marker;
+    string max_marker;
+    list<RGWBucketEnt> list_entries;
 };
 
 struct DBOpInfo {
@@ -45,6 +50,7 @@ struct DBOpInfo {
   DBOpUserInfo user;
   string get_query_str;
   DBOpBucketInfo bucket;
+  uint64_t list_max_count;
 };
 
 struct DBOpParams {
@@ -143,12 +149,15 @@ struct DBOpBucketPrepareInfo {
     string bucket_ver = ":bucket_vers";
     string bucket_ver_tag = ":bucket_ver_tag";
     string mtime = ":mtime";
+    string min_marker = ":min_marker";
+    string max_marker = ":max_marker";
 };
 
 struct DBOpPrepareInfo {
     DBOpUserPrepareInfo user;
 	string get_query_str = ":get_query_str";
     DBOpBucketPrepareInfo bucket;
+    string list_max_count = ":list_max_count";
 };
 
 struct DBOpPrepareParams {
@@ -177,6 +186,7 @@ struct DBOps {
 	class InsertBucketOp *InsertBucket;
 	class RemoveBucketOp *RemoveBucket;
 	class GetBucketOp *GetBucket;
+    class ListUserBucketsOp *ListUserBuckets;
 };
 
 class ObjectOp {
@@ -563,6 +573,31 @@ class GetBucketOp: public DBOp {
 	}
 };
 
+class ListUserBucketsOp: public DBOp {
+	private:
+    // once we have stats also stored, may have to update this query to join
+    // these two tables.
+	const string Query = "SELECT  \
+        BucketName, Tenant, Marker, BucketID, Size, SizeRounded, CreationTime, \
+        Count, PlacementName, PlacementStorageClass, OwnerID, Flags, Zonegroup, \
+        HasInstanceObj, ObjVersionTrackerReadVer, ObjVersionTrackerReadTag, \
+        ObjVersionTrackerWriteVer, ObjVersionTrackerWriteTag, \
+        Quota, RequesterPays, HasWebsite, WebsiteConf, \
+        SwiftVersioning, SwiftVerLocation, \
+        MdsearchConfig, NewBucketInstanceID, ObjectLock, \
+        SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime \
+        FROM '{}' WHERE OwnerID = {} AND (Marker >= {}) ORDER BY Marker ASC LIMIT {}";
+
+	public:
+	virtual ~ListUserBucketsOp() {}
+
+	string Schema(DBOpPrepareParams &params) {
+        return fmt::format(Query.c_str(), params.bucket_table.c_str(),
+			       params.op.user.user_id.c_str(), params.op.bucket.min_marker,
+                   params.op.list_max_count);
+	}
+};
+
 class InsertObjectOp: public DBOp {
 	private:
 	const string Query =
@@ -750,5 +785,12 @@ class DBStore {
     int next_bucket_id() { return ++max_bucket_id; };
 
     int remove_bucket(const RGWBucketInfo info);
+    int list_buckets(const rgw_user& user,
+                             const string& marker,
+                             const string& end_marker,
+                             uint64_t max,
+                             bool need_stats,
+                             RGWUserBuckets *buckets,
+                             bool *is_truncated);
 };
 #endif

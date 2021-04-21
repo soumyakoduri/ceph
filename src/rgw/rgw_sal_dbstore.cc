@@ -24,17 +24,33 @@
 
 #include "rgw_sal.h"
 #include "rgw_sal_dbstore.h"
+#include "rgw_bucket.h"
 
 #define dout_subsys ceph_subsys_rgw
 
 namespace rgw::sal {
 
-  int DBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
+int DBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
 			       const string& end_marker, uint64_t max, bool need_stats,
 			       BucketList &buckets, optional_yield y)
-  {
-    return 0;
+{
+  RGWUserBuckets ulist;
+  bool is_truncated = false;
+  int ret;
+
+  buckets.clear();
+  ret = store->getDBStore()->list_buckets(info.user_id, marker, end_marker, max,
+                     need_stats, &ulist, &is_truncated);
+  if (ret < 0)
+    return ret;
+
+  buckets.set_truncated(is_truncated);
+  for (const auto& ent : ulist.get_buckets()) {
+    buckets.add(std::unique_ptr<Bucket>(new DBBucket(this->store, ent.second, this)));
   }
+
+  return 0;
+}
 
   Bucket* DBUser::create_bucket(rgw_bucket& bucket,
         				       ceph::real_time creation_time)

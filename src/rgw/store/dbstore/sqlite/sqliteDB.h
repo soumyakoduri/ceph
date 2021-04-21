@@ -170,6 +170,22 @@ class SQLGetBucket : public SQLiteDB, public GetBucketOp {
         int Bind(DBOpParams *params);
 };
 
+class SQLListUserBuckets : public SQLiteDB, public ListUserBucketsOp {
+	private:
+	sqlite3 **sdb = NULL;
+	sqlite3_stmt *stmt = NULL; // Prepared statement
+
+	public:
+	SQLListUserBuckets(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	~SQLListUserBuckets() {
+		if (stmt)
+			sqlite3_finalize(stmt);
+	}
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
+};
+
 class SQLInsertObject : public SQLiteDB, public InsertObjectOp {
 	private:
 	sqlite3 **sdb = NULL;

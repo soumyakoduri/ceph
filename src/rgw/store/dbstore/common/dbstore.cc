@@ -152,6 +152,8 @@ DBOp * DBStore::getDBOp(string Op, struct DBOpParams *params)
 		return dbops.RemoveBucket;
 	if (!Op.compare("GetBucket"))
 		return dbops.GetBucket;
+	if (!Op.compare("ListUserBuckets"))
+		return dbops.ListUserBuckets;
 
 	/* Object Operations */
 	map<string, class ObjectOp*>::iterator iter;
@@ -478,3 +480,42 @@ out:
 	return ret;
 }
 
+int DBStore::list_buckets(const rgw_user& user,
+                             const string& marker,
+                             const string& end_marker,
+                             uint64_t max,
+                             bool need_stats,
+                             RGWUserBuckets *buckets,
+                             bool *is_truncated)
+{
+  int ret = 0;
+
+    DBOpParams params = {};
+    InitializeParams("ListUserBuckets", &params);
+
+    params.op.user.uinfo.user_id = user;
+    params.op.bucket.min_marker = params.op.bucket.min_marker;
+    params.op.bucket.max_marker = params.op.bucket.max_marker;
+    params.op.list_max_count = max;
+
+    ret = ProcessOp("ListUserBuckets", &params);
+
+	if (ret) {
+		dbout(L_ERR)<<"In ListUserBuckets failed err:(" <<ret<<") \n";
+		goto out;
+    }
+
+  /* need_stats: stats are already part of entries... In case they are maintained in
+   * separate table , maybe use "Inner Join" with stats table for the query.
+   */
+
+    for (auto& entry : params.op.bucket.list_entries) {
+      if (entry.bucket.marker.compare(end_marker) <= 0) {
+        *is_truncated = false;
+        break;
+      }
+      buckets->add(std::move(entry));
+    }
+out:
+  return ret;
+}
