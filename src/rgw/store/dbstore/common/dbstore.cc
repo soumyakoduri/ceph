@@ -494,8 +494,8 @@ int DBStore::list_buckets(const rgw_user& user,
     InitializeParams("ListUserBuckets", &params);
 
     params.op.user.uinfo.user_id = user;
-    params.op.bucket.min_marker = params.op.bucket.min_marker;
-    params.op.bucket.max_marker = params.op.bucket.max_marker;
+    params.op.bucket.min_marker = marker;
+    params.op.bucket.max_marker = end_marker;
     params.op.list_max_count = max;
 
     ret = ProcessOp("ListUserBuckets", &params);
@@ -508,13 +508,25 @@ int DBStore::list_buckets(const rgw_user& user,
   /* need_stats: stats are already part of entries... In case they are maintained in
    * separate table , maybe use "Inner Join" with stats table for the query.
    */
+    if (params.op.bucket.list_entries.size() == max)
+      *is_truncated = true;
 
     for (auto& entry : params.op.bucket.list_entries) {
-      if (entry.bucket.marker.compare(end_marker) <= 0) {
+      if (!end_marker.empty() &&
+           end_marker.compare(entry.bucket.marker) <= 0) {
         *is_truncated = false;
         break;
       }
       buckets->add(std::move(entry));
+    /*  cout << "entry.bucket.marker: " << entry.bucket.marker << " min_marker: " << marker;
+
+      if (entry.bucket.marker < marker) {
+        cout << " lesser" << "\n";
+      } else if (entry.bucket.marker > marker) {
+        cout << " greater" << "\n";
+      } else {
+        cout << " equal" << "\n";
+      } */
     }
 out:
   return ret;

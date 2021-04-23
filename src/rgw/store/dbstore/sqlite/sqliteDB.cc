@@ -330,7 +330,7 @@ static int list_bucket(DBOpInfo &op, sqlite3_stmt *stmt) {
 	op.bucket.bucket_version.tag = (const char*)sqlite3_column_text(stmt, BucketVersionTag);
 	SQL_DECODE_BLOB_PARAM(stmt, Mtime, op.bucket.mtime, sdb);
 
-    op.bucket.list_entries.push_back(std::move(op.bucket.ent));
+    op.bucket.list_entries.push_back(op.bucket.ent);
 
 	return 0;
 }
@@ -1259,9 +1259,14 @@ int SQLListUserBuckets::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.user.user_id.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.min_marker.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.min_marker.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.list_max_count.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.list_max_count, sdb);
 
 out:
 	return rc;

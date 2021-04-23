@@ -48,6 +48,8 @@ namespace gtest {
 }
 
 ceph::real_time bucket_mtime = real_clock::now();
+string marker1;
+
 namespace {
 
 	class DBStoreBaseTest : public ::testing::Test {
@@ -249,6 +251,7 @@ TEST_F(DBStoreBaseTest, InsertBucket) {
 
 	params.op.bucket.info.bucket.name = "bucket1";
     params.op.bucket.info.bucket.tenant = "tenant";
+    params.op.bucket.info.bucket.marker = "marker1";
 
     params.op.bucket.ent.size = 1024;
 
@@ -280,6 +283,16 @@ TEST_F(DBStoreBaseTest, GetBucket) {
 	ASSERT_EQ(params.op.bucket.info.owner.id, "user_id1");
 }
 
+TEST_F(DBStoreBaseTest, RemoveBucketAPI) {
+	int ret = -1;
+    RGWBucketInfo info;
+
+	info.bucket.name = "bucket1";
+
+	ret = db->remove_bucket(info);
+	ASSERT_EQ(ret, 0);
+}
+
 TEST_F(DBStoreBaseTest, CreateBucket) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
@@ -291,7 +304,7 @@ TEST_F(DBStoreBaseTest, CreateBucket) {
     map<std::string, bufferlist> attrs;
 
     owner.user_id.id = "user_id1";
-    bucket.name = "bucket2";
+    bucket.name = "bucket1";
     bucket.tenant = "tenant";
 
     objv.ver = 2;
@@ -300,6 +313,26 @@ TEST_F(DBStoreBaseTest, CreateBucket) {
     rule.name = "rule1";
     rule.storage_class = "sc1";
 
+	ret = db->create_bucket(owner, bucket, "zid", rule, "swift_ver", NULL,
+                            attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
+                            null_yield, NULL, false);
+	ASSERT_EQ(ret, 0);
+    bucket.name = "bucket2";
+	ret = db->create_bucket(owner, bucket, "zid", rule, "swift_ver", NULL,
+                            attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
+                            null_yield, NULL, false);
+	ASSERT_EQ(ret, 0);
+    bucket.name = "bucket3";
+	ret = db->create_bucket(owner, bucket, "zid", rule, "swift_ver", NULL,
+                            attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
+                            null_yield, NULL, false);
+	ASSERT_EQ(ret, 0);
+    bucket.name = "bucket4";
+	ret = db->create_bucket(owner, bucket, "zid", rule, "swift_ver", NULL,
+                            attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
+                            null_yield, NULL, false);
+	ASSERT_EQ(ret, 0);
+    bucket.name = "bucket5";
 	ret = db->create_bucket(owner, bucket, "zid", rule, "swift_ver", NULL,
                             attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
                             null_yield, NULL, false);
@@ -322,7 +355,43 @@ TEST_F(DBStoreBaseTest, GetBucketQueryByName) {
 	ASSERT_EQ(binfo.creation_time, bucket_mtime);
 	ASSERT_EQ(binfo.placement_rule.name, "rule1");
 	ASSERT_EQ(binfo.placement_rule.storage_class, "sc1");
+    marker1 = binfo.bucket.marker;
+}
 
+TEST_F(DBStoreBaseTest, ListUserBuckets) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+    rgw_user owner;
+    int max = 2;
+    bool need_stats = true;
+    bool is_truncated = false;
+    RGWUserBuckets ulist;
+
+    owner.id = "user_id1";
+
+    marker1 = "";
+    do {
+        is_truncated = false;
+    	ret = db->list_buckets(owner, marker1, "", max, need_stats, &ulist, &is_truncated);
+	    ASSERT_EQ(ret, 0);
+
+        cout << "marker1 :" << marker1 << "\n";
+
+        cout << "is_truncated :" << is_truncated << "\n";
+
+        for (const auto& ent: ulist.get_buckets()) {
+          RGWBucketEnt e = ent.second;
+          cout << "###################### \n";
+          cout << "ent.bucket.id : " << e.bucket.name << "\n";
+          cout << "ent.bucket.marker : " << e.bucket.marker << "\n";
+          cout << "ent.bucket.bucket_id : " << e.bucket.bucket_id << "\n";
+          cout << "ent.size : " << e.size << "\n";
+          cout << "ent.rule.name : " << e.placement_rule.name << "\n";
+
+          marker1 = e.bucket.marker;
+        }
+        ulist.clear();
+    } while(is_truncated);
 }
 
 TEST_F(DBStoreBaseTest, ListAllBuckets) {

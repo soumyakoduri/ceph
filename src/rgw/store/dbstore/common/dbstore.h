@@ -586,15 +586,15 @@ class ListUserBucketsOp: public DBOp {
         SwiftVersioning, SwiftVerLocation, \
         MdsearchConfig, NewBucketInstanceID, ObjectLock, \
         SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime \
-        FROM '{}' WHERE OwnerID = {} AND (Marker >= {}) ORDER BY Marker ASC LIMIT {}";
+        FROM '{}' WHERE OwnerID = {} AND Marker >= {} ORDER BY Marker ASC LIMIT {}";
 
 	public:
 	virtual ~ListUserBucketsOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
         return fmt::format(Query.c_str(), params.bucket_table.c_str(),
-			       params.op.user.user_id.c_str(), params.op.bucket.min_marker,
-                   params.op.list_max_count);
+			       params.op.user.user_id.c_str(), params.op.bucket.min_marker.c_str(),
+                   params.op.list_max_count.c_str());
 	}
 };
 
