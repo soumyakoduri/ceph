@@ -586,7 +586,7 @@ class ListUserBucketsOp: public DBOp {
         SwiftVersioning, SwiftVerLocation, \
         MdsearchConfig, NewBucketInstanceID, ObjectLock, \
         SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime \
-        FROM '{}' WHERE OwnerID = {} AND Marker >= {} ORDER BY Marker ASC LIMIT {}";
+        FROM '{}' WHERE OwnerID = {} AND BucketName >= {} ORDER BY BucketName ASC LIMIT {}";
 
 	public:
 	virtual ~ListUserBucketsOp() {}

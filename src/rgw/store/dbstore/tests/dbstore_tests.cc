@@ -388,7 +388,7 @@ TEST_F(DBStoreBaseTest, ListUserBuckets) {
           cout << "ent.size : " << e.size << "\n";
           cout << "ent.rule.name : " << e.placement_rule.name << "\n";
 
-          marker1 = e.bucket.marker;
+          marker1 = e.bucket.name;
         }
         ulist.clear();
     } while(is_truncated);
