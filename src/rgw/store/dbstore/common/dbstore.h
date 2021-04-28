@@ -42,6 +42,7 @@ struct DBOpBucketInfo {
 };
 
 struct DBOpInfo {
+  string name; // Op name
   /* Support only single access_key for now. So store
    * it separately as primary access_key_id & secret to
    * be able to query easily.
@@ -554,22 +555,25 @@ class RemoveBucketOp: public DBOp {
 class GetBucketOp: public DBOp {
 	private:
 	const string Query = "SELECT  \
-        BucketName, Tenant, Marker, BucketID, Size, SizeRounded, CreationTime, \
-        Count, PlacementName, PlacementStorageClass, OwnerID, Flags, Zonegroup, \
+        BucketName, BucketTable.Tenant, Marker, BucketID, Size, SizeRounded, CreationTime, \
+        Count, BucketTable.PlacementName, BucketTable.PlacementStorageClass, OwnerID, Flags, Zonegroup, \
         HasInstanceObj, ObjVersionTrackerReadVer, ObjVersionTrackerReadTag, \
         ObjVersionTrackerWriteVer, ObjVersionTrackerWriteTag, \
         Quota, RequesterPays, HasWebsite, WebsiteConf, \
         SwiftVersioning, SwiftVerLocation, \
         MdsearchConfig, NewBucketInstanceID, ObjectLock, \
-        SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime \
-        from '{}' where BucketName = {}";
+        SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime, NS \
+        from '{}' as BucketTable INNER JOIN '{}' ON OwnerID = UserID where BucketName = {}";
 
 	public:
 	virtual ~GetBucketOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
-		return fmt::format(Query.c_str(), params.bucket_table.c_str(),
-			       params.op.bucket.bucket_name.c_str());
+		//return fmt::format(Query.c_str(), params.op.bucket.bucket_name.c_str(),
+          //          params.bucket_table.c_str(), params.user_table.c_str());
+		return fmt::format(Query.c_str(),
+                    params.bucket_table.c_str(), params.user_table.c_str(),
+                    params.op.bucket.bucket_name.c_str());
 	}
 };
 

@@ -349,21 +349,6 @@ int DBStore::get_bucket_info(const std::string& query_str,
 		goto out;
     }
 
-    /* Now fetch Owner(RGWUser) from info.owner.id */
-    InitializeParams("GetUser", &params2);
-
-    params2.op.user.uinfo.user_id.id = params.op.bucket.info.owner.id;
-
-    ret = ProcessOp("GetUser", &params2);
-
-	if (ret) {
-		dbout(L_ERR)<<"In GetUser failed err:(" <<ret<<") \n";
-		goto out;
-    }
-
-
-    params.op.bucket.info.owner = params2.op.user.uinfo.user_id;
-
     info = params.op.bucket.info;
 
 out:

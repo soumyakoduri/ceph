@@ -211,7 +211,8 @@ enum GetBucket {
   Attrs,
   BucketVersion,
   BucketVersionTag,
-  Mtime
+  Mtime,
+  Bucket_User_NS
 };
 
 static int list_user(DBOpInfo &op, sqlite3_stmt *stmt) {
@@ -308,6 +309,12 @@ static int list_bucket(DBOpInfo &op, sqlite3_stmt *stmt) {
     op.bucket.info.creation_time = op.bucket.ent.creation_time;
 
 	op.bucket.info.owner.id = (const char*)sqlite3_column_text(stmt, OwnerID);
+	op.bucket.info.owner.tenant = op.bucket.ent.bucket.tenant;
+
+    if (op.name == "GetBucket") {
+    	op.bucket.info.owner.ns = (const char*)sqlite3_column_text(stmt, Bucket_User_NS);
+    }
+
 	op.bucket.info.flags = sqlite3_column_int(stmt, Flags);
 	op.bucket.info.zonegroup = (const char*)sqlite3_column_text(stmt, Zonegroup);
 	op.bucket.info.has_instance_obj = sqlite3_column_int(stmt, HasInstanceObj);
@@ -1205,6 +1212,7 @@ int SQLGetBucket::Prepare(struct DBOpParams *params)
 	}
 
 	p_params.bucket_table = params->bucket_table;
+	p_params.user_table = params->user_table;
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetBucket");
 
@@ -1230,6 +1238,7 @@ int SQLGetBucket::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
+    params->op.name = "GetBucket";
 	SQL_EXECUTE(params, stmt, list_bucket);
 out:
 	return ret;
