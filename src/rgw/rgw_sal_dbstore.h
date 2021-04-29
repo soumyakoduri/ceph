@@ -41,7 +41,7 @@ namespace rgw { namespace sal {
       int list_buckets(const DoutPrefixProvider *dpp, const std::string& marker, const std::string& end_marker,
 	  	     uint64_t max, bool need_stats, BucketList& buckets, optional_yield y) override;
       virtual Bucket* create_bucket(rgw_bucket& bucket, ceph::real_time creation_time) override;
-      virtual int read_attrs(const DoutPrefixProvider *dpp, optional_yield y, Attrs* uattrs, RGWObjVersionTracker* tracker) override;
+      virtual int read_attrs(const DoutPrefixProvider* dpp, optional_yield y) override;
       virtual int read_stats(optional_yield y, RGWStorageStats* stats,
 			   ceph::real_time *last_stats_sync = nullptr,
 			   ceph::real_time *last_stats_update = nullptr) override;
@@ -53,9 +53,9 @@ namespace rgw { namespace sal {
       virtual int trim_usage(uint64_t start_epoch, uint64_t end_epoch) override;
 
       /* Placeholders */
-      virtual int load_by_id(const DoutPrefixProvider *dpp, optional_yield y) override;
-      virtual int store_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::PutParams& params = {}) override;
-      virtual int remove_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::RemoveParams& params = {}) override;
+    virtual int load_user(const DoutPrefixProvider* dpp, optional_yield y) override;
+    virtual int store_user(const DoutPrefixProvider* dpp, optional_yield y, bool exclusive, RGWUserInfo* old_info = nullptr) override;
+    virtual int remove_user(const DoutPrefixProvider* dpp, optional_yield y) override;
 
       friend class DBBucket;
   };
@@ -228,9 +228,6 @@ class DBBucket : public Bucket {
       virtual int register_to_service_map(const string& daemon_type,
                                           const map<string, string>& meta) override;
       virtual void get_quota(RGWQuotaInfo& bucket_quota, RGWQuotaInfo& user_quota) override;
-      virtual int list_raw_objects(const rgw_pool& pool, const string& prefix_filter,
-                                   int max, RGWListRawObjsCtx& ctx, std::list<string>& oids,
-                                    bool *is_truncated) override;
       virtual int set_buckets_enabled(const DoutPrefixProvider *dpp, vector<rgw_bucket>& buckets, bool enabled) override;
       virtual uint64_t get_new_req_id() override { return 0; }
       virtual int get_sync_policy_handler(const DoutPrefixProvider *dpp,
@@ -248,20 +245,6 @@ class DBBucket : public Bucket {
                    map<rgw_user_bucket, rgw_usage_log_entry>& usage) override;
       virtual int trim_all_usage(uint64_t start_epoch, uint64_t end_epoch) override;
       virtual int get_config_key_val(string name, bufferlist *bl) override;
-      virtual int put_system_obj(const rgw_pool& pool, const string& oid,
-                                 bufferlist& data, bool exclusive,
-                                 RGWObjVersionTracker *objv_tracker, real_time set_mtime,
-                                 optional_yield y, map<string, bufferlist> *pattrs = nullptr)
-                                 override;
-      virtual int get_system_obj(const DoutPrefixProvider *dpp,
-                                 const rgw_pool& pool, const string& key,
-                                 bufferlist& bl,
-                                 RGWObjVersionTracker *objv_tracker, real_time *pmtime,
-                                 optional_yield y, map<string, bufferlist> *pattrs = nullptr,
-                                 rgw_cache_entry_info *cache_info = nullptr,
-                                 boost::optional<obj_version> refresh_version = boost::none) override;
-      virtual int delete_system_obj(const rgw_pool& pool, const string& oid,
-                                    RGWObjVersionTracker *objv_tracker, optional_yield y) override;
       virtual int meta_list_keys_init(const string& section, const string& marker, void** phandle) override;
       virtual int meta_list_keys_next(void* handle, int max, list<string>& keys, bool* truncated) override;
       virtual void meta_list_keys_complete(void* handle) override;
@@ -270,6 +253,24 @@ class DBBucket : public Bucket {
 
       virtual const RGWSyncModuleInstanceRef& get_sync_module() { return NULL; }
       virtual std::string get_host_id() { return ""; }
+
+    virtual std::unique_ptr<LuaScriptManager> get_lua_script_manager() override;
+    virtual std::unique_ptr<RGWRole> get_role(string name,
+                          string tenant,
+                          string path="",
+                          string trust_policy="",
+                          string max_session_duration_str="") override;
+    virtual std::unique_ptr<RGWRole> get_role(std::string id) override;
+    virtual int get_roles(const DoutPrefixProvider *dpp,
+              optional_yield y,
+              const std::string& path_prefix,
+              const std::string& tenant,
+              vector<std::unique_ptr<RGWRole>>& roles) override;
+    virtual std::unique_ptr<RGWOIDCProvider> get_oidc_provider() override;
+    virtual int get_oidc_providers(const DoutPrefixProvider *dpp,
+                   const std::string& tenant,
+                   vector<std::unique_ptr<RGWOIDCProvider>>& providers) override;
+
 
       virtual void finalize(void) override;
 

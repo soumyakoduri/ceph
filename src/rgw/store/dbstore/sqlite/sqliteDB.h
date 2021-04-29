@@ -116,6 +116,12 @@ class SQLGetUser : public SQLiteDB, public GetUserOp {
 	~SQLGetUser() {
 		if (stmt)
 			sqlite3_finalize(stmt);
+		if (email_stmt)
+			sqlite3_finalize(email_stmt);
+		if (ak_stmt)
+			sqlite3_finalize(ak_stmt);
+		if (userid_stmt)
+			sqlite3_finalize(userid_stmt);
 	}
         int Prepare(DBOpParams *params);
         int Execute(DBOpParams *params);
@@ -132,6 +138,22 @@ class SQLInsertBucket : public SQLiteDB, public InsertBucketOp {
 	~SQLInsertBucket() {
 		if (stmt)
 			sqlite3_finalize(stmt);
+	}
+        int Prepare(DBOpParams *params);
+        int Execute(DBOpParams *params);
+        int Bind(DBOpParams *params);
+};
+
+class SQLUpdateBucket : public SQLiteDB, public UpdateBucketOp {
+	private:
+	sqlite3 **sdb = NULL;
+	sqlite3_stmt *attrs_stmt = NULL; // Prepared statement
+
+	public:
+	SQLUpdateBucket(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	~SQLUpdateBucket() {
+		if (attrs_stmt)
+			sqlite3_finalize(attrs_stmt);
 	}
         int Prepare(DBOpParams *params);
         int Execute(DBOpParams *params);

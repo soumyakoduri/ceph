@@ -265,6 +265,32 @@ TEST_F(DBStoreBaseTest, InsertBucket) {
 	ASSERT_EQ(ret, 0);
 }
 
+TEST_F(DBStoreBaseTest, SetInstanceAttrsAPI) {
+	int ret = -1;
+    RGWBucketInfo info;
+    map<std::string, bufferlist> attrs;
+    RGWObjVersionTracker objv;
+
+    bufferlist aclbl, aclbl2;
+    encode("attrs1", aclbl);
+    attrs["attr1"] = aclbl;
+    encode("attrs2", aclbl2);
+    attrs["attr2"] = aclbl2;
+
+	info.bucket.name = "bucket1";
+
+    /* invalid version number */
+    objv.read_version.ver = 4;
+	ret = db->set_instance_attrs(info, &attrs, &objv);
+	ASSERT_EQ(ret, 125); /* returns ECANCELED */
+
+    /* right version number */
+    objv.read_version.ver = 1;
+	ret = db->set_instance_attrs(info, &attrs, &objv);
+	ASSERT_EQ(ret, 0);
+    ASSERT_EQ(objv.read_version.ver, 2);
+}
+
 TEST_F(DBStoreBaseTest, GetBucket) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
@@ -277,10 +303,20 @@ TEST_F(DBStoreBaseTest, GetBucket) {
 	ASSERT_EQ(params.op.bucket.ent.bucket.name, "bucket1");
 	ASSERT_EQ(params.op.bucket.ent.bucket.tenant, "tenant");
 	ASSERT_EQ(params.op.bucket.info.has_instance_obj, false);
-	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.ver, 1);
+	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.ver, 2);
 	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.tag, "read_tag");
 	ASSERT_EQ(params.op.bucket.mtime, bucket_mtime);
 	ASSERT_EQ(params.op.bucket.info.owner.id, "user_id1");
+	bufferlist k, k2;
+    string acl;
+	map<std::string, bufferlist>::iterator it2 = params.op.bucket.attrs.begin();
+	k = it2->second;
+    decode(acl, k);
+	ASSERT_EQ(acl, "attrs1");
+	it2++;
+	k2 = it2->second;
+    decode(acl, k2);
+	ASSERT_EQ(acl, "attrs2");
 }
 
 TEST_F(DBStoreBaseTest, RemoveBucketAPI) {

@@ -381,6 +381,7 @@ int SQLiteDB::InitializeDBOps()
         dbops.RemoveUser = new SQLRemoveUser(&this->db);
         dbops.GetUser = new SQLGetUser(&this->db);
         dbops.InsertBucket = new SQLInsertBucket(&this->db);
+        dbops.UpdateBucket = new SQLUpdateBucket(&this->db);
         dbops.RemoveBucket = new SQLRemoveBucket(&this->db);
         dbops.GetBucket = new SQLGetBucket(&this->db);
         dbops.ListUserBuckets = new SQLListUserBuckets(&this->db);
@@ -394,6 +395,7 @@ int SQLiteDB::FreeDBOps()
         delete dbops.RemoveUser;
         delete dbops.GetUser;
         delete dbops.InsertBucket;
+        delete dbops.UpdateBucket;
         delete dbops.RemoveBucket;
         delete dbops.GetBucket;
         delete dbops.ListUserBuckets;
@@ -1142,6 +1144,73 @@ int SQLInsertBucket::Execute(struct DBOpParams *params)
 	(void)createObjectTable(params);
 
 	SQL_EXECUTE(params, stmt, NULL);
+out:
+	return ret;
+}
+
+int SQLUpdateBucket::Prepare(struct DBOpParams *params)
+{
+	int ret = -1;
+	struct DBOpPrepareParams p_params = PrepareParams;
+
+	if (!*sdb) {
+		dbout(L_ERR)<<"In SQLUpdateBucket - no db\n";
+		goto out;
+	}
+
+	if (params->op.get_query_str != "attrs") { 
+	  dbout(L_ERR)<<"In SQLUpdateBucket invalid get_query_str:" <<
+                     params->op.get_query_str << "\n";
+      goto out;
+    }
+
+	p_params.op.get_query_str = params->op.get_query_str;
+	p_params.bucket_table = params->bucket_table;
+
+    SQL_PREPARE(p_params, sdb, attrs_stmt, ret, "PrepareUpdateBucket");
+
+out:
+	return ret;
+}
+
+int SQLUpdateBucket::Bind(struct DBOpParams *params)
+{
+	int index = -1;
+	int rc = 0;
+	struct DBOpPrepareParams p_params = PrepareParams;
+
+	if (params->op.get_query_str != "attrs") { 
+      goto out;
+    }
+
+    SQL_BIND_INDEX(attrs_stmt, index, p_params.op.user.user_id.c_str(), sdb);
+    SQL_BIND_TEXT(attrs_stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
+
+    /* All below fields for attrs */
+	SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
+	SQL_BIND_TEXT(attrs_stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
+
+    SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.attrs.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(attrs_stmt, index, params->op.bucket.attrs, sdb);
+	
+    SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.bucket_ver.c_str(), sdb);
+	SQL_BIND_INT(attrs_stmt, index, params->op.bucket.bucket_version.ver, sdb);
+
+out:
+	return rc;
+}
+
+int SQLUpdateBucket::Execute(struct DBOpParams *params)
+{
+	int ret = -1;
+
+	if (params->op.get_query_str != "attrs") { 
+	  dbout(L_ERR)<<"In SQLUpdateBucket invalid get_query_str:" <<
+                     params->op.get_query_str << "\n";
+      goto out;
+    }
+
+    SQL_EXECUTE(params, attrs_stmt, NULL);
 out:
 	return ret;
 }

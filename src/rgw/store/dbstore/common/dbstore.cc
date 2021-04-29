@@ -148,6 +148,8 @@ DBOp * DBStore::getDBOp(string Op, struct DBOpParams *params)
 		return dbops.GetUser;
 	if (!Op.compare("InsertBucket"))
 		return dbops.InsertBucket;
+	if (!Op.compare("UpdateBucket"))
+		return dbops.UpdateBucket;
 	if (!Op.compare("RemoveBucket"))
 		return dbops.RemoveBucket;
 	if (!Op.compare("GetBucket"))
@@ -524,6 +526,62 @@ int DBStore::list_buckets(const rgw_user& user,
         cout << " equal" << "\n";
       } */
     }
+out:
+  return ret;
+}
+
+int DBStore::set_instance_attrs(RGWBucketInfo& info,
+			                map<std::string, bufferlist>* pattrs,
+                            RGWObjVersionTracker* pobjv)
+{
+  int ret = 0;
+  DBOpParams params = {};
+  DBOpParams params2 = {};
+  obj_version bucket_version;
+
+  if (!pattrs)
+    goto out;
+
+  params.op.bucket.info.bucket.name = info.bucket.name;
+
+  ret = get_bucket_info(string("name"), "", info, nullptr, nullptr,
+                          &bucket_version);
+
+  if (ret) {
+    dbout(L_ERR)<<"Failed to read bucket info err:(" <<ret<<") \n";
+    goto out;
+  }
+
+  /* Verify if the objv read_ver matches current bucket version */
+  if (pobjv) {
+    if (pobjv->read_version.ver != bucket_version.ver) {
+	  dbout(L_ERR)<<"Read version mismatch err:(" <<ret<<") \n";
+      ret = ECANCELED;
+      goto out;
+    }
+  }
+
+  InitializeParams("UpdateBucket", &params2);
+
+  params2.op.bucket.info.bucket.name = info.bucket.name;
+  params2.op.get_query_str = "attrs";
+  params2.op.bucket.attrs = *pattrs;
+  params2.op.user.uinfo.user_id.id = info.owner.id;
+
+  params2.op.bucket.bucket_version.ver = ++(bucket_version.ver);
+
+  ret = ProcessOp("UpdateBucket", &params2);
+
+  if (ret) {
+	dbout(L_ERR)<<"In UpdateBucket failed err:(" <<ret<<") \n";
+    goto out;
+  }
+
+  if (pobjv) {
+    pobjv->read_version = params2.op.bucket.bucket_version;
+    pobjv->write_version = params2.op.bucket.bucket_version;
+  }
+
 out:
   return ret;
 }

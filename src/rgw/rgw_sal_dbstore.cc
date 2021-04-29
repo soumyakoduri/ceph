@@ -58,7 +58,7 @@ int DBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
     return NULL;
   }
 
-  int DBUser::read_attrs(const DoutPrefixProvider *dpp, optional_yield y, Attrs* uattrs, RGWObjVersionTracker* tracker)
+  int DBUser::read_attrs(const DoutPrefixProvider* dpp, optional_yield y)
   {
     return 0;
   }
@@ -92,7 +92,7 @@ int DBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
     return 0;
   }
 
-  int DBUser::load_by_id(const DoutPrefixProvider *dpp, optional_yield y)
+  int DBUser::load_user(const DoutPrefixProvider *dpp, optional_yield y)
   {
     int ret = 0;
 
@@ -101,12 +101,12 @@ int DBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
     return ret;
   }
 
-  int DBUser::store_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::PutParams& params)
+int DBUser::store_user(const DoutPrefixProvider* dpp, optional_yield y, bool exclusive, RGWUserInfo* old_info)
   {
     return 0;
   }
 
-  int DBUser::remove_info(const DoutPrefixProvider *dpp, optional_yield y, const RGWUserCtl::RemoveParams& params)
+int DBUser::remove_user(const DoutPrefixProvider* dpp, optional_yield y)
   {
     return 0;
   }
@@ -223,7 +223,14 @@ int DBBucket::check_quota(RGWQuotaInfo& user_quota, RGWQuotaInfo& bucket_quota, 
 
 int DBBucket::set_instance_attrs(const DoutPrefixProvider *dpp, Attrs& attrs, optional_yield y)
 {
-  return 0;
+  int ret = 0;
+
+  /* XXX: handle has_instance_obj like in set_bucket_instance_attrs() */
+
+  ret = store->getDBStore()->set_instance_attrs(info, &attrs,
+                                                &get_info().objv_tracker);
+
+  return ret;
 }
 
 int DBBucket::try_refresh_info(const DoutPrefixProvider *dpp, ceph::real_time *pmtime)
@@ -271,7 +278,20 @@ int DBBucket::purge_instance(const DoutPrefixProvider *dpp)
 
 int DBBucket::set_acl(const DoutPrefixProvider *dpp, RGWAccessControlPolicy &acl, optional_yield y)
 {
-  return 0;
+  int ret = 0;
+  bufferlist aclbl;
+
+  acls = acl;
+  acl.encode(aclbl);
+
+  Attrs attrs = get_attrs();
+  attrs[RGW_ATTR_ACL] = aclbl;
+
+  info.owner = acl.get_owner().get_id();
+  ret = store->getDBStore()->set_instance_attrs(info, &attrs,
+                                                nullptr);
+
+  return ret;
 }
 
 std::unique_ptr<Object> DBBucket::get_object(const rgw_obj_key& k)
@@ -291,6 +311,51 @@ int DBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, L
       dbsm->destroyAllHandles();
   }
 
+std::unique_ptr<LuaScriptManager> RGWDBStore::get_lua_script_manager()
+{
+  return nullptr;
+//  return std::unique_ptr<LuaScriptManager>(new RadosLuaScriptManager(this));
+}
+
+/*
+std::unique_ptr<RGWRole> RGWDBStore::get_role(std::string name,
+					      std::string tenant,
+					      std::string path,
+					      std::string trust_policy,
+					      std::string max_session_duration_str)
+{
+  return nullptr;
+//  return std::unique_ptr<RGWRole>(new RadosRole(this, name, tenant, path, trust_policy, max_session_duration_str));
+}
+
+std::unique_ptr<RGWRole> RGWDBStore::get_role(std::string id)
+{
+  return nullptr;
+//  return std::unique_ptr<RGWRole>(new RadosRole(this, id));
+}
+
+int RGWDBStore::get_roles(const DoutPrefixProvider *dpp,
+			  optional_yield y,
+			  const std::string& path_prefix,
+			  const std::string& tenant,
+			  vector<std::unique_ptr<RGWRole>>& roles)
+{
+  return 0;
+}
+
+std::unique_ptr<RGWOIDCProvider> RGWDBStore::get_oidc_provider()
+{
+  return nullptr;
+//  return std::unique_ptr<RGWOIDCProvider>(new RadosOIDCProvider(this));
+}
+
+int RGWDBStore::get_oidc_providers(const DoutPrefixProvider *dpp,
+				   const std::string& tenant,
+				   vector<std::unique_ptr<RGWOIDCProvider>>& providers)
+{
+  return 0;
+}
+*/
   std::unique_ptr<User> RGWDBStore::get_user(const rgw_user &u)
   {
     return std::unique_ptr<User>(new DBUser(this, u));
@@ -408,8 +473,8 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
   int ret;
   bufferlist in_data;
   RGWBucketInfo master_info;
-  rgw_bucket *pmaster_bucket;
-  uint32_t *pmaster_num_shards;
+  rgw_bucket *pmaster_bucket = nullptr;
+  uint32_t *pmaster_num_shards = nullptr;
   real_time creation_time;
   std::unique_ptr<Bucket> bucket;
   obj_version objv, *pobjv = NULL;
@@ -605,14 +670,6 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
     return;
   }
 
-  int RGWDBStore::list_raw_objects(const rgw_pool& pool, const string& prefix_filter,
-                                   int max, RGWListRawObjsCtx& ctx, list<string>& oids,
-                                   bool *is_truncated)
-  {
-    //    return rados->list_raw_objects(pool, prefix_filter, max, ctx, oids, is_truncated);
-    return 0;
-  }
-
   int RGWDBStore::set_buckets_enabled(const DoutPrefixProvider *dpp, vector<rgw_bucket>& buckets, bool enabled)
   {
     //    return rados->set_buckets_enabled(buckets, enabled);
@@ -652,36 +709,6 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
   {
     //  return svc()->config_key->get(name, true, bl);
     return 0;
-  }
-
-  int RGWDBStore::put_system_obj(const rgw_pool& pool, const string& oid,
-                                 bufferlist& data, bool exclusive,
-                                 RGWObjVersionTracker *objv_tracker, real_time set_mtime,
-                                 optional_yield y, map<string, bufferlist> *pattrs)
-  {
-    return 0;
-    /*  auto obj_ctx = svc()->sysobj->init_obj_ctx();
-        return rgw_put_system_obj(obj_ctx, pool, oid, data, exclusive, objv_tracker, set_mtime, y, pattrs);*/
-  }
-
-  int RGWDBStore::get_system_obj(const DoutPrefixProvider *dpp,
-                                 const rgw_pool& pool, const string& key,
-                                 bufferlist& bl,
-                                 RGWObjVersionTracker *objv_tracker, real_time *pmtime,
-                                 optional_yield y, map<string, bufferlist> *pattrs,
-                                 rgw_cache_entry_info *cache_info,
-                                 boost::optional<obj_version> refresh_version)
-  {
-    return 0;
-    /*  auto obj_ctx = svc()->sysobj->init_obj_ctx();
-        return rgw_get_system_obj(obj_ctx, pool, key, bl, objv_tracker, pmtime, y, pattrs, cache_info, refresh_version);*/
-  }
-
-  int RGWDBStore::delete_system_obj(const rgw_pool& pool, const string& oid,
-                                    RGWObjVersionTracker *objv_tracker, optional_yield y)
-  {
-    return 0;
-    //  return rgw_delete_system_obj(svc()->sysobj, pool, oid, objv_tracker, y);
   }
 
   int RGWDBStore::meta_list_keys_init(const string& section, const string& marker, void** phandle)

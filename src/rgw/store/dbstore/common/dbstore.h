@@ -185,6 +185,7 @@ struct DBOps {
 	class RemoveUserOp *RemoveUser;
 	class GetUserOp *GetUser;
 	class InsertBucketOp *InsertBucket;
+	class UpdateBucketOp *UpdateBucket;
 	class RemoveBucketOp *RemoveBucket;
 	class GetBucketOp *GetBucket;
     class ListUserBucketsOp *ListUserBuckets;
@@ -530,6 +531,25 @@ class InsertBucketOp: public DBOp {
 	}
 };
 
+class UpdateBucketOp: public DBOp {
+	private:
+	const string AttrsQuery =
+	"UPDATE '{}' SET OwnerID = {}, Attrs = {}, BucketVersion = {} \
+        WHERE BucketName = {}";
+
+	public:
+	virtual ~UpdateBucketOp() {}
+
+	string Schema(DBOpPrepareParams &params) {
+		if (params.op.get_query_str == "attrs") {
+		    return fmt::format(AttrsQuery.c_str(), params.bucket_table.c_str(),
+                    params.op.user.user_id, params.op.bucket.attrs,
+                    params.op.bucket.bucket_ver, params.op.bucket.bucket_name.c_str());
+        }
+        return "";
+	}
+};
+
 class RemoveBucketOp: public DBOp {
 	private:
 	const string Query =
@@ -786,5 +806,8 @@ class DBStore {
                              bool need_stats,
                              RGWUserBuckets *buckets,
                              bool *is_truncated);
+    int set_instance_attrs(RGWBucketInfo& info,
+			               map<std::string, bufferlist>* pattrs,
+                           RGWObjVersionTracker* pobjv);
 };
 #endif
