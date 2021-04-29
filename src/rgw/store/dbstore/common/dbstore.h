@@ -289,10 +289,6 @@ class DBOp {
             Flags   INTEGER,       \
             Zonegroup TEXT,         \
             HasInstanceObj BOOLEAN, \
-            ObjVersionTrackerReadVer  INTEGER, \
-            ObjVersionTrackerReadTag  TEXT,     \
-            ObjVersionTrackerWriteVer  INTEGER, \
-            ObjVersionTrackerWriteTag  TEXT,     \
             Quota   BLOB,       \
             RequesterPays BOOLEAN,  \
             HasWebsite  BOOLEAN,    \
@@ -504,14 +500,12 @@ class InsertBucketOp: public DBOp {
 	"INSERT OR REPLACE INTO '{}' \
        (BucketName, Tenant, Marker, BucketID, Size, SizeRounded, CreationTime, \
         Count, PlacementName, PlacementStorageClass, OwnerID, Flags, Zonegroup, \
-        HasInstanceObj, ObjVersionTrackerReadVer, ObjVersionTrackerReadTag, \
-        ObjVersionTrackerWriteVer, ObjVersionTrackerWriteTag, \
-        Quota, RequesterPays, HasWebsite, WebsiteConf, \
+        HasInstanceObj, Quota, RequesterPays, HasWebsite, WebsiteConf, \
         SwiftVersioning, SwiftVerLocation, \
         MdsearchConfig, NewBucketInstanceID, ObjectLock, \
         SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime) \
-       VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
-               {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+       VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, \
+               {}, {}, {}, {}, {}, {}, {}, {}, {}, \
                {}, {}, {}, {}, {}, {}, {}, {}, {}, {})";
 
 	public:
@@ -526,8 +520,6 @@ class InsertBucketOp: public DBOp {
                 params.op.bucket.placement_name, params.op.bucket.placement_storage_class,
                 params.op.user.user_id,
                 params.op.bucket.flags, params.op.bucket.zonegroup, params.op.bucket.has_instance_obj,
-                params.op.bucket.objv_tracker_read_ver, params.op.bucket.objv_tracker_read_tag,
-                params.op.bucket.objv_tracker_write_ver, params.op.bucket.objv_tracker_write_tag,
                 params.op.bucket.quota, params.op.bucket.requester_pays, params.op.bucket.has_website,
                 params.op.bucket.website_conf, params.op.bucket.swift_versioning,
                 params.op.bucket.swift_ver_location, params.op.bucket.mdsearch_config,
@@ -557,9 +549,7 @@ class GetBucketOp: public DBOp {
 	const string Query = "SELECT  \
         BucketName, BucketTable.Tenant, Marker, BucketID, Size, SizeRounded, CreationTime, \
         Count, BucketTable.PlacementName, BucketTable.PlacementStorageClass, OwnerID, Flags, Zonegroup, \
-        HasInstanceObj, ObjVersionTrackerReadVer, ObjVersionTrackerReadTag, \
-        ObjVersionTrackerWriteVer, ObjVersionTrackerWriteTag, \
-        Quota, RequesterPays, HasWebsite, WebsiteConf, \
+        HasInstanceObj, Quota, RequesterPays, HasWebsite, WebsiteConf, \
         SwiftVersioning, SwiftVerLocation, \
         MdsearchConfig, NewBucketInstanceID, ObjectLock, \
         SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime, NS \
@@ -584,9 +574,7 @@ class ListUserBucketsOp: public DBOp {
 	const string Query = "SELECT  \
         BucketName, Tenant, Marker, BucketID, Size, SizeRounded, CreationTime, \
         Count, PlacementName, PlacementStorageClass, OwnerID, Flags, Zonegroup, \
-        HasInstanceObj, ObjVersionTrackerReadVer, ObjVersionTrackerReadTag, \
-        ObjVersionTrackerWriteVer, ObjVersionTrackerWriteTag, \
-        Quota, RequesterPays, HasWebsite, WebsiteConf, \
+        HasInstanceObj, Quota, RequesterPays, HasWebsite, WebsiteConf, \
         SwiftVersioning, SwiftVerLocation, \
         MdsearchConfig, NewBucketInstanceID, ObjectLock, \
         SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime \
@@ -768,8 +756,10 @@ class DBStore {
 
 	int get_user(const std::string& query_str, const std::string& query_str_val,
 			RGWUserInfo& user);
-    int get_bucket_info(const std::string& query_str, const std::string& query_str_val,
-                        RGWBucketInfo& info);
+    int get_bucket_info(const std::string& query_str,
+                        const std::string& query_str_val,
+                        RGWBucketInfo& info, rgw::sal::Attrs* pattrs, ceph::real_time* pmtime,
+                        obj_version* pbucket_version);
     int create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
                             const string& zonegroup_id,
                             const rgw_placement_rule& placement_rule,

@@ -322,7 +322,9 @@ out:
 
 int DBStore::get_bucket_info(const std::string& query_str,
                              const std::string& query_str_val,
-                             RGWBucketInfo& info) {
+                             RGWBucketInfo& info,
+                             rgw::sal::Attrs* pattrs, ceph::real_time* pmtime,
+                             obj_version* pbucket_version) {
 	int ret = 0;
 
 	if (query_str.empty()) {
@@ -351,6 +353,17 @@ int DBStore::get_bucket_info(const std::string& query_str,
 
     info = params.op.bucket.info;
 
+    if (pattrs) {
+      *pattrs = params.op.bucket.attrs;
+    }
+
+    if (pmtime) {
+      *pmtime = params.op.bucket.mtime;
+    }
+    if (pbucket_version) {
+      *pbucket_version = params.op.bucket.bucket_version;
+    }
+
 out:
 	return ret;
 }
@@ -360,7 +373,7 @@ int DBStore::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
                             const rgw_placement_rule& placement_rule,
                             const string& swift_ver_location,
                             const RGWQuotaInfo * pquota_info,
-			    map<std::string, bufferlist>& attrs,
+			                map<std::string, bufferlist>& attrs,
                             RGWBucketInfo& info,
                             obj_version *pobjv,
                             obj_version *pep_objv,
@@ -386,7 +399,7 @@ int DBStore::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
    /* Check if the bucket already exists and return the old info, caller will have a use for it */
    RGWBucketInfo orig_info;
    orig_info.bucket.name = bucket.name;
-   ret = get_bucket_info(string("name"), "", orig_info);
+   ret = get_bucket_info(string("name"), "", orig_info, nullptr, nullptr, nullptr);
 
    if (!ret && !orig_info.owner.id.empty()) {
      /* already exists. Return the old info */
@@ -394,10 +407,6 @@ int DBStore::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
      info = std::move(orig_info);
      return ret;
    }
-
-    /* Since bucket_id is optional..not generating it for now to check
-     * if there are any dependencies.
-     */
 
     RGWObjVersionTracker& objv_tracker = info.objv_tracker;
 
@@ -408,6 +417,8 @@ int DBStore::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
     } else {
       objv_tracker.generate_new_write_ver(cct);
     }
+    params.op.bucket.bucket_version = objv_tracker.write_version;
+    objv_tracker.read_version = params.op.bucket.bucket_version;
 
     uint64_t bid = next_bucket_id();
     string s = getDBname() + "." + std::to_string(bid);

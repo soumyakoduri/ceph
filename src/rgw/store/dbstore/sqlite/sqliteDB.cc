@@ -194,10 +194,6 @@ enum GetBucket {
   Flags,
   Zonegroup,
   HasInstanceObj,
-  ObjVersionTrackerReadVer,
-  ObjVersionTrackerReadTag,
-  ObjVersionTrackerWriteVer,
-  ObjVersionTrackerWriteTag,
   Quota,
   RequesterPays,
   HasWebsite,
@@ -318,10 +314,7 @@ static int list_bucket(DBOpInfo &op, sqlite3_stmt *stmt) {
 	op.bucket.info.flags = sqlite3_column_int(stmt, Flags);
 	op.bucket.info.zonegroup = (const char*)sqlite3_column_text(stmt, Zonegroup);
 	op.bucket.info.has_instance_obj = sqlite3_column_int(stmt, HasInstanceObj);
-	op.bucket.info.objv_tracker.read_version.ver = sqlite3_column_int(stmt, ObjVersionTrackerReadVer);
-	op.bucket.info.objv_tracker.read_version.tag = (const char*)sqlite3_column_text(stmt, ObjVersionTrackerReadTag);
-	op.bucket.info.objv_tracker.write_version.ver = sqlite3_column_int(stmt, ObjVersionTrackerWriteVer);
-	op.bucket.info.objv_tracker.write_version.tag = (const char*)sqlite3_column_text(stmt, ObjVersionTrackerWriteTag);
+
 	SQL_DECODE_BLOB_PARAM(stmt, Quota, op.bucket.info.quota, sdb);
 	op.bucket.info.requester_pays = sqlite3_column_int(stmt, RequesterPays);
 	op.bucket.info.has_website = sqlite3_column_int(stmt, HasWebsite);
@@ -335,6 +328,13 @@ static int list_bucket(DBOpInfo &op, sqlite3_stmt *stmt) {
 	SQL_DECODE_BLOB_PARAM(stmt, Attrs, op.bucket.attrs, sdb);
 	op.bucket.bucket_version.ver = sqlite3_column_int(stmt, BucketVersion);
 	op.bucket.bucket_version.tag = (const char*)sqlite3_column_text(stmt, BucketVersionTag);
+
+    /* Read bucket version into info.objv_tracker.read_ver. No need
+     * to set write_ver as its not used anywhere. Still keeping its
+     * value same as read_ver */
+    op.bucket.info.objv_tracker.read_version = op.bucket.bucket_version;
+    op.bucket.info.objv_tracker.write_version = op.bucket.bucket_version;
+
 	SQL_DECODE_BLOB_PARAM(stmt, Mtime, op.bucket.mtime, sdb);
 
     op.bucket.list_entries.push_back(op.bucket.ent);
@@ -1080,18 +1080,6 @@ int SQLInsertBucket::Bind(struct DBOpParams *params)
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.has_instance_obj.c_str(), sdb);
 	SQL_BIND_INT(stmt, index, params->op.bucket.info.has_instance_obj, sdb);
-	
-    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.objv_tracker_read_ver.c_str(), sdb);
-	SQL_BIND_INT(stmt, index, params->op.bucket.info.objv_tracker.read_version.ver, sdb);
-	
-    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.objv_tracker_read_tag.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.objv_tracker.read_version.tag.c_str(), sdb);
-	
-    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.objv_tracker_write_ver.c_str(), sdb);
-	SQL_BIND_INT(stmt, index, params->op.bucket.info.objv_tracker.write_version.ver, sdb);
-	
-    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.objv_tracker_write_tag.c_str(), sdb);
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.objv_tracker.write_version.tag.c_str(), sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.quota.c_str(), sdb);
 	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.info.quota, sdb);

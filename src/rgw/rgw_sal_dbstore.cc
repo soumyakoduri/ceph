@@ -135,7 +135,8 @@ int DBBucket::get_bucket_info(const DoutPrefixProvider *dpp, optional_yield y)
 {
     int ret = 0;
 
-    ret = store->getDBStore()->get_bucket_info(string("name"), "", info);
+    ret = store->getDBStore()->get_bucket_info(string("name"), "", info, &attrs,
+                                               &mtime, &bucket_version);
 
     return ret;
 }

@@ -256,8 +256,8 @@ TEST_F(DBStoreBaseTest, InsertBucket) {
     params.op.bucket.ent.size = 1024;
 
     params.op.bucket.info.has_instance_obj = false;
-    params.op.bucket.info.objv_tracker.read_version.ver = 1;
-    params.op.bucket.info.objv_tracker.read_version.tag = "read_tag";
+    params.op.bucket.bucket_version.ver = 1;
+    params.op.bucket.bucket_version.tag = "read_tag";
 
     params.op.bucket.mtime = bucket_mtime;
 
@@ -343,18 +343,24 @@ TEST_F(DBStoreBaseTest, GetBucketQueryByName) {
 	int ret = -1;
     RGWBucketInfo binfo;
     binfo.bucket.name = "bucket2";
+    rgw::sal::Attrs attrs;
+    ceph::real_time mtime;
+    obj_version objv;
 
-	ret = db->get_bucket_info("name", "", binfo);
+	ret = db->get_bucket_info("name", "", binfo, &attrs, &mtime, &objv);
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(binfo.bucket.name, "bucket2");
 	ASSERT_EQ(binfo.bucket.tenant, "tenant");
 	ASSERT_EQ(binfo.owner.id, "user_id1");
-	ASSERT_EQ(binfo.objv_tracker.write_version.ver, 2);
-	ASSERT_EQ(binfo.objv_tracker.write_version.tag, "write_tag");
+	ASSERT_EQ(binfo.objv_tracker.read_version.ver, 2);
+	ASSERT_EQ(binfo.objv_tracker.read_version.tag, "write_tag");
 	ASSERT_EQ(binfo.zonegroup, "zid");
 	ASSERT_EQ(binfo.creation_time, bucket_mtime);
 	ASSERT_EQ(binfo.placement_rule.name, "rule1");
 	ASSERT_EQ(binfo.placement_rule.storage_class, "sc1");
+	ASSERT_EQ(objv.ver, 2);
+	ASSERT_EQ(objv.tag, "write_tag");
+
     marker1 = binfo.bucket.marker;
 }
 
