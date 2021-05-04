@@ -60,7 +60,10 @@ int DBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
 
   int DBUser::read_attrs(const DoutPrefixProvider* dpp, optional_yield y)
   {
-    return 0;
+    int ret;
+    ret = store->getDBStore()->get_user(string("user_id"), "", info, &attrs,
+                                        &objv_tracker);
+    return ret;
   }
 
   int DBUser::read_stats(optional_yield y, RGWStorageStats* stats,
@@ -96,19 +99,28 @@ int DBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
   {
     int ret = 0;
 
-    ret = store->getDBStore()->get_user(string("user_id"), "", info);
+    ret = store->getDBStore()->get_user(string("user_id"), "", info, &attrs,
+                                        &objv_tracker);
 
     return ret;
   }
 
 int DBUser::store_user(const DoutPrefixProvider* dpp, optional_yield y, bool exclusive, RGWUserInfo* old_info)
   {
-    return 0;
+    int ret = 0;
+
+    ret = store->getDBStore()->store_user(info, exclusive, &attrs, &objv_tracker, old_info);
+
+    return ret;
   }
 
 int DBUser::remove_user(const DoutPrefixProvider* dpp, optional_yield y)
   {
-    return 0;
+    int ret = 0;
+
+    ret = store->getDBStore()->remove_user(info, &objv_tracker);
+
+    return ret;
   }
 
 Object *DBBucket::create_object(const rgw_obj_key &key)
@@ -366,8 +378,10 @@ int RGWDBStore::get_oidc_providers(const DoutPrefixProvider *dpp,
     RGWUserInfo uinfo;
     User *u;
     int ret = 0;
+    RGWObjVersionTracker objv_tracker;
 
-    ret = getDBStore()->get_user(string("access_key"), key, uinfo);
+    ret = getDBStore()->get_user(string("access_key"), key, uinfo, nullptr,
+                                 &objv_tracker);
 
     if (ret < 0)
       return ret;
@@ -377,6 +391,7 @@ int RGWDBStore::get_oidc_providers(const DoutPrefixProvider *dpp,
     if (!u)
       return -ENOMEM;
 
+    u->get_version_tracker() = objv_tracker;
     user->reset(u);
 
     return 0;
@@ -387,8 +402,10 @@ int RGWDBStore::get_oidc_providers(const DoutPrefixProvider *dpp,
     RGWUserInfo uinfo;
     User *u;
     int ret = 0;
+    RGWObjVersionTracker objv_tracker;
 
-    ret = getDBStore()->get_user(string("email"), email, uinfo);
+    ret = getDBStore()->get_user(string("email"), email, uinfo, nullptr,
+                                 &objv_tracker);
 
     if (ret < 0)
       return ret;
@@ -398,6 +415,7 @@ int RGWDBStore::get_oidc_providers(const DoutPrefixProvider *dpp,
     if (!u)
       return -ENOMEM;
 
+    u->get_version_tracker() = objv_tracker;
     user->reset(u);
 
     return ret;

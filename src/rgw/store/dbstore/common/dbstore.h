@@ -26,13 +26,15 @@ class DBStore;
 
 struct DBOpUserInfo {
 	RGWUserInfo uinfo = {};
+    obj_version user_version;
+    rgw::sal::Attrs user_attrs;
 };
 
 struct DBOpBucketInfo {
     RGWBucketEnt ent; // maybe not needed. not used in create/get_bucket
     RGWBucketInfo info;
     RGWUser* owner = nullptr;
-    rgw::sal::Attrs attrs;
+    rgw::sal::Attrs bucket_attrs;
     obj_version bucket_version;
     ceph::real_time mtime;
     // used for list query
@@ -115,6 +117,9 @@ struct DBOpUserPrepareInfo {
 	string type = ":type";
 	string mfa_ids = ":mfa_ids";
 	string assumed_role_arn = ":assumed_role_arn";
+    string user_attrs = ":user_attrs";
+    string user_ver = ":user_vers";
+    string user_ver_tag = ":user_ver_tag";
 };
 
 struct DBOpBucketPrepareInfo {
@@ -132,10 +137,6 @@ struct DBOpBucketPrepareInfo {
     string flags = ":flags";
     string zonegroup = ":zonegroup";
     string has_instance_obj = ":has_instance_obj";
-    string objv_tracker_read_ver = ":objv_tracker_read_ver";
-    string objv_tracker_read_tag = ":objv_tracker_read_tag";
-    string objv_tracker_write_ver = ":objv_tracker_write_ver";
-    string objv_tracker_write_tag = ":objv_tracker_write_tag";
     string quota = ":quota";
     string requester_pays = ":requester_pays";
     string has_website = ":has_website";
@@ -146,7 +147,7 @@ struct DBOpBucketPrepareInfo {
     string new_bucket_instance_id = ":new_bucket_instance_id";
     string obj_lock = ":obj_lock";
     string sync_policy_info_groups = ":sync_policy_info_groups";
-    string attrs = ":attrs";
+    string bucket_attrs = ":bucket_attrs";
     string bucket_ver = ":bucket_vers";
     string bucket_ver_tag = ":bucket_ver_tag";
     string mtime = ":mtime";
@@ -251,6 +252,9 @@ class DBOp {
 			TYPE INTEGER ,		\
 			MfaIDs BLOB ,	\
 			AssumedRoleARN TEXT , \
+            UserAttrs   BLOB,   \
+            UserVersion   INTEGER,    \
+            UserVersionTag TEXT,      \
             PRIMARY KEY (UserID) \n);";
 
 	const string CreateBucketTableQ =
@@ -300,7 +304,7 @@ class DBOp {
             NewBucketInstanceID TEXT,\
             ObjectLock BLOB, \
             SyncPolicyInfoGroups BLOB, \
-            Attrs   BLOB,   \
+            BucketAttrs   BLOB,   \
             BucketVersion   INTEGER,    \
             BucketVersionTag TEXT,      \
             Mtime   BLOB,   \
@@ -396,9 +400,10 @@ class InsertUserOp : public DBOp {
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
 			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
 			 System, PlacementName, PlacementStorageClass, PlacementTags, \
-			 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN )\
-		         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
-				 {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {});";
+			 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN, \
+             UserAttrs, UserVersion, UserVersionTag) \
+		         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+				 {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {});";
 
 	public:
 	virtual ~InsertUserOp() {}
@@ -416,7 +421,8 @@ class InsertUserOp : public DBOp {
 			       params.op.user.placement_tags, params.op.user.bucket_quota,
 			       params.op.user.temp_url_keys, params.op.user.user_quota,
 			       params.op.user.type, params.op.user.mfa_ids,
-			       params.op.user.assumed_role_arn);
+			       params.op.user.assumed_role_arn, params.op.user.user_attrs,
+                   params.op.user.user_ver, params.op.user.user_ver_tag);
 	}
 
 };
@@ -444,32 +450,33 @@ class GetUserOp: public DBOp {
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
     			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
     			 System, PlacementName, PlacementStorageClass, PlacementTags, \
-	    		 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
-		    	 from '{}' where UserID = {}";
+	    		 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN, \
+                 UserAttrs, UserVersion, UserVersionTag from '{}' where UserID = {}";
 
 	const string QueryByEmail = "SELECT \
 	       	     UserID, Tenant, NS, DisplayName, UserEmail, \
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
     			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
 	    		 System, PlacementName, PlacementStorageClass, PlacementTags, \
-		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
-			     from '{}' where UserEmail = {}";
+		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN, \
+                 UserAttrs, UserVersion, UserVersionTag from '{}' where UserEmail = {}";
 
 	const string QueryByAccessKeys = "SELECT \
 	       	     UserID, Tenant, NS, DisplayName, UserEmail, \
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
     			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
 	    		 System, PlacementName, PlacementStorageClass, PlacementTags, \
-		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
-    			 from '{}' where AccessKeysID = {}";
+		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN, \
+                 UserAttrs, UserVersion, UserVersionTag from '{}' where AccessKeysID = {}";
 
 	const string QueryByUserID = "SELECT \
 	       	     UserID, Tenant, NS, DisplayName, UserEmail, \
                  AccessKeysID, AccessKeysSecret, AccessKeys, SwiftKeys,\
     			 SubUsers, Suspended, MaxBuckets, OpMask, UserCaps, Admin, \
 	    		 System, PlacementName, PlacementStorageClass, PlacementTags, \
-		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN \
-    			 from '{}' where Tenant = {} and UserID = {} and NS = {}";
+		    	 BucketQuota, TempURLKeys, UserQuota, Type, MfaIDs, AssumedRoleARN, \
+                 UserAttrs, UserVersion, UserVersionTag \
+                 from '{}' where Tenant = {} and UserID = {} and NS = {}";
 
 	public:
 	virtual ~GetUserOp() {}
@@ -504,7 +511,7 @@ class InsertBucketOp: public DBOp {
         HasInstanceObj, Quota, RequesterPays, HasWebsite, WebsiteConf, \
         SwiftVersioning, SwiftVerLocation, \
         MdsearchConfig, NewBucketInstanceID, ObjectLock, \
-        SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime) \
+        SyncPolicyInfoGroups, BucketAttrs, BucketVersion, BucketVersionTag, Mtime) \
        VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, \
                {}, {}, {}, {}, {}, {}, {}, {}, {}, \
                {}, {}, {}, {}, {}, {}, {}, {}, {}, {})";
@@ -525,7 +532,7 @@ class InsertBucketOp: public DBOp {
                 params.op.bucket.website_conf, params.op.bucket.swift_versioning,
                 params.op.bucket.swift_ver_location, params.op.bucket.mdsearch_config,
                 params.op.bucket.new_bucket_instance_id, params.op.bucket.obj_lock,
-                params.op.bucket.sync_policy_info_groups, params.op.bucket.attrs,
+                params.op.bucket.sync_policy_info_groups, params.op.bucket.bucket_attrs,
                 params.op.bucket.bucket_ver, params.op.bucket.bucket_ver_tag,
                 params.op.bucket.mtime);
 	}
@@ -534,7 +541,7 @@ class InsertBucketOp: public DBOp {
 class UpdateBucketOp: public DBOp {
 	private:
 	const string AttrsQuery =
-	"UPDATE '{}' SET OwnerID = {}, Attrs = {}, BucketVersion = {} \
+	"UPDATE '{}' SET OwnerID = {}, BucketAttrs = {}, BucketVersion = {} \
         WHERE BucketName = {}";
 
 	public:
@@ -543,7 +550,7 @@ class UpdateBucketOp: public DBOp {
 	string Schema(DBOpPrepareParams &params) {
 		if (params.op.get_query_str == "attrs") {
 		    return fmt::format(AttrsQuery.c_str(), params.bucket_table.c_str(),
-                    params.op.user.user_id, params.op.bucket.attrs,
+                    params.op.user.user_id, params.op.bucket.bucket_attrs,
                     params.op.bucket.bucket_ver, params.op.bucket.bucket_name.c_str());
         }
         return "";
@@ -572,7 +579,7 @@ class GetBucketOp: public DBOp {
         HasInstanceObj, Quota, RequesterPays, HasWebsite, WebsiteConf, \
         SwiftVersioning, SwiftVerLocation, \
         MdsearchConfig, NewBucketInstanceID, ObjectLock, \
-        SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime, NS \
+        SyncPolicyInfoGroups, BucketAttrs, BucketVersion, BucketVersionTag, Mtime, NS \
         from '{}' as BucketTable INNER JOIN '{}' ON OwnerID = UserID where BucketName = {}";
 
 	public:
@@ -597,8 +604,8 @@ class ListUserBucketsOp: public DBOp {
         HasInstanceObj, Quota, RequesterPays, HasWebsite, WebsiteConf, \
         SwiftVersioning, SwiftVerLocation, \
         MdsearchConfig, NewBucketInstanceID, ObjectLock, \
-        SyncPolicyInfoGroups, Attrs, BucketVersion, BucketVersionTag, Mtime \
-        FROM '{}' WHERE OwnerID = {} AND BucketName >= {} ORDER BY BucketName ASC LIMIT {}";
+        SyncPolicyInfoGroups, BucketAttrs, BucketVersion, BucketVersionTag, Mtime \
+        FROM '{}' WHERE OwnerID = {} AND BucketName > {} ORDER BY BucketName ASC LIMIT {}";
 
 	public:
 	virtual ~ListUserBucketsOp() {}
@@ -775,7 +782,11 @@ class DBStore {
         virtual int ListAllObjects(DBOpParams *params) = 0;
 
 	int get_user(const std::string& query_str, const std::string& query_str_val,
-			RGWUserInfo& user);
+                      RGWUserInfo& uinfo, map<string, bufferlist> *pattrs,
+                      RGWObjVersionTracker *pobjv_tracker);
+    int store_user(RGWUserInfo& uinfo, bool exclusive, map<string, bufferlist> *pattrs,
+                    RGWObjVersionTracker *pobjv_tracker, RGWUserInfo* pold_info);
+    int remove_user(RGWUserInfo& uinfo, RGWObjVersionTracker *pobjv_tracker);
     int get_bucket_info(const std::string& query_str,
                         const std::string& query_str_val,
                         RGWBucketInfo& info, rgw::sal::Attrs* pattrs, ceph::real_time* pmtime,

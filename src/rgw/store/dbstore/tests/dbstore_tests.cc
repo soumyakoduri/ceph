@@ -103,6 +103,8 @@ TEST_F(DBStoreBaseTest, InsertUser) {
 	RGWAccessKey k2("id2", "key2");
 	params.op.user.uinfo.access_keys["id1"] = k1;
 	params.op.user.uinfo.access_keys["id2"] = k2;
+    params.op.user.user_version.ver = 1;    
+    params.op.user.user_version.tag = "UserTAG";    
 
 	ret = db->ProcessOp("InsertUser", &params);
 	ASSERT_EQ(ret, 0);
@@ -165,8 +167,10 @@ TEST_F(DBStoreBaseTest, GetUserQueryByEmail) {
 	int ret = -1;
     RGWUserInfo uinfo;
     string email = "user1@dbstore.com";
+    map<std::string, bufferlist> attrs;
+    RGWObjVersionTracker objv;
 
-	ret = db->get_user("email", email, uinfo);
+	ret = db->get_user("email", email, uinfo, &attrs, &objv);
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(uinfo.user_id.tenant, "tenant");
 	ASSERT_EQ(uinfo.user_email, "user1@dbstore.com");
@@ -184,6 +188,7 @@ TEST_F(DBStoreBaseTest, GetUserQueryByEmail) {
 	k = it2->second;
 	ASSERT_EQ(k.id, "id2");
 	ASSERT_EQ(k.key, "key2");
+    ASSERT_EQ(objv.read_version.ver, 1);
 }
 
 TEST_F(DBStoreBaseTest, GetUserQueryByAccessKey) {
@@ -191,7 +196,7 @@ TEST_F(DBStoreBaseTest, GetUserQueryByAccessKey) {
     RGWUserInfo uinfo;
     string key = "id1";
 
-	ret = db->get_user("access_key", key, uinfo);
+	ret = db->get_user("access_key", key, uinfo, nullptr, nullptr);
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(uinfo.user_id.tenant, "tenant");
 	ASSERT_EQ(uinfo.user_email, "user1@dbstore.com");
@@ -211,30 +216,100 @@ TEST_F(DBStoreBaseTest, GetUserQueryByAccessKey) {
 	ASSERT_EQ(k.key, "key2");
 }
 
+TEST_F(DBStoreBaseTest, StoreUser) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+    RGWUserInfo uinfo, old_uinfo;
+    map<std::string, bufferlist> attrs;
+    RGWObjVersionTracker objv_tracker;
+
+    bufferlist attr1, attr2;
+    encode("attrs1", attr1);
+    attrs["attr1"] = attr1;
+    encode("attrs2", attr2);
+    attrs["attr2"] = attr2;
+
+	uinfo.user_id.id = "user_id2";
+	uinfo.user_id.tenant = "tenant";
+	uinfo.user_email = "user2@dbstore.com";
+	uinfo.suspended = 123;
+	uinfo.max_buckets = 456;
+	uinfo.assumed_role_arn = "role";
+	uinfo.placement_tags.push_back("tags");
+	RGWAccessKey k1("id1", "key1");
+	RGWAccessKey k2("id2", "key2");
+	uinfo.access_keys["id1"] = k1;
+	uinfo.access_keys["id2"] = k2;
+
+    /* non exclusive create..should create new one */
+	ret = db->store_user(uinfo, true, &attrs, &objv_tracker, &old_uinfo);
+	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(old_uinfo.user_email, "");
+	ASSERT_EQ(objv_tracker.read_version.ver, 1);
+	ASSERT_EQ(objv_tracker.read_version.tag, "UserTAG");
+
+    /* invalid version number */
+    objv_tracker.read_version.ver = 4;
+	ret = db->store_user(uinfo, true, &attrs, &objv_tracker, &old_uinfo);
+	ASSERT_EQ(ret, -125); /* returns ECANCELED */
+	ASSERT_EQ(old_uinfo.user_id.id, uinfo.user_id.id);
+	ASSERT_EQ(old_uinfo.user_email, uinfo.user_email);
+
+    /* exclusive create..should not create new one */
+	uinfo.user_email = "user2_new@dbstore.com";
+    objv_tracker.read_version.ver = 1;
+	ret = db->store_user(uinfo, true, &attrs, &objv_tracker, &old_uinfo);
+	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(old_uinfo.user_email, "user2@dbstore.com");
+	ASSERT_EQ(objv_tracker.read_version.ver, 1);
+
+	ret = db->store_user(uinfo, false, &attrs, &objv_tracker, &old_uinfo);
+	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(old_uinfo.user_email, "user2@dbstore.com");
+	ASSERT_EQ(objv_tracker.read_version.ver, 2);
+	ASSERT_EQ(objv_tracker.read_version.tag, "UserTAG");
+}
+
 TEST_F(DBStoreBaseTest, GetUserQueryByUserID) {
 	int ret = -1;
     RGWUserInfo uinfo;
-    uinfo.user_id.tenant = "tenant";
-    uinfo.user_id.id = "user_id1";
+    map<std::string, bufferlist> attrs;
+    RGWObjVersionTracker objv;
 
-	ret = db->get_user("user_id", "", uinfo);
+    uinfo.user_id.tenant = "tenant";
+    uinfo.user_id.id = "user_id2";
+
+	ret = db->get_user("user_id", "", uinfo, &attrs, &objv);
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(uinfo.user_id.tenant, "tenant");
-	ASSERT_EQ(uinfo.user_email, "user1@dbstore.com");
-	ASSERT_EQ(uinfo.user_id.id, "user_id1");
+	ASSERT_EQ(uinfo.user_email, "user2_new@dbstore.com");
+	ASSERT_EQ(uinfo.user_id.id, "user_id2");
 	ASSERT_EQ(uinfo.suspended, 123);
 	ASSERT_EQ(uinfo.max_buckets, 456);
 	ASSERT_EQ(uinfo.assumed_role_arn, "role");
 	ASSERT_EQ(uinfo.placement_tags.back(), "tags");
 	RGWAccessKey k;
-	map<string, RGWAccessKey>::iterator it2 = uinfo.access_keys.begin();
-	k = it2->second;
+	map<string, RGWAccessKey>::iterator it = uinfo.access_keys.begin();
+	k = it->second;
 	ASSERT_EQ(k.id, "id1");
 	ASSERT_EQ(k.key, "key1");
-	it2++;
-	k = it2->second;
+	it++;
+	k = it->second;
 	ASSERT_EQ(k.id, "id2");
 	ASSERT_EQ(k.key, "key2");
+
+    ASSERT_EQ(objv.read_version.ver, 2);
+
+	bufferlist k1, k2;
+    string attr;
+	map<std::string, bufferlist>::iterator it2 = attrs.begin();
+	k1 = it2->second;
+    decode(attr, k1);
+	ASSERT_EQ(attr, "attrs1");
+	it2++;
+	k2 = it2->second;
+    decode(attr, k2);
+	ASSERT_EQ(attr, "attrs2");
 }
 
 TEST_F(DBStoreBaseTest, ListAllUsers) {
@@ -242,6 +317,25 @@ TEST_F(DBStoreBaseTest, ListAllUsers) {
 	int ret = -1;
 
 	ret = db->ListAllUsers(&params);
+	ASSERT_EQ(ret, 0);
+}
+
+TEST_F(DBStoreBaseTest, RemoveUserAPI) {
+	int ret = -1;
+    RGWUserInfo uinfo;
+    RGWObjVersionTracker objv;
+
+    uinfo.user_id.tenant = "tenant";
+    uinfo.user_id.id = "user_id2";
+
+    /* invalid version number...should fail */
+    objv.read_version.ver = 4;
+	ret = db->remove_user(uinfo, &objv);
+	ASSERT_EQ(ret, -125);
+
+    /* invalid version number...should fail */
+    objv.read_version.ver = 2;
+	ret = db->remove_user(uinfo, &objv);
 	ASSERT_EQ(ret, 0);
 }
 
@@ -282,7 +376,7 @@ TEST_F(DBStoreBaseTest, SetInstanceAttrsAPI) {
     /* invalid version number */
     objv.read_version.ver = 4;
 	ret = db->set_instance_attrs(info, &attrs, &objv);
-	ASSERT_EQ(ret, 125); /* returns ECANCELED */
+	ASSERT_EQ(ret, -125); /* returns ECANCELED */
 
     /* right version number */
     objv.read_version.ver = 1;
@@ -309,7 +403,7 @@ TEST_F(DBStoreBaseTest, GetBucket) {
 	ASSERT_EQ(params.op.bucket.info.owner.id, "user_id1");
 	bufferlist k, k2;
     string acl;
-	map<std::string, bufferlist>::iterator it2 = params.op.bucket.attrs.begin();
+	map<std::string, bufferlist>::iterator it2 = params.op.bucket.bucket_attrs.begin();
 	k = it2->second;
     decode(acl, k);
 	ASSERT_EQ(acl, "attrs1");

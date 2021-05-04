@@ -280,7 +280,8 @@ int DBStore::ProcessOp(string Op, struct DBOpParams *params) {
 }
 
 int DBStore::get_user(const std::string& query_str, const std::string& query_str_val,
-                      RGWUserInfo& uinfo) {
+                      RGWUserInfo& uinfo, map<string, bufferlist> *pattrs,
+                      RGWObjVersionTracker *pobjv_tracker) {
 	int ret = 0;
 
 	if (query_str.empty()) {
@@ -318,8 +319,116 @@ int DBStore::get_user(const std::string& query_str, const std::string& query_str
 
     uinfo = params.op.user.uinfo;
 
+    if (pattrs) {
+      *pattrs = params.op.user.user_attrs;
+    }
+
+    if (pobjv_tracker) {
+      pobjv_tracker->read_version = params.op.user.user_version;
+    }
+
 out:
 	return ret;
+}
+
+int DBStore::store_user(RGWUserInfo& uinfo, bool exclusive, map<string, bufferlist> *pattrs,
+                      RGWObjVersionTracker *pobjv, RGWUserInfo* pold_info)
+{
+    DBOpParams params = {};
+    InitializeParams("CreateUser", &params);
+    int ret = 0;
+
+   /* Check if the user already exists and return the old info, caller will have a use for it */
+   RGWUserInfo orig_info;
+   RGWObjVersionTracker objv_tracker = {};
+   obj_version& obj_ver = objv_tracker.read_version;
+
+   orig_info.user_id = uinfo.user_id;
+   cout << "before get_user: id-" << orig_info.user_id.id << ", obj_ver.ver =" << obj_ver.ver << "\n";
+   ret = get_user(string("user_id"), "", orig_info, nullptr, &objv_tracker);
+   cout << "after get_user: id-" << orig_info.user_id.id << ", obj_ver.ver =" << obj_ver.ver << "\n";
+
+   if (!ret && obj_ver.ver) {
+     /* already exists. */
+
+     if (pold_info) {
+       *pold_info = orig_info;
+     }
+
+     if (pobjv && (pobjv->read_version.ver != obj_ver.ver)) {
+        /* Object version mismatch.. return ECANCELED */
+        ret = -ECANCELED;
+	    dbout(L_ERR)<<"User Read version mismatch err:(" <<ret<<") \n";
+        return ret;
+     }
+
+     if (exclusive) {
+       // return
+       return ret;
+     }
+     obj_ver.ver++;
+   } else {
+     obj_ver.ver = 1;
+     obj_ver.tag = "UserTAG";
+   }
+
+    params.op.user.user_version = obj_ver;
+    params.op.user.uinfo = uinfo;
+
+    if (pattrs) {
+      params.op.user.user_attrs = *pattrs;
+    }
+
+    ret = ProcessOp("InsertUser", &params);
+
+	if (ret) {
+		dbout(L_ERR)<<"store_user failed with err:(" <<ret<<") \n";
+		goto out;
+    }
+
+    if (pobjv) {
+      pobjv->read_version = obj_ver;
+      pobjv->write_version = obj_ver;
+    }
+
+out:
+  return ret;
+}
+
+int DBStore::remove_user(RGWUserInfo& uinfo, RGWObjVersionTracker *pobjv)
+{
+    DBOpParams params = {};
+    InitializeParams("CreateUser", &params);
+    int ret = 0;
+
+   RGWUserInfo orig_info;
+   RGWObjVersionTracker objv_tracker = {};
+
+   orig_info.user_id = uinfo.user_id;
+   ret = get_user(string("user_id"), "", orig_info, nullptr, &objv_tracker);
+
+   if (!ret && objv_tracker.read_version.ver) {
+     /* already exists. */
+
+     if (pobjv && (pobjv->read_version.ver != objv_tracker.read_version.ver)) {
+        /* Object version mismatch.. return ECANCELED */
+        ret = -ECANCELED;
+	    dbout(L_ERR)<<"User Read version mismatch err:(" <<ret<<") \n";
+        return ret;
+     }
+   }
+
+    params.op.user.uinfo.user_id = uinfo.user_id;
+
+    ret = ProcessOp("RemoveUser", &params);
+
+	if (ret) {
+		dbout(L_ERR)<<"remove_user failed with err:(" <<ret<<") \n";
+		goto out;
+    }
+
+out:
+  return ret;
 }
 
 int DBStore::get_bucket_info(const std::string& query_str,
@@ -356,7 +465,7 @@ int DBStore::get_bucket_info(const std::string& query_str,
     info = params.op.bucket.info;
 
     if (pattrs) {
-      *pattrs = params.op.bucket.attrs;
+      *pattrs = params.op.bucket.bucket_attrs;
     }
 
     if (pmtime) {
@@ -444,14 +553,14 @@ int DBStore::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
     }
 
     params.op.bucket.info = info;
-    params.op.bucket.attrs = attrs;
+    params.op.bucket.bucket_attrs = attrs;
     params.op.bucket.mtime = ceph::real_time();
     params.op.user.uinfo.user_id.id = owner.user_id.id;
 
     ret = ProcessOp("InsertBucket", &params);
 
 	if (ret) {
-		dbout(L_ERR)<<"In InsertBucket failed err:(" <<ret<<") \n";
+		dbout(L_ERR)<<"create_bucket failed with err:(" <<ret<<") \n";
 		goto out;
     }
 
@@ -556,7 +665,7 @@ int DBStore::set_instance_attrs(RGWBucketInfo& info,
   if (pobjv) {
     if (pobjv->read_version.ver != bucket_version.ver) {
 	  dbout(L_ERR)<<"Read version mismatch err:(" <<ret<<") \n";
-      ret = ECANCELED;
+      ret = -ECANCELED;
       goto out;
     }
   }
@@ -565,7 +674,7 @@ int DBStore::set_instance_attrs(RGWBucketInfo& info,
 
   params2.op.bucket.info.bucket.name = info.bucket.name;
   params2.op.get_query_str = "attrs";
-  params2.op.bucket.attrs = *pattrs;
+  params2.op.bucket.bucket_attrs = *pattrs;
   params2.op.user.uinfo.user_id.id = info.owner.id;
 
   params2.op.bucket.bucket_version.ver = ++(bucket_version.ver);

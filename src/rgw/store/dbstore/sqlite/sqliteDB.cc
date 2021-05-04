@@ -151,7 +151,7 @@ static int list_callback(void *None, int argc, char **argv, char **aname)
         return 0;
 }
 
-enum ListUser {
+enum GetUser {
   UserID = 0,
   Tenant,
   NS,
@@ -176,7 +176,10 @@ enum ListUser {
   UserQuota,
   TYPE,
   MfaIDs,
-  AssumedRoleARN
+  AssumedRoleARN,
+  UserAttrs,
+  UserVersion,
+  UserVersionTag,
 };
 
 enum GetBucket {
@@ -204,7 +207,7 @@ enum GetBucket {
   NewBucketInstanceID,
   ObjectLock,
   SyncPolicyInfoGroups,
-  Attrs,
+  BucketAttrs,
   BucketVersion,
   BucketVersionTag,
   Mtime,
@@ -279,6 +282,10 @@ static int list_user(DBOpInfo &op, sqlite3_stmt *stmt) {
 
 	op.user.uinfo.assumed_role_arn = (const char*)sqlite3_column_text(stmt, AssumedRoleARN);
 
+	SQL_DECODE_BLOB_PARAM(stmt, UserAttrs, op.user.user_attrs, sdb);
+	op.user.user_version.ver = sqlite3_column_int(stmt, UserVersion);
+	op.user.user_version.tag = (const char*)sqlite3_column_text(stmt, UserVersionTag);
+
 	return 0;
 }
 
@@ -325,7 +332,7 @@ static int list_bucket(DBOpInfo &op, sqlite3_stmt *stmt) {
 	op.bucket.info.new_bucket_instance_id = (const char*)sqlite3_column_text(stmt, NewBucketInstanceID);
 	SQL_DECODE_BLOB_PARAM(stmt, ObjectLock, op.bucket.info.obj_lock, sdb);
 	SQL_DECODE_BLOB_PARAM(stmt, SyncPolicyInfoGroups, op.bucket.info.sync_policy, sdb);
-	SQL_DECODE_BLOB_PARAM(stmt, Attrs, op.bucket.attrs, sdb);
+	SQL_DECODE_BLOB_PARAM(stmt, BucketAttrs, op.bucket.bucket_attrs, sdb);
 	op.bucket.bucket_version.ver = sqlite3_column_int(stmt, BucketVersion);
 	op.bucket.bucket_version.tag = (const char*)sqlite3_column_text(stmt, BucketVersionTag);
 
@@ -883,6 +890,15 @@ int SQLInsertUser::Bind(struct DBOpParams *params)
 	SQL_BIND_INDEX(stmt, index, p_params.op.user.assumed_role_arn.c_str(), sdb);
 	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.assumed_role_arn.c_str(), sdb);
 
+    SQL_BIND_INDEX(stmt, index, p_params.op.user.user_attrs.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.user.user_attrs, sdb);
+	
+    SQL_BIND_INDEX(stmt, index, p_params.op.user.user_ver.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.user.user_version.ver, sdb);
+
+    SQL_BIND_INDEX(stmt, index, p_params.op.user.user_ver_tag.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.user.user_version.tag.c_str(), sdb);
+
 out:
 	return rc;
 }
@@ -1113,8 +1129,8 @@ int SQLInsertBucket::Bind(struct DBOpParams *params)
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.sync_policy_info_groups.c_str(), sdb);
 	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.info.sync_policy, sdb);
 	
-    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.attrs.c_str(), sdb);
-	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.attrs, sdb);
+    SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_attrs.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.bucket.bucket_attrs, sdb);
 	
     SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_ver.c_str(), sdb);
 	SQL_BIND_INT(stmt, index, params->op.bucket.bucket_version.ver, sdb);
@@ -1190,8 +1206,8 @@ int SQLUpdateBucket::Bind(struct DBOpParams *params)
 	SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 	SQL_BIND_TEXT(attrs_stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
-    SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.attrs.c_str(), sdb);
-	SQL_ENCODE_BLOB_PARAM(attrs_stmt, index, params->op.bucket.attrs, sdb);
+    SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.bucket_attrs.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(attrs_stmt, index, params->op.bucket.bucket_attrs, sdb);
 	
     SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.bucket_ver.c_str(), sdb);
 	SQL_BIND_INT(attrs_stmt, index, params->op.bucket.bucket_version.ver, sdb);
