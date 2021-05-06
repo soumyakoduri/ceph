@@ -16,6 +16,8 @@
 #pragma once
 
 #include "rgw_sal.h"
+#include "rgw_oidc_provider.h"
+#include "rgw_role.h"
 
 #include "store/dbstore/common/dbstore.h"
 #include "store/dbstore/dbstore_mgr.h"
@@ -42,15 +44,16 @@ namespace rgw { namespace sal {
 	  	     uint64_t max, bool need_stats, BucketList& buckets, optional_yield y) override;
       virtual Bucket* create_bucket(rgw_bucket& bucket, ceph::real_time creation_time) override;
       virtual int read_attrs(const DoutPrefixProvider* dpp, optional_yield y) override;
-      virtual int read_stats(optional_yield y, RGWStorageStats* stats,
+    virtual int read_stats(const DoutPrefixProvider *dpp,
+                           optional_yield y, RGWStorageStats* stats,
 			   ceph::real_time *last_stats_sync = nullptr,
 			   ceph::real_time *last_stats_update = nullptr) override;
-      virtual int read_stats_async(RGWGetUserStats_CB *cb) override;
-      virtual int complete_flush_stats(optional_yield y) override;
-      virtual int read_usage(uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
-               bool *is_truncated, RGWUsageIter& usage_iter,
-               map<rgw_user_bucket, rgw_usage_log_entry>& usage) override;
-      virtual int trim_usage(uint64_t start_epoch, uint64_t end_epoch) override;
+    virtual int read_stats_async(const DoutPrefixProvider *dpp, RGWGetUserStats_CB* cb) override;
+    virtual int complete_flush_stats(const DoutPrefixProvider *dpp, optional_yield y) override;
+    virtual int read_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
+			   bool* is_truncated, RGWUsageIter& usage_iter,
+			   map<rgw_user_bucket, rgw_usage_log_entry>& usage) override;
+    virtual int trim_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, uint64_t end_epoch) override;
 
       /* Placeholders */
     virtual int load_user(const DoutPrefixProvider* dpp, optional_yield y) override;
@@ -122,14 +125,14 @@ class DBBucket : public Bucket {
     virtual RGWAccessControlPolicy& get_acl(void) override { return acls; }
     virtual int set_acl(const DoutPrefixProvider *dpp, RGWAccessControlPolicy& acl, optional_yield y) override;
     virtual int get_bucket_info(const DoutPrefixProvider *dpp, optional_yield y) override;
-    virtual int get_bucket_stats(int shard_id,
+    virtual int get_bucket_stats(const DoutPrefixProvider *dpp, int shard_id,
 				 std::string *bucket_ver, std::string *master_ver,
 				 std::map<RGWObjCategory, RGWStorageStats>& stats,
 				 std::string *max_marker = nullptr,
 				 bool *syncstopped = nullptr) override;
-    virtual int get_bucket_stats_async(int shard_id, RGWGetBucketStats_CB *ctx) override;
+    virtual int get_bucket_stats_async(const DoutPrefixProvider *dpp, int shard_id, RGWGetBucketStats_CB* ctx) override;
     virtual int read_bucket_stats(const DoutPrefixProvider *dpp, optional_yield y) override;
-    virtual int sync_user_stats(optional_yield y) override;
+    virtual int sync_user_stats(const DoutPrefixProvider *dpp, optional_yield y) override;
     virtual int update_container_stats(const DoutPrefixProvider *dpp) override;
     virtual int check_bucket_shards(const DoutPrefixProvider *dpp) override;
     virtual int link(const DoutPrefixProvider *dpp, User* new_user, optional_yield y, bool update_entrypoint, RGWObjVersionTracker* objv) override;
@@ -143,14 +146,14 @@ class DBBucket : public Bucket {
     virtual int check_quota(RGWQuotaInfo& user_quota, RGWQuotaInfo& bucket_quota, uint64_t obj_size, optional_yield y, bool check_size_only = false) override;
     virtual int set_instance_attrs(const DoutPrefixProvider *dpp, Attrs& attrs, optional_yield y) override;
     virtual int try_refresh_info(const DoutPrefixProvider *dpp, ceph::real_time *pmtime) override;
-    virtual int read_usage(uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
+    virtual int read_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
 			   bool *is_truncated, RGWUsageIter& usage_iter,
 			   map<rgw_user_bucket, rgw_usage_log_entry>& usage) override;
-    virtual int trim_usage(uint64_t start_epoch, uint64_t end_epoch) override;
-    virtual int remove_objs_from_index(std::list<rgw_obj_index_key>& objs_to_unlink) override;
-    virtual int check_index(std::map<RGWObjCategory, RGWStorageStats>& existing_stats, std::map<RGWObjCategory, RGWStorageStats>& calculated_stats) override;
-    virtual int rebuild_index() override;
-    virtual int set_tag_timeout(uint64_t timeout) override;
+    virtual int trim_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, uint64_t end_epoch) override;
+    virtual int remove_objs_from_index(const DoutPrefixProvider *dpp, std::list<rgw_obj_index_key>& objs_to_unlink) override;
+    virtual int check_index(const DoutPrefixProvider *dpp, std::map<RGWObjCategory, RGWStorageStats>& existing_stats, std::map<RGWObjCategory, RGWStorageStats>& calculated_stats) override;
+    virtual int rebuild_index(const DoutPrefixProvider *dpp) override;
+    virtual int set_tag_timeout(const DoutPrefixProvider *dpp, uint64_t timeout) override;
     virtual int purge_instance(const DoutPrefixProvider *dpp) override;
     virtual std::unique_ptr<Bucket> clone() override {
       return std::make_unique<DBBucket>(*this);
@@ -200,7 +203,7 @@ class DBBucket : public Bucket {
                                  std::unique_ptr<Bucket>* bucket,
                                  optional_yield y) override;
       virtual bool is_meta_master() override;
-      virtual int forward_request_to_master(User* user, obj_version *objv,
+    virtual int forward_request_to_master(const DoutPrefixProvider *dpp, User* user, obj_version* objv,
                           bufferlist& in_data, JSONParser *jp, req_info& info,
                           optional_yield y) override;
       virtual int defer_gc(const DoutPrefixProvider *dpp, RGWObjectCtx *rctx, Bucket* bucket, Object* obj,
@@ -218,13 +221,13 @@ class DBBucket : public Bucket {
                                                  const DoutPrefixProvider *dpp, optional_yield y) override;
       virtual RGWLC* get_rgwlc(void) override { return NULL; }
       virtual RGWCoroutinesManagerRegistry* get_cr_registry() override { return NULL; }
-      virtual int delete_raw_obj(const rgw_raw_obj& obj) override;
-      virtual int delete_raw_obj_aio(const rgw_raw_obj& obj, Completions* aio) override;
+    virtual int delete_raw_obj(const DoutPrefixProvider *dpp, const rgw_raw_obj& obj) override;
+    virtual int delete_raw_obj_aio(const DoutPrefixProvider *dpp, const rgw_raw_obj& obj, Completions* aio) override;
       virtual void get_raw_obj(const rgw_placement_rule& placement_rule, const rgw_obj& obj, rgw_raw_obj* raw_obj) override;
       virtual int get_raw_chunk_size(const DoutPrefixProvider *dpp, const rgw_raw_obj& obj, uint64_t* chunk_size) override;
 
-      virtual int log_usage(map<rgw_user_bucket, RGWUsageBatch>& usage_info) override;
-      virtual int log_op(string& oid, bufferlist& bl) override;
+    virtual int log_usage(const DoutPrefixProvider *dpp, map<rgw_user_bucket, RGWUsageBatch>& usage_info) override;
+    virtual int log_op(const DoutPrefixProvider *dpp, std::string& oid, bufferlist& bl) override;
       virtual int register_to_service_map(const string& daemon_type,
                                           const map<string, string>& meta) override;
       virtual void get_quota(RGWQuotaInfo& bucket_quota, RGWQuotaInfo& user_quota) override;
@@ -238,15 +241,15 @@ class DBBucket : public Bucket {
       virtual RGWDataSyncStatusManager* get_data_sync_manager(const rgw_zone_id& source_zone) override;
       virtual void wakeup_meta_sync_shards(set<int>& shard_ids) override { return; }
       virtual void wakeup_data_sync_shards(const rgw_zone_id& source_zone, map<int, set<string> >& shard_ids) override { return; }
-      virtual int clear_usage() override { return 0; }
-      virtual int read_all_usage(uint64_t start_epoch, uint64_t end_epoch,
+    virtual int clear_usage(const DoutPrefixProvider *dpp) override { return 0; }
+    virtual int read_all_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, uint64_t end_epoch,
                    uint32_t max_entries, bool *is_truncated,
                    RGWUsageIter& usage_iter,
                    map<rgw_user_bucket, rgw_usage_log_entry>& usage) override;
-      virtual int trim_all_usage(uint64_t start_epoch, uint64_t end_epoch) override;
-      virtual int get_config_key_val(string name, bufferlist *bl) override;
-      virtual int meta_list_keys_init(const string& section, const string& marker, void** phandle) override;
-      virtual int meta_list_keys_next(void* handle, int max, list<string>& keys, bool* truncated) override;
+    virtual int trim_all_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, uint64_t end_epoch) override;
+    virtual int get_config_key_val(std::string name, bufferlist* bl) override;
+    virtual int meta_list_keys_init(const DoutPrefixProvider *dpp, const std::string& section, const std::string& marker, void** phandle) override;
+    virtual int meta_list_keys_next(void* handle, int max, list<std::string>& keys, bool* truncated) override;
       virtual void meta_list_keys_complete(void* handle) override;
       virtual std::string meta_get_marker(void *handle) override;
       virtual int meta_remove(const DoutPrefixProvider *dpp, string& metadata_key, optional_yield y) override;
