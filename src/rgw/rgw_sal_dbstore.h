@@ -135,8 +135,6 @@ class DBBucket : public Bucket {
     virtual int sync_user_stats(const DoutPrefixProvider *dpp, optional_yield y) override;
     virtual int update_container_stats(const DoutPrefixProvider *dpp) override;
     virtual int check_bucket_shards(const DoutPrefixProvider *dpp) override;
-    virtual int link(const DoutPrefixProvider *dpp, User* new_user, optional_yield y, bool update_entrypoint, RGWObjVersionTracker* objv) override;
-    virtual int unlink(const DoutPrefixProvider *dpp, User* new_user, optional_yield y, bool update_entrypoint = true) override;
     virtual int chown(const DoutPrefixProvider *dpp, User* new_user, User* old_user, optional_yield y, const std::string* marker = nullptr) override;
     virtual int put_instance_info(const DoutPrefixProvider *dpp, bool exclusive, ceph::real_time mtime) override;
     virtual int remove_entrypoint(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y) override;
@@ -186,22 +184,22 @@ class DBBucket : public Bucket {
       virtual int get_bucket(const DoutPrefixProvider *dpp, User* u, const rgw_bucket& b, std::unique_ptr<Bucket>* bucket, optional_yield y) override;
       virtual int get_bucket(User* u, const RGWBucketInfo& i, std::unique_ptr<Bucket>* bucket) override;
       virtual int get_bucket(const DoutPrefixProvider *dpp, User* u, const std::string& tenant, const std::string&name, std::unique_ptr<Bucket>* bucket, optional_yield y) override;
-      virtual int create_bucket(const DoutPrefixProvider *dpp, 
-                                User& u, const rgw_bucket& b,
-                                const std::string& zonegroup_id,
-                                rgw_placement_rule& placement_rule,
-                                std::string& swift_ver_location,
-                                const RGWQuotaInfo * pquota_info,
-                                const RGWAccessControlPolicy& policy,
-                                Attrs& attrs,
-                                 RGWBucketInfo& info,
-                                 obj_version& ep_objv,
-                                 bool exclusive,
-                                 bool obj_lock_enabled,
-                                 bool *existed,
-                                 req_info& req_info,
-                                 std::unique_ptr<Bucket>* bucket,
-                                 optional_yield y) override;
+    virtual int create_bucket(const DoutPrefixProvider* dpp,
+                            User* u, const rgw_bucket& b,
+                            const std::string& zonegroup_id,
+                            rgw_placement_rule& placement_rule,
+                            std::string& swift_ver_location,
+                            const RGWQuotaInfo* pquota_info,
+                            const RGWAccessControlPolicy& policy,
+			    Attrs& attrs,
+                            RGWBucketInfo& info,
+                            obj_version& ep_objv,
+			    bool exclusive,
+			    bool obj_lock_enabled,
+			    bool* existed,
+			    req_info& req_info,
+			    std::unique_ptr<Bucket>* bucket,
+			    optional_yield y) override;
       virtual bool is_meta_master() override;
     virtual int forward_request_to_master(const DoutPrefixProvider *dpp, User* user, obj_version* objv,
                           bufferlist& in_data, JSONParser *jp, req_info& info,

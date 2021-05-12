@@ -187,16 +187,6 @@ int DBBucket::check_bucket_shards(const DoutPrefixProvider *dpp)
   return 0;
 }
 
-int DBBucket::link(const DoutPrefixProvider *dpp, User* new_user, optional_yield y, bool update_entrypoint, RGWObjVersionTracker* objv)
-{
-  return 0;
-}
-
-int DBBucket::unlink(const DoutPrefixProvider *dpp, User* new_user, optional_yield y, bool update_entrypoint)
-{
-  return 0;
-}
-
 int DBBucket::chown(const DoutPrefixProvider *dpp, User* new_user, User* old_user, optional_yield y, const std::string* marker)
 {
   return 0;
@@ -473,7 +463,7 @@ int RGWDBStore::get_bucket(const DoutPrefixProvider *dpp, User* u, const std::st
 }
 
 int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
-                                User& u, const rgw_bucket& b,
+                                User* u, const rgw_bucket& b,
                                 const string& zonegroup_id,
                                 rgw_placement_rule& placement_rule,
                                 string& swift_ver_location,
@@ -499,7 +489,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
   obj_version objv, *pobjv = NULL;
 
   /* If it exists, look it up; otherwise create it */
-  ret = get_bucket(dpp, &u, b, &bucket, y);
+  ret = get_bucket(dpp, u, b, &bucket, y);
   if (ret < 0 && ret != -ENOENT)
     return ret;
 
@@ -519,7 +509,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
       return -EEXIST;
     }*/
   } else {
-    bucket = std::unique_ptr<Bucket>(new DBBucket(this, b, &u));
+    bucket = std::unique_ptr<Bucket>(new DBBucket(this, b, u));
     *existed = false;
     bucket->set_attrs(attrs);
   }
@@ -547,7 +537,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
   } else {
 
     /* XXX: We may not need to send all these params. Cleanup the unused ones */
-    ret = getDBStore()->create_bucket(u.get_info(), bucket->get_key(),
+    ret = getDBStore()->create_bucket(u->get_info(), bucket->get_key(),
 				    zid, placement_rule, swift_ver_location, pquota_info,
 				    attrs, info, pobjv, &ep_objv, creation_time,
 				    pmaster_bucket, pmaster_num_shards, y, dpp,

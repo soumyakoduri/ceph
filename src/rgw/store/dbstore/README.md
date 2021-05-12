@@ -5,21 +5,15 @@ DBStore for Rados Gateway (RGW)
 fmt(-devel) and gtest(-devel) packages need to be installed
 
 ## Build
-cd src/rgw/store/dbstore
-
-mkdir build
-
 cd build
 
-cmake ../
+ninja src/rgw/store/dbstore/tests/install
 
 [To enable debug symbols, pass "-DDEBUG_SYMS=ON" option to cmake]
 
-make
-
 ## Execute
 
-./dbstore
+./bin/dbstore-bin
 
 ## Logging
 Different loglevels are supported 
@@ -36,14 +30,14 @@ By default log level is set to EVENT and logs are stored in dbstore.log
 
 [To provide custom log file and change log level]
 
-./dbstore log_file log_level
+./dbstore-bin log_file log_level
 
-eg., ./dbstore dbstore.log 3
+eg., ./dbstore-bin
 
 ## Gtests
 To execute Gtest cases, from build directory
 
 cd tests
 
-./dbstore_tests
+./bin/dbstore-tests
 
