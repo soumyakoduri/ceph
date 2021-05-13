@@ -74,6 +74,7 @@ int DBUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
     return 0;
   }
 
+  /* stats - Not for first pass */
   int DBUser::read_stats_async(const DoutPrefixProvider *dpp, RGWGetUserStats_CB *cb)
   {
     return 0;
@@ -154,6 +155,7 @@ int DBBucket::get_bucket_info(const DoutPrefixProvider *dpp, optional_yield y)
     return ret;
 }
 
+  /* stats - Not for first pass */
 int DBBucket::get_bucket_stats(const DoutPrefixProvider *dpp, int shard_id,
 				     std::string *bucket_ver, std::string *master_ver,
 				     std::map<RGWObjCategory, RGWStorageStats>& stats,
@@ -189,7 +191,12 @@ int DBBucket::check_bucket_shards(const DoutPrefixProvider *dpp)
 
 int DBBucket::chown(const DoutPrefixProvider *dpp, User* new_user, User* old_user, optional_yield y, const std::string* marker)
 {
-  return 0;
+  int ret;
+
+  ret = store->getDBStore()->update_bucket(info, &(new_user->get_id()), nullptr, nullptr, nullptr);
+
+  /* XXX: Update policies of all the bucket->objects with new user */
+  return ret;
 }
 
 int DBBucket::put_instance_info(const DoutPrefixProvider *dpp, bool exclusive, ceph::real_time _mtime)
@@ -230,8 +237,7 @@ int DBBucket::set_instance_attrs(const DoutPrefixProvider *dpp, Attrs& attrs, op
 
   /* XXX: handle has_instance_obj like in set_bucket_instance_attrs() */
 
-  ret = store->getDBStore()->set_instance_attrs(info, &attrs,
-                                                &get_info().objv_tracker);
+  ret = store->getDBStore()->update_bucket(info, nullptr, &attrs, nullptr, &get_info().objv_tracker);
 
   return ret;
 }
@@ -290,9 +296,7 @@ int DBBucket::set_acl(const DoutPrefixProvider *dpp, RGWAccessControlPolicy &acl
   Attrs attrs = get_attrs();
   attrs[RGW_ATTR_ACL] = aclbl;
 
-  info.owner = acl.get_owner().get_id();
-  ret = store->getDBStore()->set_instance_attrs(info, &attrs,
-                                                nullptr);
+  ret = store->getDBStore()->update_bucket(info, &(acl.get_owner().get_id()), &attrs, nullptr, nullptr);
 
   return ret;
 }

@@ -148,12 +148,15 @@ class SQLUpdateBucket : public SQLiteDB, public UpdateBucketOp {
 	private:
 	sqlite3 **sdb = NULL;
 	sqlite3_stmt *attrs_stmt = NULL; // Prepared statement
+	sqlite3_stmt *owner_stmt = NULL; // Prepared statement
 
 	public:
 	SQLUpdateBucket(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
 	~SQLUpdateBucket() {
 		if (attrs_stmt)
 			sqlite3_finalize(attrs_stmt);
+		if (owner_stmt)
+			sqlite3_finalize(owner_stmt);
 	}
         int Prepare(DBOpParams *params);
         int Execute(DBOpParams *params);

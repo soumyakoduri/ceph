@@ -125,8 +125,7 @@ do{						\
 						\
 	ret = Bind(params);			\
 	if (ret) {				\
-		cout<<"Bind parameters failed for stmt("	\
-			   <<stmt<<") \n";		\
+		cout<<"Bind parameters failed for stmt(" <<stmt<<") \n";		\
 		goto out;			\
 	}					\
 						\
@@ -135,8 +134,7 @@ do{						\
 	Reset(stmt);				\
 						\
 	if (ret) {				\
-		cout<<"Execution failed for stmt("	\
-			   <<stmt<<")\n";		\
+		cout<<"Execution failed for stmt(" <<stmt<<")\n";		\
 		goto out;			\
 	}					\
 }while(0);
@@ -802,9 +800,6 @@ int SQLInsertUser::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	cout << "userid prepare = " << p_params.op.user.user_id.c_str() << "\n";
-	cout << "userid = " << params->op.user.uinfo.user_id.id.c_str() << "\n";
-
 	SQL_BIND_INDEX(stmt, index, p_params.op.user.tenant.c_str(), sdb);
 	SQL_BIND_TEXT(stmt, index, params->op.user.uinfo.user_id.tenant.c_str(), sdb);
 
@@ -962,13 +957,13 @@ int SQLGetUser::Prepare(struct DBOpParams *params)
 	}
 
 	p_params.user_table = params->user_table;
-	p_params.op.get_query_str = params->op.get_query_str;
+	p_params.op.query_str = params->op.query_str;
 
-	if (params->op.get_query_str == "email") { 
+	if (params->op.query_str == "email") { 
 		SQL_PREPARE(p_params, sdb, email_stmt, ret, "PrepareGetUser");
-	} else if (params->op.get_query_str == "access_key") { 
+	} else if (params->op.query_str == "access_key") { 
 		SQL_PREPARE(p_params, sdb, ak_stmt, ret, "PrepareGetUser");
-	} else if (params->op.get_query_str == "user_id") { 
+	} else if (params->op.query_str == "user_id") { 
 		SQL_PREPARE(p_params, sdb, userid_stmt, ret, "PrepareGetUser");
 	} else { // by default by userid
 		SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetUser");
@@ -983,10 +978,10 @@ int SQLGetUser::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	if (params->op.get_query_str == "email") { 
+	if (params->op.query_str == "email") { 
 		SQL_BIND_INDEX(email_stmt, index, p_params.op.user.user_email.c_str(), sdb);
 		SQL_BIND_TEXT(email_stmt, index, params->op.user.uinfo.user_email.c_str(), sdb);
-	} else if (params->op.get_query_str == "access_key") { 
+	} else if (params->op.query_str == "access_key") { 
       if (!params->op.user.uinfo.access_keys.empty()) {
         string access_key;
         map<string, RGWAccessKey>::const_iterator it =
@@ -997,7 +992,7 @@ int SQLGetUser::Bind(struct DBOpParams *params)
 	    SQL_BIND_INDEX(ak_stmt, index, p_params.op.user.access_keys_id.c_str(), sdb);
 		SQL_BIND_TEXT(ak_stmt, index, access_key.c_str(), sdb);
       }
-	} else if (params->op.get_query_str == "user_id") { 
+	} else if (params->op.query_str == "user_id") { 
 		SQL_BIND_INDEX(userid_stmt, index, p_params.op.user.tenant.c_str(), sdb);
 		SQL_BIND_TEXT(userid_stmt, index, params->op.user.uinfo.user_id.tenant.c_str(), sdb);
 
@@ -1019,11 +1014,11 @@ int SQLGetUser::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
 
-	if (params->op.get_query_str == "email") { 
+	if (params->op.query_str == "email") { 
 		SQL_EXECUTE(params, email_stmt, list_user);
- 	} else if (params->op.get_query_str == "access_key") { 
+ 	} else if (params->op.query_str == "access_key") { 
 		SQL_EXECUTE(params, ak_stmt, list_user);
- 	} else if (params->op.get_query_str == "user_id") { 
+ 	} else if (params->op.query_str == "user_id") { 
 		SQL_EXECUTE(params, userid_stmt, list_user);
 	} else { // by default by userid
 		SQL_EXECUTE(params, stmt, list_user);
@@ -1174,16 +1169,18 @@ int SQLUpdateBucket::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-	if (params->op.get_query_str != "attrs") { 
-	  dbout(L_ERR)<<"In SQLUpdateBucket invalid get_query_str:" <<
-                     params->op.get_query_str << "\n";
-      goto out;
-    }
-
-	p_params.op.get_query_str = params->op.get_query_str;
+	p_params.op.query_str = params->op.query_str;
 	p_params.bucket_table = params->bucket_table;
 
-    SQL_PREPARE(p_params, sdb, attrs_stmt, ret, "PrepareUpdateBucket");
+	if (params->op.query_str == "attrs") { 
+      SQL_PREPARE(p_params, sdb, attrs_stmt, ret, "PrepareUpdateBucket");
+	} else if (params->op.query_str == "owner") { 
+      SQL_PREPARE(p_params, sdb, owner_stmt, ret, "PrepareUpdateBucket");
+    } else {
+	  dbout(L_ERR)<<"In SQLUpdateBucket invalid query_str:" <<
+                     params->op.query_str << "\n";
+      goto out;
+    }
 
 out:
 	return ret;
@@ -1194,23 +1191,38 @@ int SQLUpdateBucket::Bind(struct DBOpParams *params)
 	int index = -1;
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
+	sqlite3_stmt** stmt = NULL; // Prepared statement
 
-	if (params->op.get_query_str != "attrs") { 
+    /* All below fields for attrs */
+	if (params->op.query_str == "attrs") { 
+      stmt = &attrs_stmt;
+	} else if (params->op.query_str == "owner") { 
+      stmt = &owner_stmt;
+    } else {
+	  dbout(L_ERR)<<"In SQLUpdateBucket invalid query_str:" <<
+                     params->op.query_str << "\n";
       goto out;
     }
 
-    SQL_BIND_INDEX(attrs_stmt, index, p_params.op.user.user_id.c_str(), sdb);
-    SQL_BIND_TEXT(attrs_stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
-
-    /* All below fields for attrs */
-	SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
-	SQL_BIND_TEXT(attrs_stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
-
-    SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.bucket_attrs.c_str(), sdb);
-	SQL_ENCODE_BLOB_PARAM(attrs_stmt, index, params->op.bucket.bucket_attrs, sdb);
+	if (params->op.query_str == "attrs") { 
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.bucket_attrs.c_str(), sdb);
+	    SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.bucket_attrs, sdb);
+    } else if (params->op.query_str == "owner") { 
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.creation_time.c_str(), sdb);
+	    SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.info.creation_time, sdb);
+    }
 	
-    SQL_BIND_INDEX(attrs_stmt, index, p_params.op.bucket.bucket_ver.c_str(), sdb);
-	SQL_BIND_INT(attrs_stmt, index, params->op.bucket.bucket_version.ver, sdb);
+    SQL_BIND_INDEX(*stmt, index, p_params.op.user.user_id.c_str(), sdb);
+    SQL_BIND_TEXT(*stmt, index, params->op.user.uinfo.user_id.id.c_str(), sdb);
+
+	SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
+	SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
+
+    SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.bucket_ver.c_str(), sdb);
+	SQL_BIND_INT(*stmt, index, params->op.bucket.bucket_version.ver, sdb);
+
+    SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.mtime.c_str(), sdb);
+	SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.mtime, sdb);
 
 out:
 	return rc;
@@ -1219,14 +1231,19 @@ out:
 int SQLUpdateBucket::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
+	sqlite3_stmt** stmt = NULL; // Prepared statement
 
-	if (params->op.get_query_str != "attrs") { 
-	  dbout(L_ERR)<<"In SQLUpdateBucket invalid get_query_str:" <<
-                     params->op.get_query_str << "\n";
+	if (params->op.query_str == "attrs") { 
+      stmt = &attrs_stmt;
+    } else if (params->op.query_str == "owner") { 
+      stmt = &owner_stmt;
+    } else {
+	  dbout(L_ERR)<<"In SQLUpdateBucket invalid query_str:" <<
+                     params->op.query_str << "\n";
       goto out;
     }
 
-    SQL_EXECUTE(params, attrs_stmt, NULL);
+    SQL_EXECUTE(params, *stmt, NULL);
 out:
 	return ret;
 }

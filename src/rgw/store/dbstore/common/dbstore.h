@@ -51,7 +51,7 @@ struct DBOpInfo {
    *
    * XXX: Swift keys and subuser not supported for now */
   DBOpUserInfo user;
-  string get_query_str;
+  string query_str;
   DBOpBucketInfo bucket;
   uint64_t list_max_count;
 };
@@ -157,7 +157,7 @@ struct DBOpBucketPrepareInfo {
 
 struct DBOpPrepareInfo {
     DBOpUserPrepareInfo user;
-	string get_query_str = ":get_query_str";
+	string query_str = ":query_str";
     DBOpBucketPrepareInfo bucket;
     string list_max_count = ":list_max_count";
 };
@@ -482,14 +482,14 @@ class GetUserOp: public DBOp {
 	virtual ~GetUserOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
-		if (params.op.get_query_str == "email") {
+		if (params.op.query_str == "email") {
 			return fmt::format(QueryByEmail.c_str(), params.user_table.c_str(),
 					   params.op.user.user_email.c_str());
-		} else if (params.op.get_query_str == "access_key") {
+		} else if (params.op.query_str == "access_key") {
 			return fmt::format(QueryByAccessKeys.c_str(),
                          params.user_table.c_str(),
 					     params.op.user.access_keys_id.c_str());
-		} else if (params.op.get_query_str == "user_id") {
+		} else if (params.op.query_str == "user_id") {
 			return fmt::format(QueryByUserID.c_str(),
                          params.user_table.c_str(),
 					     params.op.user.tenant.c_str(),
@@ -541,16 +541,25 @@ class InsertBucketOp: public DBOp {
 class UpdateBucketOp: public DBOp {
 	private:
 	const string AttrsQuery =
-	"UPDATE '{}' SET OwnerID = {}, BucketAttrs = {}, BucketVersion = {} \
+	"UPDATE '{}' SET OwnerID = {}, BucketAttrs = {}, Mtime = {}, BucketVersion = {} \
         WHERE BucketName = {}";
+	const string OwnerQuery =
+	"UPDATE '{}' SET OwnerID = {}, CreationTime = {}, Mtime = {}, BucketVersion = {} WHERE BucketName = {}";
 
 	public:
 	virtual ~UpdateBucketOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
-		if (params.op.get_query_str == "attrs") {
+		if (params.op.query_str == "attrs") {
 		    return fmt::format(AttrsQuery.c_str(), params.bucket_table.c_str(),
                     params.op.user.user_id, params.op.bucket.bucket_attrs,
+                    params.op.bucket.mtime,
+                    params.op.bucket.bucket_ver, params.op.bucket.bucket_name.c_str());
+        }
+		if (params.op.query_str == "owner") {
+		    return fmt::format(OwnerQuery.c_str(), params.bucket_table.c_str(),
+                    params.op.user.user_id, params.op.bucket.creation_time,
+                    params.op.bucket.mtime,
                     params.op.bucket.bucket_ver, params.op.bucket.bucket_name.c_str());
         }
         return "";
@@ -817,8 +826,10 @@ class DBStore {
                              bool need_stats,
                              RGWUserBuckets *buckets,
                              bool *is_truncated);
-    int set_instance_attrs(RGWBucketInfo& info,
+    int update_bucket(RGWBucketInfo& info,
+                           const rgw_user* powner_id,
 			               map<std::string, bufferlist>* pattrs,
+                           ceph::real_time* pmtime,
                            RGWObjVersionTracker* pobjv);
 };
 #endif

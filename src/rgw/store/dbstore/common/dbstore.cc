@@ -293,7 +293,7 @@ int DBStore::get_user(const std::string& query_str, const std::string& query_str
     DBOpParams params = {};
     InitializeParams("GetUser", &params);
 
-	params.op.get_query_str = query_str;
+	params.op.query_str = query_str;
 
 	// validate query_str with UserTable entries names
 	if (query_str == "username") {
@@ -344,9 +344,7 @@ int DBStore::store_user(RGWUserInfo& uinfo, bool exclusive, map<string, bufferli
    obj_version& obj_ver = objv_tracker.read_version;
 
    orig_info.user_id = uinfo.user_id;
-   cout << "before get_user: id-" << orig_info.user_id.id << ", obj_ver.ver =" << obj_ver.ver << "\n";
    ret = get_user(string("user_id"), "", orig_info, nullptr, &objv_tracker);
-   cout << "after get_user: id-" << orig_info.user_id.id << ", obj_ver.ver =" << obj_ver.ver << "\n";
 
    if (!ret && obj_ver.ver) {
      /* already exists. */
@@ -639,16 +637,18 @@ out:
   return ret;
 }
 
-int DBStore::set_instance_attrs(RGWBucketInfo& info,
-			                map<std::string, bufferlist>* pattrs,
-                            RGWObjVersionTracker* pobjv)
+int DBStore::update_bucket(RGWBucketInfo& info,
+                           const rgw_user* powner_id,
+			               map<std::string, bufferlist>* pattrs,
+                           ceph::real_time* pmtime,
+                           RGWObjVersionTracker* pobjv)
 {
   int ret = 0;
   DBOpParams params = {};
   DBOpParams params2 = {};
   obj_version bucket_version;
 
-  if (!pattrs)
+  if (!powner_id && !pattrs) // nothing to update
     goto out;
 
   params.op.bucket.info.bucket.name = info.bucket.name;
@@ -673,11 +673,31 @@ int DBStore::set_instance_attrs(RGWBucketInfo& info,
   InitializeParams("UpdateBucket", &params2);
 
   params2.op.bucket.info.bucket.name = info.bucket.name;
-  params2.op.get_query_str = "attrs";
-  params2.op.bucket.bucket_attrs = *pattrs;
-  params2.op.user.uinfo.user_id.id = info.owner.id;
 
+  if (powner_id) {
+    params2.op.user.uinfo.user_id.id = powner_id->id;
+  } else {
+    params2.op.user.uinfo.user_id.id = info.owner.id;
+  }
+
+  /* Update version & mtime */
   params2.op.bucket.bucket_version.ver = ++(bucket_version.ver);
+
+  if (pmtime) {
+    params2.op.bucket.mtime = *pmtime;;
+  } else {
+    params2.op.bucket.mtime = ceph::real_time();
+  }
+
+  if (pattrs) {
+    params2.op.query_str = "attrs";
+    params2.op.bucket.bucket_attrs = *pattrs;
+  } else {
+    /* Update only owner i.e, chown. 
+     * Update creation_time too */
+    params2.op.query_str = "owner";
+    params2.op.bucket.info.creation_time = params2.op.bucket.mtime;
+  }
 
   ret = ProcessOp("UpdateBucket", &params2);
 

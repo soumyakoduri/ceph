@@ -139,7 +139,7 @@ TEST_F(DBStoreBaseTest, GetUserQuery) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
-	params.op.get_query_str = "email";
+	params.op.query_str = "email";
 	params.op.user.uinfo.user_email = "user1@dbstore.com";
 
 	ret = db->ProcessOp("GetUser", &params);
@@ -320,25 +320,6 @@ TEST_F(DBStoreBaseTest, ListAllUsers) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBStoreBaseTest, RemoveUserAPI) {
-	int ret = -1;
-    RGWUserInfo uinfo;
-    RGWObjVersionTracker objv;
-
-    uinfo.user_id.tenant = "tenant";
-    uinfo.user_id.id = "user_id2";
-
-    /* invalid version number...should fail */
-    objv.read_version.ver = 4;
-	ret = db->remove_user(uinfo, &objv);
-	ASSERT_EQ(ret, -125);
-
-    /* invalid version number...should fail */
-    objv.read_version.ver = 2;
-	ret = db->remove_user(uinfo, &objv);
-	ASSERT_EQ(ret, 0);
-}
-
 TEST_F(DBStoreBaseTest, InsertBucket) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
@@ -359,7 +340,7 @@ TEST_F(DBStoreBaseTest, InsertBucket) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBStoreBaseTest, SetInstanceAttrsAPI) {
+TEST_F(DBStoreBaseTest, UpdateBucketAttrs) {
 	int ret = -1;
     RGWBucketInfo info;
     map<std::string, bufferlist> attrs;
@@ -375,14 +356,26 @@ TEST_F(DBStoreBaseTest, SetInstanceAttrsAPI) {
 
     /* invalid version number */
     objv.read_version.ver = 4;
-	ret = db->set_instance_attrs(info, &attrs, &objv);
+	ret = db->update_bucket(info, nullptr, &attrs, &bucket_mtime, &objv);
 	ASSERT_EQ(ret, -125); /* returns ECANCELED */
 
     /* right version number */
     objv.read_version.ver = 1;
-	ret = db->set_instance_attrs(info, &attrs, &objv);
+	ret = db->update_bucket(info, nullptr, &attrs, &bucket_mtime, &objv);
 	ASSERT_EQ(ret, 0);
     ASSERT_EQ(objv.read_version.ver, 2);
+}
+
+TEST_F(DBStoreBaseTest, BucketChown) {
+	int ret = -1;
+    RGWBucketInfo info;
+    rgw_user user;
+    user.id = "user_id2";
+
+	info.bucket.name = "bucket1";
+
+	ret = db->update_bucket(info, &user, nullptr, &bucket_mtime, nullptr);
+	ASSERT_EQ(ret, 0);
 }
 
 TEST_F(DBStoreBaseTest, GetBucket) {
@@ -397,10 +390,10 @@ TEST_F(DBStoreBaseTest, GetBucket) {
 	ASSERT_EQ(params.op.bucket.ent.bucket.name, "bucket1");
 	ASSERT_EQ(params.op.bucket.ent.bucket.tenant, "tenant");
 	ASSERT_EQ(params.op.bucket.info.has_instance_obj, false);
-	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.ver, 2);
+	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.ver, 3);
 	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.tag, "read_tag");
 	ASSERT_EQ(params.op.bucket.mtime, bucket_mtime);
-	ASSERT_EQ(params.op.bucket.info.owner.id, "user_id1");
+	ASSERT_EQ(params.op.bucket.info.owner.id, "user_id2");
 	bufferlist k, k2;
     string acl;
 	map<std::string, bufferlist>::iterator it2 = params.op.bucket.bucket_attrs.begin();
@@ -420,6 +413,25 @@ TEST_F(DBStoreBaseTest, RemoveBucketAPI) {
 	info.bucket.name = "bucket1";
 
 	ret = db->remove_bucket(info);
+	ASSERT_EQ(ret, 0);
+}
+
+TEST_F(DBStoreBaseTest, RemoveUserAPI) {
+	int ret = -1;
+    RGWUserInfo uinfo;
+    RGWObjVersionTracker objv;
+
+    uinfo.user_id.tenant = "tenant";
+    uinfo.user_id.id = "user_id2";
+
+    /* invalid version number...should fail */
+    objv.read_version.ver = 4;
+	ret = db->remove_user(uinfo, &objv);
+	ASSERT_EQ(ret, -125);
+
+    /* invalid version number...should fail */
+    objv.read_version.ver = 2;
+	ret = db->remove_user(uinfo, &objv);
 	ASSERT_EQ(ret, 0);
 }
 
