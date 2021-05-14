@@ -356,12 +356,12 @@ TEST_F(DBStoreBaseTest, UpdateBucketAttrs) {
 
     /* invalid version number */
     objv.read_version.ver = 4;
-	ret = db->update_bucket(info, nullptr, &attrs, &bucket_mtime, &objv);
+	ret = db->update_bucket("attrs", info, false, nullptr, &attrs, &bucket_mtime, &objv);
 	ASSERT_EQ(ret, -125); /* returns ECANCELED */
 
     /* right version number */
     objv.read_version.ver = 1;
-	ret = db->update_bucket(info, nullptr, &attrs, &bucket_mtime, &objv);
+	ret = db->update_bucket("attrs", info, false, nullptr, &attrs, &bucket_mtime, &objv);
 	ASSERT_EQ(ret, 0);
     ASSERT_EQ(objv.read_version.ver, 2);
 }
@@ -374,8 +374,27 @@ TEST_F(DBStoreBaseTest, BucketChown) {
 
 	info.bucket.name = "bucket1";
 
-	ret = db->update_bucket(info, &user, nullptr, &bucket_mtime, nullptr);
+	ret = db->update_bucket("owner", info, false, &user, nullptr, &bucket_mtime, nullptr);
 	ASSERT_EQ(ret, 0);
+    ASSERT_EQ(info.objv_tracker.read_version.ver, 3);
+}
+
+TEST_F(DBStoreBaseTest, UpdateBucketInfo) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+    RGWBucketInfo info;
+
+	params.op.bucket.info.bucket.name = "bucket1";
+
+	ret = db->ProcessOp("GetBucket", &params);
+	ASSERT_EQ(ret, 0);
+
+    info = params.op.bucket.info;
+
+    info.bucket.marker = "marker2";
+	ret = db->update_bucket("info", info, false, nullptr, nullptr, &bucket_mtime, nullptr);
+	ASSERT_EQ(ret, 0);
+    ASSERT_EQ(info.objv_tracker.read_version.ver, 4);
 }
 
 TEST_F(DBStoreBaseTest, GetBucket) {
@@ -386,11 +405,12 @@ TEST_F(DBStoreBaseTest, GetBucket) {
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(params.op.bucket.info.bucket.name, "bucket1");
 	ASSERT_EQ(params.op.bucket.info.bucket.tenant, "tenant");
+	ASSERT_EQ(params.op.bucket.info.bucket.marker, "marker2");
 	ASSERT_EQ(params.op.bucket.ent.size, 1024);
 	ASSERT_EQ(params.op.bucket.ent.bucket.name, "bucket1");
 	ASSERT_EQ(params.op.bucket.ent.bucket.tenant, "tenant");
 	ASSERT_EQ(params.op.bucket.info.has_instance_obj, false);
-	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.ver, 3);
+	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.ver, 4);
 	ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.tag, "read_tag");
 	ASSERT_EQ(params.op.bucket.mtime, bucket_mtime);
 	ASSERT_EQ(params.op.bucket.info.owner.id, "user_id2");

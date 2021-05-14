@@ -193,7 +193,7 @@ int DBBucket::chown(const DoutPrefixProvider *dpp, User* new_user, User* old_use
 {
   int ret;
 
-  ret = store->getDBStore()->update_bucket(info, &(new_user->get_id()), nullptr, nullptr, nullptr);
+  ret = store->getDBStore()->update_bucket("owner", info, false, &(new_user->get_id()), nullptr, nullptr, nullptr);
 
   /* XXX: Update policies of all the bucket->objects with new user */
   return ret;
@@ -201,7 +201,12 @@ int DBBucket::chown(const DoutPrefixProvider *dpp, User* new_user, User* old_use
 
 int DBBucket::put_instance_info(const DoutPrefixProvider *dpp, bool exclusive, ceph::real_time _mtime)
 {
-  return 0;
+  int ret;
+
+  ret = store->getDBStore()->update_bucket("info", info, exclusive, nullptr, nullptr, &_mtime, &info.objv_tracker);
+
+  return ret;
+
 }
 
 int DBBucket::remove_entrypoint(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y)
@@ -237,7 +242,7 @@ int DBBucket::set_instance_attrs(const DoutPrefixProvider *dpp, Attrs& attrs, op
 
   /* XXX: handle has_instance_obj like in set_bucket_instance_attrs() */
 
-  ret = store->getDBStore()->update_bucket(info, nullptr, &attrs, nullptr, &get_info().objv_tracker);
+  ret = store->getDBStore()->update_bucket("attrs", info, false, nullptr, &attrs, nullptr, &get_info().objv_tracker);
 
   return ret;
 }
@@ -296,7 +301,7 @@ int DBBucket::set_acl(const DoutPrefixProvider *dpp, RGWAccessControlPolicy &acl
   Attrs attrs = get_attrs();
   attrs[RGW_ATTR_ACL] = aclbl;
 
-  ret = store->getDBStore()->update_bucket(info, &(acl.get_owner().get_id()), &attrs, nullptr, nullptr);
+  ret = store->getDBStore()->update_bucket("attrs", info, false, &(acl.get_owner().get_id()), &attrs, nullptr, nullptr);
 
   return ret;
 }

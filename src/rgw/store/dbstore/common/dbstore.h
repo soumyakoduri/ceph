@@ -540,9 +540,19 @@ class InsertBucketOp: public DBOp {
 
 class UpdateBucketOp: public DBOp {
 	private:
+    // Updates Info, Mtime, Version
+	const string InfoQuery =
+    "UPDATE '{}' SET Tenant = {}, Marker = {}, BucketID = {}, CreationTime = {}, \
+        Count = {}, PlacementName = {}, PlacementStorageClass = {}, OwnerID = {}, Flags = {}, \
+        Zonegroup = {}, HasInstanceObj = {}, Quota = {}, RequesterPays = {}, HasWebsite = {}, \
+        WebsiteConf = {}, SwiftVersioning = {}, SwiftVerLocation = {}, MdsearchConfig = {}, \
+        NewBucketInstanceID = {}, ObjectLock = {}, SyncPolicyInfoGroups = {}, \
+        BucketVersion = {}, Mtime = {} WHERE BucketName = {}";
+    // Updates Attrs, OwnerID, Mtime, Version
 	const string AttrsQuery =
 	"UPDATE '{}' SET OwnerID = {}, BucketAttrs = {}, Mtime = {}, BucketVersion = {} \
         WHERE BucketName = {}";
+    // Updates OwnerID, CreationTime, Mtime, Version
 	const string OwnerQuery =
 	"UPDATE '{}' SET OwnerID = {}, CreationTime = {}, Mtime = {}, BucketVersion = {} WHERE BucketName = {}";
 
@@ -550,6 +560,21 @@ class UpdateBucketOp: public DBOp {
 	virtual ~UpdateBucketOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
+		if (params.op.query_str == "info") {
+		    return fmt::format(InfoQuery.c_str(), params.bucket_table.c_str(),
+		       	params.op.bucket.tenant, params.op.bucket.marker, params.op.bucket.bucket_id,
+                params.op.bucket.creation_time, params.op.bucket.count,
+                params.op.bucket.placement_name, params.op.bucket.placement_storage_class,
+                params.op.user.user_id,
+                params.op.bucket.flags, params.op.bucket.zonegroup, params.op.bucket.has_instance_obj,
+                params.op.bucket.quota, params.op.bucket.requester_pays, params.op.bucket.has_website,
+                params.op.bucket.website_conf, params.op.bucket.swift_versioning,
+                params.op.bucket.swift_ver_location, params.op.bucket.mdsearch_config,
+                params.op.bucket.new_bucket_instance_id, params.op.bucket.obj_lock,
+                params.op.bucket.sync_policy_info_groups,
+                params.op.bucket.bucket_ver, params.op.bucket.mtime,
+		       	params.op.bucket.bucket_name);
+        }
 		if (params.op.query_str == "attrs") {
 		    return fmt::format(AttrsQuery.c_str(), params.bucket_table.c_str(),
                     params.op.user.user_id, params.op.bucket.bucket_attrs,
@@ -826,10 +851,8 @@ class DBStore {
                              bool need_stats,
                              RGWUserBuckets *buckets,
                              bool *is_truncated);
-    int update_bucket(RGWBucketInfo& info,
-                           const rgw_user* powner_id,
-			               map<std::string, bufferlist>* pattrs,
-                           ceph::real_time* pmtime,
-                           RGWObjVersionTracker* pobjv);
+    int update_bucket(const std::string& query_str, RGWBucketInfo& info, bool exclusive,
+                      const rgw_user* powner_id, map<std::string, bufferlist>* pattrs,
+                      ceph::real_time* pmtime, RGWObjVersionTracker* pobjv);
 };
 #endif

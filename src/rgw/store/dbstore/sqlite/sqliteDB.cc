@@ -1176,6 +1176,8 @@ int SQLUpdateBucket::Prepare(struct DBOpParams *params)
       SQL_PREPARE(p_params, sdb, attrs_stmt, ret, "PrepareUpdateBucket");
 	} else if (params->op.query_str == "owner") { 
       SQL_PREPARE(p_params, sdb, owner_stmt, ret, "PrepareUpdateBucket");
+	} else if (params->op.query_str == "info") { 
+      SQL_PREPARE(p_params, sdb, info_stmt, ret, "PrepareUpdateBucket");
     } else {
 	  dbout(L_ERR)<<"In SQLUpdateBucket invalid query_str:" <<
                      params->op.query_str << "\n";
@@ -1198,6 +1200,8 @@ int SQLUpdateBucket::Bind(struct DBOpParams *params)
       stmt = &attrs_stmt;
 	} else if (params->op.query_str == "owner") { 
       stmt = &owner_stmt;
+	} else if (params->op.query_str == "info") { 
+      stmt = &info_stmt;
     } else {
 	  dbout(L_ERR)<<"In SQLUpdateBucket invalid query_str:" <<
                      params->op.query_str << "\n";
@@ -1210,6 +1214,66 @@ int SQLUpdateBucket::Bind(struct DBOpParams *params)
     } else if (params->op.query_str == "owner") { 
         SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.creation_time.c_str(), sdb);
 	    SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.info.creation_time, sdb);
+    } else if (params->op.query_str == "info") { 
+	    SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.tenant.c_str(), sdb);
+	    SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.bucket.tenant.c_str(), sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.marker.c_str(), sdb);
+    	SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.bucket.marker.c_str(), sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.bucket_id.c_str(), sdb);
+    	SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.bucket.bucket_id.c_str(), sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.creation_time.c_str(), sdb);
+    	SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.info.creation_time, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.count.c_str(), sdb);
+    	SQL_BIND_INT(*stmt, index, params->op.bucket.ent.count, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.placement_name.c_str(), sdb);
+    	SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.placement_rule.name.c_str(), sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.placement_storage_class.c_str(), sdb);
+    	SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.placement_rule.storage_class.c_str(), sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.flags.c_str(), sdb);
+    	SQL_BIND_INT(*stmt, index, params->op.bucket.info.flags, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.zonegroup.c_str(), sdb);
+    	SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.zonegroup.c_str(), sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.has_instance_obj.c_str(), sdb);
+    	SQL_BIND_INT(*stmt, index, params->op.bucket.info.has_instance_obj, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.quota.c_str(), sdb);
+    	SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.info.quota, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.requester_pays.c_str(), sdb);
+    	SQL_BIND_INT(*stmt, index, params->op.bucket.info.requester_pays, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.has_website.c_str(), sdb);
+    	SQL_BIND_INT(*stmt, index, params->op.bucket.info.has_website, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.website_conf.c_str(), sdb);
+    	SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.info.website_conf, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.swift_versioning.c_str(), sdb);
+    	SQL_BIND_INT(*stmt, index, params->op.bucket.info.swift_versioning, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.swift_ver_location.c_str(), sdb);
+    	SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.swift_ver_location.c_str(), sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.mdsearch_config.c_str(), sdb);
+    	SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.info.mdsearch_config, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.new_bucket_instance_id.c_str(), sdb);
+    	SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.new_bucket_instance_id.c_str(), sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.obj_lock.c_str(), sdb);
+    	SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.info.obj_lock, sdb);
+	
+        SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.sync_policy_info_groups.c_str(), sdb);
+    	SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.bucket.info.sync_policy, sdb);
     }
 	
     SQL_BIND_INDEX(*stmt, index, p_params.op.user.user_id.c_str(), sdb);
@@ -1237,6 +1301,8 @@ int SQLUpdateBucket::Execute(struct DBOpParams *params)
       stmt = &attrs_stmt;
     } else if (params->op.query_str == "owner") { 
       stmt = &owner_stmt;
+    } else if (params->op.query_str == "info") { 
+      stmt = &info_stmt;
     } else {
 	  dbout(L_ERR)<<"In SQLUpdateBucket invalid query_str:" <<
                      params->op.query_str << "\n";

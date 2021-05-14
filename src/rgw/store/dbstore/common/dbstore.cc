@@ -510,7 +510,7 @@ int DBStore::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
    orig_info.bucket.name = bucket.name;
    ret = get_bucket_info(string("name"), "", orig_info, nullptr, nullptr, nullptr);
 
-   if (!ret && !orig_info.owner.id.empty()) {
+   if (!ret && !orig_info.owner.id.empty() && exclusive) {
      /* already exists. Return the old info */
 
      info = std::move(orig_info);
@@ -637,7 +637,9 @@ out:
   return ret;
 }
 
-int DBStore::update_bucket(RGWBucketInfo& info,
+int DBStore::update_bucket(const std::string& query_str,
+                           RGWBucketInfo& info,
+                           bool exclusive,
                            const rgw_user* powner_id,
 			               map<std::string, bufferlist>* pattrs,
                            ceph::real_time* pmtime,
@@ -645,20 +647,25 @@ int DBStore::update_bucket(RGWBucketInfo& info,
 {
   int ret = 0;
   DBOpParams params = {};
-  DBOpParams params2 = {};
   obj_version bucket_version;
+  RGWBucketInfo orig_info;
 
-  if (!powner_id && !pattrs) // nothing to update
-    goto out;
-
+  /* Check if the bucket already exists and return the old info, caller will have a use for it */
+  orig_info.bucket.name = info.bucket.name;
   params.op.bucket.info.bucket.name = info.bucket.name;
-
-  ret = get_bucket_info(string("name"), "", info, nullptr, nullptr,
+  ret = get_bucket_info(string("name"), "", orig_info, nullptr, nullptr,
                           &bucket_version);
 
   if (ret) {
     dbout(L_ERR)<<"Failed to read bucket info err:(" <<ret<<") \n";
     goto out;
+  }
+
+  if (!orig_info.owner.id.empty() && exclusive) {
+    /* already exists. Return the old info */
+
+    info = std::move(orig_info);
+    return ret;
   }
 
   /* Verify if the objv read_ver matches current bucket version */
@@ -668,38 +675,47 @@ int DBStore::update_bucket(RGWBucketInfo& info,
       ret = -ECANCELED;
       goto out;
     }
+  } else {
+    pobjv = &info.objv_tracker;
   }
 
-  InitializeParams("UpdateBucket", &params2);
+  InitializeParams("UpdateBucket", &params);
 
-  params2.op.bucket.info.bucket.name = info.bucket.name;
+  params.op.bucket.info.bucket.name = info.bucket.name;
 
   if (powner_id) {
-    params2.op.user.uinfo.user_id.id = powner_id->id;
+    params.op.user.uinfo.user_id.id = powner_id->id;
   } else {
-    params2.op.user.uinfo.user_id.id = info.owner.id;
+    params.op.user.uinfo.user_id.id = orig_info.owner.id;
   }
 
   /* Update version & mtime */
-  params2.op.bucket.bucket_version.ver = ++(bucket_version.ver);
+  params.op.bucket.bucket_version.ver = ++(bucket_version.ver);
 
   if (pmtime) {
-    params2.op.bucket.mtime = *pmtime;;
+    params.op.bucket.mtime = *pmtime;;
   } else {
-    params2.op.bucket.mtime = ceph::real_time();
+    params.op.bucket.mtime = ceph::real_time();
   }
 
-  if (pattrs) {
-    params2.op.query_str = "attrs";
-    params2.op.bucket.bucket_attrs = *pattrs;
-  } else {
+  if (query_str == "attrs") {
+    params.op.query_str = "attrs";
+    params.op.bucket.bucket_attrs = *pattrs;
+  } else if (query_str == "owner") {
     /* Update only owner i.e, chown. 
      * Update creation_time too */
-    params2.op.query_str = "owner";
-    params2.op.bucket.info.creation_time = params2.op.bucket.mtime;
+    params.op.query_str = "owner";
+    params.op.bucket.info.creation_time = params.op.bucket.mtime;
+  } else if (query_str == "info") {
+    params.op.query_str = "info";
+    params.op.bucket.info = info;
+  } else {
+    ret = -1;
+	dbout(L_ERR)<<"In UpdateBucket Invalid query_str : " << query_str <<" \n";
+    goto out;
   }
 
-  ret = ProcessOp("UpdateBucket", &params2);
+  ret = ProcessOp("UpdateBucket", &params);
 
   if (ret) {
 	dbout(L_ERR)<<"In UpdateBucket failed err:(" <<ret<<") \n";
@@ -707,8 +723,8 @@ int DBStore::update_bucket(RGWBucketInfo& info,
   }
 
   if (pobjv) {
-    pobjv->read_version = params2.op.bucket.bucket_version;
-    pobjv->write_version = params2.op.bucket.bucket_version;
+    pobjv->read_version = params.op.bucket.bucket_version;
+    pobjv->write_version = params.op.bucket.bucket_version;
   }
 
 out:
