@@ -209,14 +209,14 @@ int DBBucket::put_instance_info(const DoutPrefixProvider *dpp, bool exclusive, c
 
 }
 
-int DBBucket::remove_entrypoint(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y)
+int DBBucket::remove_metadata(const DoutPrefixProvider* dpp, RGWObjVersionTracker* objv, optional_yield y)
 {
-  return 0;
-}
+  /* XXX: same as DBBUcket::remove_bucket() but should return error if there are objects
+   * in that bucket. */
+  
+  ret = store->getDBStore()->remove_bucket(info);
 
-int DBBucket::remove_instance_info(const DoutPrefixProvider *dpp, RGWObjVersionTracker* objv, optional_yield y)
-{
-  return 0;
+  return ret;
 }
 
 /* Make sure to call get_bucket_info() if you need it first */
@@ -227,12 +227,14 @@ bool DBBucket::is_owner(User* user)
 
 int DBBucket::check_empty(const DoutPrefixProvider *dpp, optional_yield y)
 {
+  /* XXX: Check if bucket contains any objects */
   return 0;
 }
 
 int DBBucket::check_quota(RGWQuotaInfo& user_quota, RGWQuotaInfo& bucket_quota, uint64_t obj_size,
 				optional_yield y, bool check_size_only)
 {
+  /* Not Handled in the first pass as stats are also needed */
   return 0;
 }
 
@@ -249,9 +251,15 @@ int DBBucket::set_instance_attrs(const DoutPrefixProvider *dpp, Attrs& attrs, op
 
 int DBBucket::try_refresh_info(const DoutPrefixProvider *dpp, ceph::real_time *pmtime)
 {
-  return 0;
+  int ret = 0;
+
+  ret = store->getDBStore()->get_bucket_info(string("name"), "", info, &attrs,
+                                               pmtime, &bucket_version);
+
+  return ret;
 }
 
+/* XXX: usage and stats not supported in the first pass */
 int DBBucket::read_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, uint64_t end_epoch,
 			       uint32_t max_entries, bool *is_truncated,
 			       RGWUsageIter& usage_iter,
@@ -267,26 +275,36 @@ int DBBucket::trim_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, ui
 
 int DBBucket::remove_objs_from_index(const DoutPrefixProvider *dpp, std::list<rgw_obj_index_key>& objs_to_unlink)
 {
+  /* XXX: CHECK: Unlike RadosStore, there is no seperate bucket index table.
+   * Delete all the object in the list from the object table of this
+   * bucket
+   */
   return 0;
 }
 
 int DBBucket::check_index(const DoutPrefixProvider *dpp, std::map<RGWObjCategory, RGWStorageStats>& existing_stats, std::map<RGWObjCategory, RGWStorageStats>& calculated_stats)
 {
+  /* XXX: stats not supported yet */
   return 0;
 }
 
 int DBBucket::rebuild_index(const DoutPrefixProvider *dpp)
 {
+  /* there is no index table in dbstore. Not applicable */
   return 0;
 }
 
 int DBBucket::set_tag_timeout(const DoutPrefixProvider *dpp, uint64_t timeout)
 {
+  /* XXX: CHECK: set tag timeout for all the bucket objects? */
   return 0;
 }
 
 int DBBucket::purge_instance(const DoutPrefixProvider *dpp)
 {
+  /* XXX: CHECK: for dbstore only single instance supported.
+   * Remove all the objects for that instance? Anything extra needed?
+   */
   return 0;
 }
 
@@ -314,6 +332,7 @@ std::unique_ptr<Object> DBBucket::get_object(const rgw_obj_key& k)
 
 int DBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, ListResults& results, optional_yield y)
 {
+  /* XXX: Objects */
   return 0;
 }
 
@@ -683,16 +702,50 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
 
   void RGWDBStore::get_quota(RGWQuotaInfo& bucket_quota, RGWQuotaInfo& user_quota)
   {
+    // XXX: Not handled for the first pass 
     /*  bucket_quota = svc()->quota->get_bucket_quota();
         user_quota = svc()->quota->get_user_quota();*/
     return;
   }
 
-  int RGWDBStore::set_buckets_enabled(const DoutPrefixProvider *dpp, vector<rgw_bucket>& buckets, bool enabled)
-  {
-    //    return rados->set_buckets_enabled(buckets, enabled);
-    return 0;
+int RGWDBStore::set_buckets_enabled(const DoutPrefixProvider *dpp, vector<rgw_bucket>& buckets, bool enabled)
+{
+  int ret = 0;
+
+  vector<rgw_bucket>::iterator iter;
+
+  for (iter = buckets.begin(); iter != buckets.end(); ++iter) {
+    rgw_bucket& bucket = *iter;
+    if (enabled) {
+      ldpp_dout(dpp, 20) << "enabling bucket name=" << bucket.name << dendl;
+    } else {
+      ldpp_dout(dpp, 20) << "disabling bucket name=" << bucket.name << dendl;
+    }
+
+    RGWBucketInfo info;
+    map<string, bufferlist> attrs;
+    int r = getDBStore()->get_bucket_info(string("name"), "", info, &attrs,
+                                              nullptr, nullptr);
+    if (r < 0) {
+      ldpp_dout(dpp, 0) << "NOTICE: get_bucket_info on bucket=" << bucket.name << " returned err=" << r << ", skipping bucket" << dendl;
+      ret = r;
+      continue;
+    }
+    if (enabled) {
+      info.flags &= ~BUCKET_SUSPENDED;
+    } else {
+      info.flags |= BUCKET_SUSPENDED;
+    }
+
+    r = getDBStore()->update_bucket("info", info, false, nullptr, &attrs, nullptr, &info.objv_tracker);
+    if (r < 0) {
+      ldpp_dout(dpp, 0) << "NOTICE: put_bucket_info on bucket=" << bucket.name << " returned err=" << r << ", skipping bucket" << dendl;
+      ret = r;
+      continue;
+    }
   }
+  return ret;
+}
 
   int RGWDBStore::get_sync_policy_handler(const DoutPrefixProvider *dpp,
                                           std::optional<rgw_zone_id> zone,
