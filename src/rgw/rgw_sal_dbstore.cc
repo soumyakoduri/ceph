@@ -214,7 +214,7 @@ int DBBucket::remove_metadata(const DoutPrefixProvider* dpp, RGWObjVersionTracke
   /* XXX: same as DBBUcket::remove_bucket() but should return error if there are objects
    * in that bucket. */
   
-  ret = store->getDBStore()->remove_bucket(info);
+  int ret = store->getDBStore()->remove_bucket(info);
 
   return ret;
 }
@@ -342,10 +342,61 @@ int DBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, L
       dbsm->destroyAllHandles();
   }
 
+const RGWZoneGroup& DBZone::get_zonegroup()
+{
+  return *zonegroup;
+}
+
+int DBZone::get_zonegroup(const std::string& id, RGWZoneGroup& zg)
+{
+  /* XXX: for now only one zonegroup supported */
+  zg = *zonegroup;
+  return 0;
+}
+
+const RGWZoneParams& DBZone::get_params()
+{
+  return *zone_params;
+}
+
+const rgw_zone_id& DBZone::get_id()
+{
+  return cur_zone_id;
+}
+
+const RGWRealm& DBZone::get_realm()
+{
+  return *realm;
+}
+
+const std::string& DBZone::get_name() const
+{
+  return zone_params->get_name();
+}
+
+bool DBZone::is_writeable()
+{
+  return true;
+}
+
+bool DBZone::get_redirect_endpoint(std::string* endpoint)
+{
+  return false;
+}
+
+bool DBZone::has_zonegroup_api(const std::string& api) const
+{
+  return false;
+}
+
+const std::string& DBZone::get_current_period_id()
+{
+  return current_period->get_id();
+}
+
 std::unique_ptr<LuaScriptManager> RGWDBStore::get_lua_script_manager()
 {
-  return nullptr;
-//  return std::unique_ptr<LuaScriptManager>(new RadosLuaScriptManager(this));
+  return std::unique_ptr<LuaScriptManager>(new DBLuaScriptManager(this));
 }
 
 
@@ -589,7 +640,7 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
   bool RGWDBStore::is_meta_master()
   {
     // return svc()->zone->is_meta_master();
-    return 0;
+    return true;
   }
 
   int RGWDBStore::forward_request_to_master(const DoutPrefixProvider *dpp, User* user, obj_version *objv,

@@ -159,6 +159,71 @@ class DBBucket : public Bucket {
     friend class RGWDBStore;
 };
 
+class DBZone : public Zone {
+  protected:
+    RGWDBStore* store;
+  RGWRealm *realm{nullptr};
+  RGWZoneGroup *zonegroup{nullptr};
+  RGWZone *zone_public_config{nullptr}; /* external zone params, e.g., entrypoints, log flags, etc. */  
+  RGWZoneParams *zone_params{nullptr}; /* internal zone params, e.g., rados pools */
+  RGWPeriod *current_period{nullptr};
+  rgw_zone_id cur_zone_id;
+
+  public:
+    DBZone(RGWDBStore* _store) : store(_store) {
+        realm = new RGWRealm();
+        zonegroup = new RGWZoneGroup();
+        zone_public_config = new RGWZone();
+        zone_params = new RGWZoneParams();
+        current_period = new RGWPeriod();
+        cur_zone_id = rgw_zone_id(zone_params->get_id());
+    }
+    ~DBZone() = default;
+
+    virtual const RGWZoneGroup& get_zonegroup() override;
+    virtual int get_zonegroup(const std::string& id, RGWZoneGroup& zonegroup) override;
+    virtual const RGWZoneParams& get_params() override;
+    virtual const rgw_zone_id& get_id() override;
+    virtual const RGWRealm& get_realm() override;
+    virtual const std::string& get_name() const override;
+    virtual bool is_writeable() override;
+    virtual bool get_redirect_endpoint(std::string* endpoint) override;
+    virtual bool has_zonegroup_api(const std::string& api) const override;
+    virtual const std::string& get_current_period_id() override;
+};
+
+class DBLuaScriptManager : public LuaScriptManager {
+  RGWDBStore* store;
+
+public:
+  DBLuaScriptManager(RGWDBStore* _s) : store(_s)
+  {
+  }
+  virtual ~DBLuaScriptManager() = default;
+
+  virtual int get(const DoutPrefixProvider* dpp, optional_yield y, const std::string& key, std::string& script) override { return -ENOENT; }
+  virtual int put(const DoutPrefixProvider* dpp, optional_yield y, const std::string& key, const std::string& script) override { return -ENOENT; }
+  virtual int del(const DoutPrefixProvider* dpp, optional_yield y, const std::string& key) override { return -ENOENT; }
+};
+
+class DBOIDCProvider : public RGWOIDCProvider {
+  RGWDBStore* store;
+public:
+  DBOIDCProvider(RGWDBStore* _store) : store(_store) {}
+  ~DBOIDCProvider() = default;
+
+  virtual int store_url(const DoutPrefixProvider *dpp, const std::string& url, bool exclusive, optional_yield y) override { return 0; }
+  virtual int read_url(const DoutPrefixProvider *dpp, const std::string& url, const std::string& tenant) override { return 0; }
+  virtual int delete_obj(const DoutPrefixProvider *dpp, optional_yield y) override { return 0;}
+
+  void encode(bufferlist& bl) const {
+    RGWOIDCProvider::encode(bl);
+  }
+  void decode(bufferlist::const_iterator& bl) {
+    RGWOIDCProvider::decode(bl);
+  }
+};
+
   class RGWDBStore : public Store {
     private:
       /* DBStoreManager is used in case multiple
@@ -170,9 +235,11 @@ class DBBucket : public Bucket {
        * use dbsm->getDBStore(tenant) */
       DBStore *dbstore;
       string luarocks_path;
+      DBZone zone;
+      RGWSyncModuleInstanceRef sync_module;
 
     public:
-      RGWDBStore(): dbsm(nullptr) {}
+      RGWDBStore(): dbsm(nullptr), zone(this) {}
       ~RGWDBStore() { delete dbsm; }
 
       virtual std::unique_ptr<User> get_user(const rgw_user& u) override;
@@ -205,7 +272,7 @@ class DBBucket : public Bucket {
                           optional_yield y) override;
       virtual int defer_gc(const DoutPrefixProvider *dpp, RGWObjectCtx *rctx, Bucket* bucket, Object* obj,
                            optional_yield y) override;
-      virtual Zone* get_zone() { return NULL; }
+      virtual Zone* get_zone() { return &zone; }
       virtual std::string zone_unique_id(uint64_t unique_num) override;
       virtual std::string zone_unique_trans_id(const uint64_t unique_num) override;
       virtual int cluster_stat(RGWClusterStat& stats) override;
@@ -251,7 +318,7 @@ class DBBucket : public Bucket {
       virtual std::string meta_get_marker(void *handle) override;
       virtual int meta_remove(const DoutPrefixProvider *dpp, string& metadata_key, optional_yield y) override;
 
-      virtual const RGWSyncModuleInstanceRef& get_sync_module() { return NULL; }
+      virtual const RGWSyncModuleInstanceRef& get_sync_module() { return sync_module; }
       virtual std::string get_host_id() { return ""; }
 
     virtual std::unique_ptr<LuaScriptManager> get_lua_script_manager() override;

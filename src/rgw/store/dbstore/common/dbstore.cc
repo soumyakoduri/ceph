@@ -460,6 +460,9 @@ int DBStore::get_bucket_info(const std::string& query_str,
 		goto out;
     }
 
+   if (!ret && params.op.bucket.info.bucket.marker.empty()) {
+     return -ENOENT;
+   }
     info = params.op.bucket.info;
 
     if (pattrs) {

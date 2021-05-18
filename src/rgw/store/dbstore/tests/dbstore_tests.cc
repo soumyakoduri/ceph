@@ -14,7 +14,7 @@ namespace gtest {
 
 	class Environment : public ::testing::Environment {
 	public:
-		Environment(): tenant("RedHat"), db(nullptr),
+		Environment(): tenant("default_ns"), db(nullptr),
 	       			db_type("SQLite"), ret(-1) {}
 
 		Environment(string tenantname, string db_typename): 
@@ -639,6 +639,23 @@ TEST_F(DBStoreBaseTest, RemoveUser) {
 	int ret = -1;
 
 	ret = db->ProcessOp("RemoveUser", &params);
+	ASSERT_EQ(ret, 0);
+}
+
+TEST_F(DBStoreBaseTest, InsertTestIDUser) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+
+    params.op.user.uinfo.user_id.id = "testid";
+    params.op.user.uinfo.display_name = "M. Tester";
+	params.op.user.uinfo.user_id.tenant = "tenant";
+	params.op.user.uinfo.user_email = "tester@ceph.com";
+	RGWAccessKey k1("0555b35654ad1656d804", "h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q==");
+	params.op.user.uinfo.access_keys["0555b35654ad1656d804"] = k1;
+    params.op.user.user_version.ver = 1;    
+    params.op.user.user_version.tag = "UserTAG";    
+
+	ret = db->ProcessOp("InsertUser", &params);
 	ASSERT_EQ(ret, 0);
 }
 
