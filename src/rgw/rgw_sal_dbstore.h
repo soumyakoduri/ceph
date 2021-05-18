@@ -177,6 +177,13 @@ class DBZone : public Zone {
         zone_params = new RGWZoneParams();
         current_period = new RGWPeriod();
         cur_zone_id = rgw_zone_id(zone_params->get_id());
+
+        RGWZonePlacementInfo info;
+        RGWZoneStorageClasses sc;
+        sc.set_storage_class("STANDARD", nullptr, nullptr);
+        info.storage_classes = sc;
+        zone_params->placement_pools["default"] = info;
+
     }
     ~DBZone() = default;
 

@@ -591,6 +591,8 @@ int RGWDBStore::create_bucket(const DoutPrefixProvider *dpp,
     bucket = std::unique_ptr<Bucket>(new DBBucket(this, b, u));
     *existed = false;
     bucket->set_attrs(attrs);
+    placement_rule.name = "default";
+    placement_rule.storage_class = "STANDARD";
   }
 
   /*

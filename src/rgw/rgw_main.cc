@@ -325,7 +325,7 @@ int radosgw_Main(int argc, const char **argv)
   const DoutPrefix dp(cct.get(), dout_subsys, "rgw main: ");
   rgw::sal::Store* store =
     StoreManager::get_storage(&dp, g_ceph_context,
-				 "rados",
+				 "dbstore",
 				 g_conf()->rgw_enable_gc_threads,
 				 g_conf()->rgw_enable_lc_threads,
 				 g_conf()->rgw_enable_quota_threads,

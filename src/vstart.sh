@@ -1520,13 +1520,15 @@ do_rgw_create_users()
 
 do_rgw()
 {
-    if [ "$new" -eq 1 ]; then
-        do_rgw_create_users
-        if [ -n "$rgw_compression" ]; then
-            debug echo "setting compression type=$rgw_compression"
-            $CEPH_BIN/radosgw-admin zone placement modify -c $conf_fn --rgw-zone=default --placement-id=default-placement --compression=$rgw_compression > /dev/null
-        fi
-    fi
+  
+    # if [ "$new" -eq 1 ]; then
+   #     do_rgw_create_users
+  #      if [ -n "$rgw_compression" ]; then
+ #           debug echo "setting compression type=$rgw_compression"
+#            $CEPH_BIN/radosgw-admin zone placement modify -c $conf_fn --rgw-zone=default --placement-id=default-placement --compression=$rgw_compression > /dev/null
+  #      fi
+  #  fi
+  
     # Start server
     RGWDEBUG=""
     if [ "$debug" -ne 0 ]; then
@@ -1561,7 +1563,7 @@ do_rgw()
             --rgw_luarocks_location=${CEPH_OUT_DIR}/luarocks \
             ${RGWDEBUG} \
             -n ${rgw_name} \
-            "--rgw_frontends=${rgw_frontend} port=${current_port}${CEPH_RGW_HTTPS}"
+            "--rgw_frontends=${rgw_frontend} port=${current_port}${CEPH_RGW_HTTPS} --yes-i-really-mean-it"
 
         i=$(($i + 1))
         [ $i -eq $CEPH_NUM_RGW ] && break
