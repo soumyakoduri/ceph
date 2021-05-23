@@ -18,6 +18,7 @@
 #include "dbstore_log.h"
 #include "rgw/rgw_sal.h"
 #include "rgw/rgw_bucket.h"
+#include "rgw/rgw_obj_manifest.h"
 //#include "rgw/rgw_common.h"
 
 using namespace std;
@@ -41,6 +42,15 @@ struct DBOpBucketInfo {
     string min_marker;
     string max_marker;
     list<RGWBucketEnt> list_entries;
+};
+
+struct DBOpObjectInfo {
+  RGWObjCategory category;
+  RGWAccessControlPolicy acls;
+  // RGWAccessControlList acl;
+  // ACLOwner owner;
+//  RGWObjState state;
+  const bufferlist *data;
 };
 
 struct DBOpInfo {
@@ -854,5 +864,177 @@ class DBStore {
     int update_bucket(const std::string& query_str, RGWBucketInfo& info, bool exclusive,
                       const rgw_user* powner_id, map<std::string, bufferlist>* pattrs,
                       ceph::real_time* pmtime, RGWObjVersionTracker* pobjv);
+
+
+    class Object {
+      friend class DBStore;
+      DBStore* store;
+
+    RGWBucketInfo bucket_info;
+    RGWObjectCtx& ctx;
+    rgw_obj obj;
+
+    RGWObjState *state;
+
+    bool versioning_disabled;
+
+    bool bs_initialized;
+
+      public:
+    Object(DBStore *_store, const RGWBucketInfo& _bucket_info, RGWObjectCtx& _ctx, const rgw_obj& _obj) : store(_store), bucket_info(_bucket_info),
+                                                                                               ctx(_ctx), obj(_obj),
+                                                                                               state(NULL), versioning_disabled(false),
+                                                                                               bs_initialized(false) {}
+
+    struct Read {
+      DBStore::Object *source;
+
+      struct GetObjState {
+        rgw_obj obj;
+        rgw_raw_obj head_obj;
+      } state;
+      
+      struct ConditionParams {
+        const ceph::real_time *mod_ptr;
+        const ceph::real_time *unmod_ptr;
+        bool high_precision_time;
+        uint32_t mod_zone_id;
+        uint64_t mod_pg_ver;
+        const char *if_match;
+        const char *if_nomatch;
+        
+        ConditionParams() : 
+                 mod_ptr(NULL), unmod_ptr(NULL), high_precision_time(false), mod_zone_id(0), mod_pg_ver(0),
+                 if_match(NULL), if_nomatch(NULL) {}
+      } conds;
+
+      struct Params {
+        ceph::real_time *lastmod;
+        uint64_t *obj_size;
+        map<string, bufferlist> *attrs;
+        rgw_obj *target_obj;
+
+        Params() : lastmod(nullptr), obj_size(nullptr), attrs(nullptr),
+		 target_obj(nullptr) {}
+      } params;
+
+      explicit Read(DBStore::Object *_source) : source(_source) {}
+
+/*      int prepare(optional_yield y, const DoutPrefixProvider *dpp);
+      static int range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t &end);
+      int read(int64_t ofs, int64_t end, bufferlist& bl, optional_yield y, const DoutPrefixProvider *dpp);
+      int iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb, optional_yield y);
+      int get_attr(const DoutPrefixProvider *dpp, const char *name, bufferlist& dest, optional_yield y); */
+    };
+
+    struct Write {
+      DBStore::Object *target;
+      
+      struct MetaParams {
+        ceph::real_time *mtime;
+        map<std::string, bufferlist>* rmattrs;
+        const bufferlist *data;
+        RGWObjManifest *manifest;
+        const string *ptag;
+        list<rgw_obj_index_key> *remove_objs;
+        ceph::real_time set_mtime;
+        rgw_user owner;
+        RGWObjCategory category;
+        int flags;
+        const char *if_match;
+        const char *if_nomatch;
+        std::optional<uint64_t> olh_epoch;
+        ceph::real_time delete_at;
+        bool canceled;
+        const string *user_data;
+        rgw_zone_set *zones_trace;
+        bool modify_tail;
+        bool completeMultipart;
+        bool appendable;
+
+        MetaParams() : mtime(NULL), rmattrs(NULL), data(NULL), manifest(NULL), ptag(NULL),
+                 remove_objs(NULL), category(RGWObjCategory::Main), flags(0),
+                 if_match(NULL), if_nomatch(NULL), canceled(false), user_data(nullptr), zones_trace(nullptr),
+                 modify_tail(false),  completeMultipart(false), appendable(false) {}
+      } meta;
+
+      explicit Write(DBStore::Object *_target) : target(_target) {}
+
+  /*    int _do_write_meta(const DoutPrefixProvider *dpp, 
+                     uint64_t size, uint64_t accounted_size,
+                     map<std::string, bufferlist>& attrs,
+                     bool modify_tail, bool assume_noent,
+                     void *index_op, optional_yield y);
+      int write_meta(const DoutPrefixProvider *dpp, uint64_t size, uint64_t accounted_size,
+                     map<std::string, bufferlist>& attrs, optional_yield y);
+      int write_data(const char *data, uint64_t ofs, uint64_t len, bool exclusive);
+      const req_state* get_req_state() {
+        return (req_state *)target->get_ctx().get_private();
+      }*/
+    };
+
+    struct Delete {
+      DBStore::Object *target;
+
+      struct DeleteParams {
+        rgw_user bucket_owner;
+        int versioning_status;
+        ACLOwner obj_owner; /* needed for creation of deletion marker */
+        uint64_t olh_epoch;
+        string marker_version_id;
+        uint32_t bilog_flags;
+        list<rgw_obj_index_key> *remove_objs;
+        ceph::real_time expiration_time;
+        ceph::real_time unmod_since;
+        ceph::real_time mtime; /* for setting delete marker mtime */
+        bool high_precision_time;
+        rgw_zone_set *zones_trace;
+	bool abortmp;
+	uint64_t parts_accounted_size;
+
+        DeleteParams() : versioning_status(0), olh_epoch(0), bilog_flags(0), remove_objs(NULL), high_precision_time(false), zones_trace(nullptr), abortmp(false), parts_accounted_size(0) {}
+      } params;
+
+      struct DeleteResult {
+        bool delete_marker;
+        string version_id;
+
+        DeleteResult() : delete_marker(false) {}
+      } result;
+      
+      explicit Delete(DBStore::Object *_target) : target(_target) {}
+
+//      int delete_obj(optional_yield y, const DoutPrefixProvider *dpp);
+    };
+
+    struct Stat {
+      DBStore::Object *source;
+
+      struct Result {
+        rgw_obj obj;
+        std::optional<RGWObjManifest> manifest;
+        uint64_t size{0};
+	struct timespec mtime {};
+        map<string, bufferlist> attrs;
+      } result;
+
+      struct State {
+        librados::IoCtx io_ctx;
+        librados::AioCompletion *completion;
+        int ret;
+
+        State() : completion(NULL), ret(0) {}
+      } state;
+
+
+      explicit Stat(DBStore::Object *_source) : source(_source) {}
+
+/*      int stat_async(const DoutPrefixProvider *dpp);
+      int wait();
+      int stat();*/
+    private:
+      int finish();
+    };
+    };
 };
 #endif

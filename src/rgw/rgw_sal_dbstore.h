@@ -231,6 +231,166 @@ public:
   }
 };
 
+class DBObject : public Object {
+  private:
+    RGWDBStore* store;
+    RGWAccessControlPolicy acls;
+
+  public:
+
+    struct DBReadOp : public ReadOp {
+    private:
+      DBObject* source;
+      RGWObjectCtx* rctx;
+      DBStore::Object op_target;
+      DBStore::Object::Read parent_op;
+
+    public:
+      DBReadOp(DBObject *_source, RGWObjectCtx *_rctx);
+
+      virtual int prepare(optional_yield y, const DoutPrefixProvider* dpp) override;
+      virtual int read(int64_t ofs, int64_t end, bufferlist& bl, optional_yield y, const DoutPrefixProvider* dpp) override;
+      virtual int iterate(const DoutPrefixProvider* dpp, int64_t ofs, int64_t end, RGWGetDataCB* cb, optional_yield y) override;
+      virtual int get_manifest(const DoutPrefixProvider* dpp, RGWObjManifest **pmanifest, optional_yield y) override;
+      virtual int get_attr(const DoutPrefixProvider* dpp, const char* name, bufferlist& dest, optional_yield y) override; 
+    };
+
+    struct DBWriteOp : public WriteOp {
+    private:
+      DBObject* source;
+      RGWObjectCtx* rctx;
+      DBStore::Object op_target;
+      DBStore::Object::Write parent_op;
+
+    public:
+      DBWriteOp(DBObject* _source, RGWObjectCtx* _rctx);
+
+      virtual int prepare(optional_yield y) override;
+      virtual int write_meta(const DoutPrefixProvider* dpp, uint64_t size, uint64_t accounted_size, optional_yield y) override;
+//      virtual int write_data(const char* data, uint64_t ofs, uint64_t len, bool exclusive) override; 
+    };
+
+    struct DBDeleteOp : public DeleteOp {
+    private:
+      DBObject* source;
+      RGWObjectCtx* rctx;
+      DBStore::Object op_target;
+      DBStore::Object::Delete parent_op;
+
+    public:
+      DBDeleteOp(DBObject* _source, RGWObjectCtx* _rctx);
+
+      virtual int delete_obj(const DoutPrefixProvider* dpp, optional_yield y) override;
+    };
+
+    struct DBStatOp : public StatOp {
+    private:
+      DBObject* source;
+      RGWObjectCtx* rctx;
+      DBStore::Object op_target;
+      DBStore::Object::Stat parent_op;
+
+    public:
+      DBStatOp(DBObject* _source, RGWObjectCtx* _rctx);
+
+      virtual int stat_async(const DoutPrefixProvider *dpp) override;
+      virtual int wait() override;
+    };
+
+    DBObject() = default;
+
+    DBObject(RGWDBStore *_st, const rgw_obj_key& _k)
+      : Object(_k),
+	store(_st),
+        acls() {
+    }
+    DBObject(RGWDBStore *_st, const rgw_obj_key& _k, Bucket* _b)
+      : Object(_k, _b),
+	store(_st),
+        acls() {
+    }
+    DBObject(DBObject& _o) = default;
+
+    virtual int delete_object(const DoutPrefixProvider* dpp, RGWObjectCtx* obj_ctx, optional_yield y) override;
+    virtual int delete_obj_aio(const DoutPrefixProvider* dpp, RGWObjState* astate, Completions* aio,
+			       bool keep_index_consistent, optional_yield y) override;
+    virtual int copy_object(RGWObjectCtx& obj_ctx, User* user,
+               req_info* info, const rgw_zone_id& source_zone,
+               rgw::sal::Object* dest_object, rgw::sal::Bucket* dest_bucket,
+               rgw::sal::Bucket* src_bucket,
+               const rgw_placement_rule& dest_placement,
+               ceph::real_time* src_mtime, ceph::real_time* mtime,
+               const ceph::real_time* mod_ptr, const ceph::real_time* unmod_ptr,
+               bool high_precision_time,
+               const char* if_match, const char* if_nomatch,
+               AttrsMod attrs_mod, bool copy_if_newer, Attrs& attrs,
+               RGWObjCategory category, uint64_t olh_epoch,
+	       boost::optional<ceph::real_time> delete_at,
+               std::string* version_id, std::string* tag, std::string* etag,
+               void (*progress_cb)(off_t, void *), void* progress_data,
+               const DoutPrefixProvider* dpp, optional_yield y) override;
+    virtual RGWAccessControlPolicy& get_acl(void) override { return acls; }
+    virtual int set_acl(const RGWAccessControlPolicy& acl) override { acls = acl; return 0; }
+    virtual void set_atomic(RGWObjectCtx* rctx) const override;
+    virtual void set_prefetch_data(RGWObjectCtx* rctx) override;
+
+    virtual int get_obj_state(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, RGWObjState **state, optional_yield y, bool follow_olh = true) override;
+    virtual int set_obj_attrs(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, Attrs* setattrs, Attrs* delattrs, optional_yield y, rgw_obj* target_obj = NULL) override;
+    virtual int get_obj_attrs(RGWObjectCtx* rctx, optional_yield y, const DoutPrefixProvider* dpp, rgw_obj* target_obj = NULL) override;
+    virtual int modify_obj_attrs(RGWObjectCtx* rctx, const char* attr_name, bufferlist& attr_val, optional_yield y, const DoutPrefixProvider* dpp) override;
+    virtual int delete_obj_attrs(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, const char* attr_name, optional_yield y) override;
+    virtual int copy_obj_data(RGWObjectCtx& rctx, Bucket* dest_bucket, Object* dest_obj, uint16_t olh_epoch, std::string* petag, const DoutPrefixProvider* dpp, optional_yield y) override;
+    virtual bool is_expired() override;
+    virtual void gen_rand_obj_instance_name() override;
+    virtual void raw_obj_to_obj(const rgw_raw_obj& raw_obj) override;
+    virtual void get_raw_obj(rgw_raw_obj* raw_obj) override;
+    virtual std::unique_ptr<Object> clone() override {
+      return std::unique_ptr<Object>(new DBObject(*this));
+    }
+    virtual MPSerializer* get_serializer(const DoutPrefixProvider *dpp, const std::string& lock_name) override;
+    virtual int transition(RGWObjectCtx& rctx,
+			   Bucket* bucket,
+			   const rgw_placement_rule& placement_rule,
+			   const real_time& mtime,
+			   uint64_t olh_epoch,
+			   const DoutPrefixProvider* dpp,
+			   optional_yield y) override;
+    virtual int get_max_chunk_size(const DoutPrefixProvider* dpp,
+                                   rgw_placement_rule placement_rule,
+				   uint64_t* max_chunk_size,
+				   uint64_t* alignment = nullptr) override;
+    virtual void get_max_aligned_size(uint64_t size, uint64_t alignment, uint64_t* max_size) override;
+    virtual bool placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2) override;
+
+    /* Swift versioning */
+    virtual int swift_versioning_restore(RGWObjectCtx* obj_ctx,
+					 bool& restored,
+					 const DoutPrefixProvider* dpp) override;
+    virtual int swift_versioning_copy(RGWObjectCtx* obj_ctx,
+				      const DoutPrefixProvider* dpp,
+				      optional_yield y) override;
+
+    /* OPs */
+    virtual std::unique_ptr<ReadOp> get_read_op(RGWObjectCtx *) override;
+    virtual std::unique_ptr<WriteOp> get_write_op(RGWObjectCtx *) override;
+    virtual std::unique_ptr<DeleteOp> get_delete_op(RGWObjectCtx*) override;
+    virtual std::unique_ptr<StatOp> get_stat_op(RGWObjectCtx*) override;
+
+    /* OMAP */
+    virtual int omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker, uint64_t count,
+			      std::map<std::string, bufferlist> *m,
+			      bool* pmore, optional_yield y) override;
+    virtual int omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m,
+			     optional_yield y) override;
+    virtual int omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
+			      const std::set<std::string>& keys,
+			      Attrs* vals) override;
+    virtual int omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val,
+				    bool must_exist, optional_yield y) override;
+  private:
+    int read_attrs(const DoutPrefixProvider* dpp, DBStore::Object::Read &read_op, optional_yield y, rgw_obj* target_obj = nullptr);
+};
+
   class RGWDBStore : public Store {
     private:
       /* DBStoreManager is used in case multiple

@@ -326,8 +326,7 @@ int DBBucket::set_acl(const DoutPrefixProvider *dpp, RGWAccessControlPolicy &acl
 
 std::unique_ptr<Object> DBBucket::get_object(const rgw_obj_key& k)
 {
-  return nullptr;
-//  return std::unique_ptr<Object>(new DBObject(this->store, k, this));
+  return std::unique_ptr<Object>(new DBObject(this->store, k, this));
 }
 
 int DBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, ListResults& results, optional_yield y)
@@ -399,6 +398,296 @@ std::unique_ptr<LuaScriptManager> RGWDBStore::get_lua_script_manager()
   return std::unique_ptr<LuaScriptManager>(new DBLuaScriptManager(this));
 }
 
+int DBObject::get_obj_state(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, RGWObjState **state, optional_yield y, bool follow_olh)
+{
+  return 0;
+  //store->getRados()->get_obj_state(dpp, rctx, bucket->get_info(), get_obj(), state, follow_olh, y);
+}
+
+int DBObject::read_attrs(const DoutPrefixProvider* dpp, DBStore::Object::Read &read_op, optional_yield y, rgw_obj* target_obj)
+{
+  return 0;
+}
+
+int DBObject::set_obj_attrs(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, Attrs* setattrs, Attrs* delattrs, optional_yield y, rgw_obj* target_obj)
+{
+  return 0;
+}
+
+int DBObject::get_obj_attrs(RGWObjectCtx* rctx, optional_yield y, const DoutPrefixProvider* dpp, rgw_obj* target_obj)
+{
+  return 0;
+}
+
+int DBObject::modify_obj_attrs(RGWObjectCtx* rctx, const char* attr_name, bufferlist& attr_val, optional_yield y, const DoutPrefixProvider* dpp)
+{
+  return 0;
+}
+
+int DBObject::delete_obj_attrs(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, const char* attr_name, optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::copy_obj_data(RGWObjectCtx& rctx, Bucket* dest_bucket,
+				  Object* dest_obj,
+				  uint16_t olh_epoch,
+				  std::string* petag,
+				  const DoutPrefixProvider* dpp,
+				  optional_yield y)
+{
+  return 0;
+}
+
+void DBObject::set_atomic(RGWObjectCtx* rctx) const
+{
+}
+
+void DBObject::set_prefetch_data(RGWObjectCtx* rctx)
+{
+}
+
+bool DBObject::is_expired() {
+  return false;
+}
+
+void DBObject::gen_rand_obj_instance_name()
+{
+}
+
+void DBObject::raw_obj_to_obj(const rgw_raw_obj& raw_obj)
+{
+}
+
+void DBObject::get_raw_obj(rgw_raw_obj* raw_obj)
+{
+}
+
+int DBObject::omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker, uint64_t count,
+				  std::map<std::string, bufferlist> *m,
+				  bool* pmore, optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m,
+				 optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
+					  const std::set<std::string>& keys,
+					  Attrs* vals)
+{
+  return 0;
+}
+
+int DBObject::omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val,
+					bool must_exist, optional_yield y)
+{
+  return 0;
+}
+
+MPSerializer* DBObject::get_serializer(const DoutPrefixProvider *dpp, const std::string& lock_name)
+{
+  return nullptr;
+}
+
+int DBObject::transition(RGWObjectCtx& rctx,
+			       Bucket* bucket,
+			       const rgw_placement_rule& placement_rule,
+			       const real_time& mtime,
+			       uint64_t olh_epoch,
+			       const DoutPrefixProvider* dpp,
+			       optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::get_max_chunk_size(const DoutPrefixProvider* dpp, rgw_placement_rule placement_rule, uint64_t* max_chunk_size, uint64_t* alignment)
+{
+  return 0;
+}
+
+void DBObject::get_max_aligned_size(uint64_t size, uint64_t alignment,
+				     uint64_t* max_size)
+{
+}
+
+bool DBObject::placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2)
+{
+  return true;
+}
+
+std::unique_ptr<Object::ReadOp> DBObject::get_read_op(RGWObjectCtx* ctx)
+{
+  return std::unique_ptr<Object::ReadOp>(new DBObject::DBReadOp(this, ctx));
+}
+
+DBObject::DBReadOp::DBReadOp(DBObject *_source, RGWObjectCtx *_rctx) :
+	source(_source),
+	rctx(_rctx),
+	op_target(_source->store->getDBStore(),
+		  _source->get_bucket()->get_info(),
+		  *static_cast<RGWObjectCtx *>(rctx),
+		  _source->get_obj()),
+	parent_op(&op_target)
+{ }
+
+int DBObject::DBReadOp::prepare(optional_yield y, const DoutPrefixProvider* dpp)
+{
+  return 0;
+}
+
+int DBObject::DBReadOp::read(int64_t ofs, int64_t end, bufferlist& bl, optional_yield y, const DoutPrefixProvider* dpp)
+{
+  return 0;
+}
+
+int DBObject::DBReadOp::get_manifest(const DoutPrefixProvider* dpp, RGWObjManifest **pmanifest,
+					      optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::DBReadOp::get_attr(const DoutPrefixProvider* dpp, const char* name, bufferlist& dest, optional_yield y)
+{
+  return 0;
+}
+
+std::unique_ptr<Object::DeleteOp> DBObject::get_delete_op(RGWObjectCtx* ctx)
+{
+  return std::unique_ptr<Object::DeleteOp>(new DBObject::DBDeleteOp(this, ctx));
+}
+
+DBObject::DBDeleteOp::DBDeleteOp(DBObject *_source, RGWObjectCtx *_rctx) :
+	source(_source),
+	rctx(_rctx),
+	op_target(_source->store->getDBStore(),
+		  _source->get_bucket()->get_info(),
+		  *static_cast<RGWObjectCtx *>(rctx),
+		  _source->get_obj()),
+	parent_op(&op_target)
+{ }
+
+int DBObject::DBDeleteOp::delete_obj(const DoutPrefixProvider* dpp, optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::delete_object(const DoutPrefixProvider* dpp, RGWObjectCtx* obj_ctx, optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::delete_obj_aio(const DoutPrefixProvider* dpp, RGWObjState* astate,
+				   Completions* aio, bool keep_index_consistent,
+				   optional_yield y)
+{
+  return 0;
+}
+
+std::unique_ptr<Object::StatOp> DBObject::get_stat_op(RGWObjectCtx* ctx)
+{
+  return std::unique_ptr<Object::StatOp>(new DBObject::DBStatOp(this, ctx));
+}
+
+DBObject::DBStatOp::DBStatOp(DBObject *_source, RGWObjectCtx *_rctx) :
+	source(_source),
+	rctx(_rctx),
+	op_target(_source->store->getDBStore(),
+		  _source->get_bucket()->get_info(),
+		  *static_cast<RGWObjectCtx *>(rctx),
+		  _source->get_obj()),
+	parent_op(&op_target)
+{ }
+
+int DBObject::DBStatOp::stat_async(const DoutPrefixProvider *dpp)
+{
+  return 0;
+}
+
+int DBObject::DBStatOp::wait()
+{
+  return 0;
+}
+
+int DBObject::copy_object(RGWObjectCtx& obj_ctx,
+				User* user,
+				req_info* info,
+				const rgw_zone_id& source_zone,
+				rgw::sal::Object* dest_object,
+				rgw::sal::Bucket* dest_bucket,
+				rgw::sal::Bucket* src_bucket,
+				const rgw_placement_rule& dest_placement,
+				ceph::real_time* src_mtime,
+				ceph::real_time* mtime,
+				const ceph::real_time* mod_ptr,
+				const ceph::real_time* unmod_ptr,
+				bool high_precision_time,
+				const char* if_match,
+				const char* if_nomatch,
+				AttrsMod attrs_mod,
+				bool copy_if_newer,
+				Attrs& attrs,
+				RGWObjCategory category,
+				uint64_t olh_epoch,
+				boost::optional<ceph::real_time> delete_at,
+				std::string* version_id,
+				std::string* tag,
+				std::string* etag,
+				void (*progress_cb)(off_t, void *),
+				void* progress_data,
+				const DoutPrefixProvider* dpp,
+				optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::DBReadOp::iterate(const DoutPrefixProvider* dpp, int64_t ofs, int64_t end, RGWGetDataCB* cb, optional_yield y)
+{
+  return 0;
+}
+
+std::unique_ptr<Object::WriteOp> DBObject::get_write_op(RGWObjectCtx* ctx)
+{
+  return std::unique_ptr<Object::WriteOp>(new DBObject::DBWriteOp(this, ctx));
+}
+
+DBObject::DBWriteOp::DBWriteOp(DBObject* _source, RGWObjectCtx* _rctx) :
+	source(_source),
+	rctx(_rctx),
+	op_target(_source->store->getDBStore(),
+		  _source->get_bucket()->get_info(),
+		  *static_cast<RGWObjectCtx *>(rctx),
+		  _source->get_obj()),
+	parent_op(&op_target)
+{ }
+
+int DBObject::DBWriteOp::prepare(optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::DBWriteOp::write_meta(const DoutPrefixProvider* dpp, uint64_t size, uint64_t accounted_size, optional_yield y)
+{
+  return 0;
+}
+
+int DBObject::swift_versioning_restore(RGWObjectCtx* obj_ctx,
+					     bool& restored,
+					     const DoutPrefixProvider* dpp)
+{
+  return 0;
+}
+
+int DBObject::swift_versioning_copy(RGWObjectCtx* obj_ctx,
+					  const DoutPrefixProvider* dpp,
+					  optional_yield y)
+{
+  return 0;
+}
 
 std::unique_ptr<RGWRole> RGWDBStore::get_role(std::string name,
 					      std::string tenant,
@@ -499,8 +788,7 @@ int RGWDBStore::get_oidc_providers(const DoutPrefixProvider *dpp,
 
   std::unique_ptr<Object> RGWDBStore::get_object(const rgw_obj_key& k)
   {
-    // return std::unique_ptr<Object>(new DBObject(this, k));
-    return NULL;
+    return std::unique_ptr<Object>(new DBObject(this, k));
   }
 
 
