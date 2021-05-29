@@ -212,6 +212,67 @@ enum GetBucket {
   Bucket_User_NS
 };
 
+enum GetObject {
+ ObjName,
+ ObjInstance,
+ ObjNS,
+ ObjBucketName,
+ ACLs,
+ IndexVer,
+ Tag,
+ ObjFlags,
+ VersionedEpoch,
+ ObjCategory,
+ Etag,
+ Owner,
+ OwnerDisplayName,
+ StorageClass,
+ Appendable,
+ ContentType,
+ IndexHashSource,
+ ObjSize,
+ AccountedSize,
+ ObjMtime,
+ Epoch,
+ ObjTag,
+ TailTag,
+ WriteTag,
+ FakeTag,
+ ShadowObj,
+ HasData,
+ IsOLH,
+ OLHTag,
+ PGVer,
+ ZoneShortID,
+ ObjVersion,
+ ObjVersionTag,
+ ObjAttrs,
+ HeadSize,
+ MaxHeadSize,
+ Prefix,
+ TailInstance,
+ HeadPlacementRuleName,
+ HeadPlacementRuleStorageClass,
+ TailPlacementRuleName,
+ TailPlacementStorageClass,
+ ManifestPartObjs,
+ ManifestPartRules,
+ IsMultipart,
+ HeadData
+};
+
+enum GetObjectData {
+ ObjDataName,
+ ObjDataInstance,
+ ObjDataNS,
+ ObjDataBucketName,
+ PartNum,
+ Offset,
+ ObjData,
+ ObjDataSize,
+ MultipartPartNum
+};
+
 static int list_user(DBOpInfo &op, sqlite3_stmt *stmt) {
 	if (!stmt)
 		return -1;
@@ -354,6 +415,53 @@ static int list_object(DBOpInfo &op, sqlite3_stmt *stmt) {
 	cout<<sqlite3_column_text(stmt, 0)<<", ";
 	cout<<sqlite3_column_text(stmt, 1)<<"\n";
 
+    op.obj.state.obj.key.name = (const char*)sqlite3_column_text(stmt, ObjName);
+    op.bucket.info.bucket.name = (const char*)sqlite3_column_text(stmt, ObjBucketName);
+    op.obj.state.obj.key.instance = (const char*)sqlite3_column_text(stmt, ObjInstance);
+    op.obj.state.obj.key.ns = (const char*)sqlite3_column_text(stmt, ObjNS);
+    SQL_DECODE_BLOB_PARAM(stmt, ACLs, op.obj.acls, sdb);
+    op.obj.index_ver = sqlite3_column_int(stmt, IndexVer);
+    op.obj.tag = (const char*)sqlite3_column_text(stmt, Tag);
+    op.obj.flags = sqlite3_column_int(stmt, ObjFlags); 
+    op.obj.versioned_epoch = sqlite3_column_int(stmt, VersionedEpoch);
+    op.obj.category = (RGWObjCategory)sqlite3_column_int(stmt, ObjCategory); 
+    op.obj.etag = (const char*)sqlite3_column_text(stmt, Etag);
+    op.obj.owner = (const char*)sqlite3_column_text(stmt, Owner);
+    op.obj.owner_display_name = (const char*)sqlite3_column_text(stmt, OwnerDisplayName);
+    op.obj.storage_class = (const char*)sqlite3_column_text(stmt, StorageClass);
+    op.obj.appendable = sqlite3_column_int(stmt, Appendable); 
+    op.obj.content_type = (const char*)sqlite3_column_text(stmt, ContentType);
+    op.obj.state.obj.index_hash_source = (const char*)sqlite3_column_text(stmt, IndexHashSource);
+    op.obj.state.size = sqlite3_column_int(stmt, ObjSize); 
+    op.obj.state.accounted_size = sqlite3_column_int(stmt, AccountedSize); 
+    SQL_DECODE_BLOB_PARAM(stmt, ObjMtime, op.obj.state.mtime, sdb);
+    op.obj.state.epoch = sqlite3_column_int(stmt, Epoch);
+    SQL_DECODE_BLOB_PARAM(stmt, ObjTag, op.obj.state.obj_tag, sdb);
+    SQL_DECODE_BLOB_PARAM(stmt, TailTag, op.obj.state.tail_tag, sdb);
+    op.obj.state.write_tag = (const char*)sqlite3_column_text(stmt, WriteTag);
+    op.obj.state.fake_tag = sqlite3_column_int(stmt, FakeTag);
+    op.obj.state.shadow_obj = (const char*)sqlite3_column_text(stmt, ShadowObj);
+    op.obj.state.has_data = sqlite3_column_int(stmt, HasData); 
+    op.obj.state.is_olh = sqlite3_column_int(stmt, IsOLH); 
+    SQL_DECODE_BLOB_PARAM(stmt, OLHTag, op.obj.state.olh_tag, sdb);
+    op.obj.state.pg_ver = sqlite3_column_int(stmt, PGVer); 
+    op.obj.state.zone_short_id = sqlite3_column_int(stmt, ZoneShortID); 
+    op.obj.state.objv_tracker.read_version.ver = sqlite3_column_int(stmt, ObjVersion); 
+    op.obj.state.objv_tracker.read_version.tag = (const char*)sqlite3_column_text(stmt, ObjVersionTag);
+    SQL_DECODE_BLOB_PARAM(stmt, ObjAttrs, op.obj.state.attrset, sdb);
+    op.obj.head_size = sqlite3_column_int(stmt, HeadSize); 
+    op.obj.max_head_size = sqlite3_column_int(stmt, MaxHeadSize); 
+    op.obj.prefix = (const char*)sqlite3_column_text(stmt, Prefix);
+    op.obj.tail_instance = (const char*)sqlite3_column_text(stmt, TailInstance);
+    op.obj.head_placement_rule.name = (const char*)sqlite3_column_text(stmt, HeadPlacementRuleName);
+    op.obj.head_placement_rule.storage_class = (const char*)sqlite3_column_text(stmt, HeadPlacementRuleStorageClass);
+    op.obj.tail_placement.placement_rule.name = (const char*)sqlite3_column_text(stmt, TailPlacementRuleName);
+    op.obj.tail_placement.placement_rule.storage_class = (const char*)sqlite3_column_text(stmt, TailPlacementStorageClass);
+    SQL_DECODE_BLOB_PARAM(stmt, ManifestPartObjs, op.obj.objs, sdb);
+    SQL_DECODE_BLOB_PARAM(stmt, ManifestPartRules, op.obj.rules, sdb);
+    op.obj.is_multipart = sqlite3_column_int(stmt, IsMultipart);
+    SQL_DECODE_BLOB_PARAM(stmt, HeadData, op.obj.head_data, sdb);
+
 	return 0;
 }
 
@@ -361,20 +469,15 @@ static int get_objectdata(DBOpInfo &op, sqlite3_stmt *stmt) {
 	if (!stmt)
 		return -1;
 
-	int datalen = 0;
-	const void *blob = NULL;
-
-	blob = sqlite3_column_blob(stmt, 3);
-	datalen = sqlite3_column_bytes(stmt, 3);
-
-	cout<<sqlite3_column_text(stmt, 0)<<", ";
-	cout<<sqlite3_column_text(stmt, 1)<<",";
-	cout<<sqlite3_column_int(stmt, 2)<<",";
-	char data[datalen+1] = {};
-	if (blob)
-		strncpy(data, (const char *)blob, datalen);
-
-	cout<<data<<","<<datalen<<"\n";
+    op.obj.state.obj.key.name = (const char*)sqlite3_column_text(stmt, ObjName);
+    op.bucket.info.bucket.name = (const char*)sqlite3_column_text(stmt, ObjBucketName);
+    op.obj.state.obj.key.instance = (const char*)sqlite3_column_text(stmt, ObjInstance);
+    op.obj.state.obj.key.ns = (const char*)sqlite3_column_text(stmt, ObjNS);
+    op.obj_data.part_num = sqlite3_column_int(stmt, PartNum);
+    op.obj_data.offset = sqlite3_column_int(stmt, Offset);
+    op.obj_data.size = sqlite3_column_int(stmt, ObjDataSize);
+    op.obj_data.multipart_part_num = sqlite3_column_int(stmt, MultipartPartNum);
+    SQL_DECODE_BLOB_PARAM(stmt, ObjData, op.obj_data.data, sdb);
 
 	return 0;
 }
@@ -1473,13 +1576,144 @@ int SQLInsertObject::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
-
-	SQL_BIND_TEXT(stmt, index, params->object.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
-
 	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_instance.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.instance.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_ns.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.ns.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.acls.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.acls, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.index_ver.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.index_ver, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.tag.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.tag.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.flags.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.flags, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.versioned_epoch.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.versioned_epoch, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_category.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, (uint8_t)(params->op.obj.category), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.etag.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.etag.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.owner.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.owner.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.owner_display_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.owner_display_name.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.storage_class.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.storage_class.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.appendable.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.appendable, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.content_type.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.content_type.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.index_hash_source.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.index_hash_source.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_size.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.state.size, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.accounted_size.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.state.accounted_size, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.mtime.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.state.mtime, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.epoch.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.state.epoch, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_tag.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.state.obj_tag, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.tail_tag.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.state.tail_tag, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.write_tag.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.write_tag.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.fake_tag.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.state.fake_tag, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.shadow_obj.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.shadow_obj.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.has_data.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.state.has_data, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.is_olh.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.state.is_olh, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.olh_tag.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.state.olh_tag, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.pg_ver.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.state.pg_ver, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.zone_short_id.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.state.zone_short_id, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_version.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.state.objv_tracker.read_version.ver, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_version_tag.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.objv_tracker.read_version.tag.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_attrs.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.state.attrset, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.head_size.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.head_size, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.max_head_size.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.max_head_size, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.prefix.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.prefix.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.tail_instance.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.tail_instance.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.head_placement_rule_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.head_placement_rule.name.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.head_placement_storage_class.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.head_placement_rule.storage_class.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.tail_placement_rule_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.tail_placement.placement_rule.name.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.tail_placement_storage_class.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.tail_placement.placement_rule.storage_class.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.manifest_part_objs.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.objs, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.manifest_part_rules.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.rules, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.is_multipart.c_str(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj.is_multipart, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.head_data.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.head_data, sdb);
+
 
 out:
 	return rc;
@@ -1524,9 +1758,9 @@ int SQLRemoveObject::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->object.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
@@ -1576,9 +1810,9 @@ int SQLListObject::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->object.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
@@ -1629,25 +1863,40 @@ int SQLPutObjectData::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->object.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_instance.c_str(), sdb);
+
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.instance.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_ns.c_str(), sdb);
+
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.ns.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
 	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.offset.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj_data.part_num.c_str(), sdb);
 
-	SQL_BIND_INT(stmt, 3, params->offset, sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj_data.part_num, sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.data.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj_data.offset.c_str(), sdb);
 
-	SQL_BIND_BLOB(stmt, index, params->data.c_str(), params->data.length(), sdb);
+	SQL_BIND_INT(stmt, index, params->op.obj_data.offset, sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.datalen.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj_data.data.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj_data.data, sdb);
 
-	SQL_BIND_INT(stmt, index, params->data.length(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj_data.size.c_str(), sdb);
+
+	SQL_BIND_INT(stmt, index, params->op.obj_data.size, sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj_data.multipart_part_num.c_str(), sdb);
+
+	SQL_BIND_INT(stmt, index, params->op.obj_data.multipart_part_num, sdb);
 
 out:
 	return rc;
@@ -1694,9 +1943,9 @@ int SQLGetObjectData::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->object.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 
@@ -1746,9 +1995,9 @@ int SQLDeleteObjectData::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.object.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->object.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
 
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
 

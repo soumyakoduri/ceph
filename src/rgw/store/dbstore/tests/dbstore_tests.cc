@@ -71,10 +71,8 @@ namespace {
 			GlobalParams.op.user.uinfo.display_name = user1;
 			GlobalParams.op.user.uinfo.user_id.id = user_id1;
 			GlobalParams.op.bucket.info.bucket.name = bucket1;
-			GlobalParams.object = object1;
-			GlobalParams.offset = 0;
-			GlobalParams.data = data;
-			GlobalParams.datalen = data.length();
+			GlobalParams.op.obj.state.obj.key.name = object1;
+            GlobalParams.op.obj_data.part_num = 0;
 
 			/* As of now InitializeParams doesnt do anything
 			 * special based on fop. Hence its okay to do
@@ -574,6 +572,13 @@ TEST_F(DBStoreBaseTest, InsertObject) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
+    params.op.obj.category = RGWObjCategory::Main;
+    params.op.obj.storage_class = "STANDARD";
+    bufferlist b1;
+    encode("HELLO WORLD", b1);
+    params.op.obj.head_data = b1;
+    params.op.obj.state.size = 12;
+
 	ret = db->ProcessOp("InsertObject", &params);
 	ASSERT_EQ(ret, 0);
 }
@@ -584,6 +589,12 @@ TEST_F(DBStoreBaseTest, ListObject) {
 
 	ret = db->ProcessOp("ListObject", &params);
 	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(params.op.obj.category, RGWObjCategory::Main);
+	ASSERT_EQ(params.op.obj.storage_class, "STANDARD");
+    string data;
+    decode(data, params.op.obj.head_data);
+	ASSERT_EQ(data, "HELLO WORLD");
+	ASSERT_EQ(params.op.obj.state.size, 12);
 }
 
 TEST_F(DBStoreBaseTest, ListAllObjects) {
@@ -598,6 +609,13 @@ TEST_F(DBStoreBaseTest, PutObjectData) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
+    params.op.obj_data.part_num = 1;
+    params.op.obj_data.offset = 10;
+    params.op.obj_data.multipart_part_num = 2;
+    bufferlist b1;
+    encode("HELLO WORLD", b1);
+    params.op.obj_data.data = b1;
+    params.op.obj_data.size = 12;
 	ret = db->ProcessOp("PutObjectData", &params);
 	ASSERT_EQ(ret, 0);
 }
@@ -608,6 +626,12 @@ TEST_F(DBStoreBaseTest, GetObjectData) {
 
 	ret = db->ProcessOp("GetObjectData", &params);
 	ASSERT_EQ(ret, 0);
+    ASSERT_EQ(params.op.obj_data.part_num, 1);
+    ASSERT_EQ(params.op.obj_data.offset, 10);
+    ASSERT_EQ(params.op.obj_data.multipart_part_num, 2);
+    string data;
+    decode(data, params.op.obj_data.data);
+	ASSERT_EQ(data, "HELLO WORLD");
 }
 
 TEST_F(DBStoreBaseTest, DeleteObjectData) {
