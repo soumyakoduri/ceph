@@ -505,18 +505,23 @@ int DBObject::transition(RGWObjectCtx& rctx,
   return 0;
 }
 
+/* for now default stripe size, chunk size etc are all set to 4M.
+ * XXX: Make them configurable
+ */
 int DBObject::get_max_chunk_size(const DoutPrefixProvider* dpp, rgw_placement_rule placement_rule, uint64_t* max_chunk_size, uint64_t* alignment)
 {
-  return 0;
+  return store->getDBStore()->get_max_stripe_size();
 }
 
 void DBObject::get_max_aligned_size(uint64_t size, uint64_t alignment,
 				     uint64_t* max_size)
 {
+  *max_size = store->getDBStore()->get_max_stripe_size();
 }
 
 bool DBObject::placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2)
 {
+  /* XXX: support single default zone and zonegroup for now */
   return true;
 }
 

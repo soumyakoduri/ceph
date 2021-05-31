@@ -409,8 +409,6 @@ class DBOp {
 			FOREIGN KEY (OwnerID) \
 				REFERENCES '{}' (UserID) ON DELETE CASCADE ON UPDATE CASCADE \n);";
 
-    // XXX: default ObjStripeSize or ObjChunk size - 4M, make them configurable?
-    const int ObjStripeSize = 4 * 1024 * 1204;
 	const string CreateObjectTableQ =
         /* Corresponds to rgw::sal::Object
          *
@@ -997,6 +995,8 @@ class DBStore {
 	void *db;
     CephContext *cct;
     uint64_t max_bucket_id = 0;
+    // XXX: default ObjStripeSize or ObjChunk size - 4M, make them configurable?
+    int ObjStripeSize = 4 * 1024 * 1204;
 
 	public:	
 	DBStore(string db_name) : db_name(db_name),
@@ -1091,6 +1091,7 @@ class DBStore {
                       const rgw_user* powner_id, map<std::string, bufferlist>* pattrs,
                       ceph::real_time* pmtime, RGWObjVersionTracker* pobjv);
 
+    int get_max_stripe_size() { return ObjStripeSize; }
 
     class Object {
       friend class DBStore;
@@ -1261,6 +1262,7 @@ class DBStore {
     private:
       int finish();
     };
+
     };
 };
 #endif
