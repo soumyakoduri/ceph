@@ -1254,8 +1254,10 @@ int SQLInsertBucket::Execute(struct DBOpParams *params)
 	objectmapInsert(bucket_name, ObPtr);
 
 	params->object_table = bucket_name + ".object.table";
+	params->objectdata_table = bucket_name + ".objectdata.table";
 
 	(void)createObjectTable(params);
+	(void)createObjectDataTable(params);
 
 	SQL_EXECUTE(params, stmt, NULL);
 out:
@@ -1561,8 +1563,10 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.info.bucket.name;
-	p_params.object_table = bucket_name + ".object.table";
+    if (p_params.object_table.empty()) {
+        bucket_name = params->op.bucket.info.bucket.name;
+	    p_params.object_table = bucket_name + ".object.table";
+    }
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareInsertObject");
 
@@ -1740,11 +1744,10 @@ int SQLRemoveObject::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.info.bucket.name;
-	p_params.object_table = bucket_name + ".object.table";
-	copy.object_table = bucket_name + ".object.table";
-
-	(void)createObjectTable(&copy);
+    if (p_params.object_table.empty()) {
+        bucket_name = params->op.bucket.info.bucket.name;
+	    p_params.object_table = bucket_name + ".object.table";
+    }
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareRemoveObject");
 
@@ -1791,12 +1794,10 @@ int SQLListObject::Prepare(struct DBOpParams *params)
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.info.bucket.name;
-	p_params.object_table = bucket_name + ".object.table";
-	copy.object_table = bucket_name + ".object.table";
-
-	(void)createObjectTable(&copy);
-
+    if (p_params.object_table.empty()) {
+        bucket_name = params->op.bucket.info.bucket.name;
+	    p_params.object_table = bucket_name + ".object.table";
+    }
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareListObject");
 
@@ -1836,20 +1837,19 @@ int SQLPutObjectData::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct DBOpParams copy = *params;
-    string bucket_name;
+    string bucket_name = params->op.bucket.info.bucket.name;
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLPutObjectData - no db\n";
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.info.bucket.name;
-	p_params.object_table = bucket_name + ".object.table";
-	p_params.objectdata_table = bucket_name + ".objectdata.table";
-	copy.object_table = bucket_name + ".object.table";
-	copy.objectdata_table = bucket_name + ".objectdata.table";
-
-	(void)createObjectDataTable(&copy);
+    if (p_params.object_table.empty()) {
+	    p_params.object_table = bucket_name + ".object.table";
+    }
+    if (p_params.objectdata_table.empty()) {
+	    p_params.objectdata_table = bucket_name + ".objectdata.table";
+    }
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PreparePutObjectData");
 
@@ -1916,20 +1916,19 @@ int SQLGetObjectData::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct DBOpParams copy = *params;
-    string bucket_name;
+    string bucket_name = params->op.bucket.info.bucket.name;
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLGetObjectData - no db\n";
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.info.bucket.name;
-	p_params.object_table = bucket_name + ".object.table";
-	p_params.objectdata_table = bucket_name + ".objectdata.table";
-	copy.object_table = bucket_name + ".object.table";
-	copy.objectdata_table = bucket_name + ".objectdata.table";
-
-	(void)createObjectDataTable(&copy);
+    if (p_params.object_table.empty()) {
+	    p_params.object_table = bucket_name + ".object.table";
+    }
+    if (p_params.objectdata_table.empty()) {
+	    p_params.objectdata_table = bucket_name + ".objectdata.table";
+    }
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetObjectData");
 
@@ -1968,20 +1967,19 @@ int SQLDeleteObjectData::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct DBOpParams copy = *params;
-    string bucket_name;
+    string bucket_name = params->op.bucket.info.bucket.name;
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLDeleteObjectData - no db\n";
 		goto out;
 	}
 
-    bucket_name = params->op.bucket.info.bucket.name;
-	p_params.object_table = bucket_name + ".object.table";
-	p_params.objectdata_table = bucket_name + ".objectdata.table";
-	copy.object_table = bucket_name + ".object.table";
-	copy.objectdata_table = bucket_name + ".objectdata.table";
-
-	(void)createObjectDataTable(&copy);
+    if (p_params.object_table.empty()) {
+	    p_params.object_table = bucket_name + ".object.table";
+    }
+    if (p_params.objectdata_table.empty()) {
+	    p_params.objectdata_table = bucket_name + ".objectdata.table";
+    }
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareDeleteObjectData");
 

@@ -486,7 +486,7 @@ class DBOp {
             ManifestPartRules   BLOB,   \
             IsMultipart     BOOL,   \
             HeadData  BLOB,   \
-			PRIMARY KEY (ObjName, BucketName), \
+			PRIMARY KEY (ObjName, ObjInstance, BucketName), \
 			FOREIGN KEY (BucketName) \
 				REFERENCES '{}' (BucketName) ON DELETE CASCADE ON UPDATE CASCADE \n);";
         const string CreateObjectDataTableQ =
@@ -509,7 +509,7 @@ class DBOp {
             Data     BLOB,             \
 			Size 	 INTEGER, \
             MultipartPartNum INTEGER, \
-			PRIMARY KEY (ObjName, BucketName, PartNum, MultipartPartNum), \
+			PRIMARY KEY (ObjName, BucketName, ObjInstance, MultipartPartNum, PartNum), \
                         FOREIGN KEY (BucketName, ObjName) \
                                 REFERENCES '{}' (BucketName, ObjName) ON DELETE CASCADE ON UPDATE CASCADE \n);";
 
