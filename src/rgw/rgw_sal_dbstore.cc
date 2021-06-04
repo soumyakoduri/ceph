@@ -467,26 +467,31 @@ int DBObject::omap_get_vals(const DoutPrefixProvider *dpp, const std::string& ma
 				  std::map<std::string, bufferlist> *m,
 				  bool* pmore, optional_yield y)
 {
-  return 0;
+//  DBStore::raw_obj raw_obj(this->state->raw_obj.key.name,  .. )
+  DBStore::raw_obj raw_obj(store->getDBStore());
+  return raw_obj.obj_omap_get_vals(marker, count, m, pmore);
 }
 
 int DBObject::omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m,
 				 optional_yield y)
 {
-  return 0;
+  DBStore::raw_obj raw_obj(store->getDBStore());
+  return raw_obj.obj_omap_get_all(m);
 }
 
 int DBObject::omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
 					  const std::set<std::string>& keys,
 					  Attrs* vals)
 {
-  return 0;
+  DBStore::raw_obj raw_obj(store->getDBStore());
+  return raw_obj.obj_omap_get_vals_by_keys(oid, keys, vals);
 }
 
 int DBObject::omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val,
 					bool must_exist, optional_yield y)
 {
-  return 0;
+  DBStore::raw_obj raw_obj(store->getDBStore());
+  return raw_obj.obj_omap_set_val_by_key(key, val, must_exist);
 }
 
 MPSerializer* DBObject::get_serializer(const DoutPrefixProvider *dpp, const std::string& lock_name)

@@ -72,6 +72,7 @@ namespace {
 			GlobalParams.op.user.uinfo.user_id.id = user_id1;
 			GlobalParams.op.bucket.info.bucket.name = bucket1;
 			GlobalParams.op.obj.state.obj.key.name = object1;
+			GlobalParams.op.obj.state.obj.key.instance = "inst1";
             GlobalParams.op.obj_data.part_num = 0;
 
 			/* As of now InitializeParams doesnt do anything
@@ -583,11 +584,11 @@ TEST_F(DBStoreBaseTest, InsertObject) {
 	ASSERT_EQ(ret, 0);
 }
 
-TEST_F(DBStoreBaseTest, ListObject) {
+TEST_F(DBStoreBaseTest, GetObject) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
-	ret = db->ProcessOp("ListObject", &params);
+	ret = db->ProcessOp("GetObject", &params);
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(params.op.obj.category, RGWObjCategory::Main);
 	ASSERT_EQ(params.op.obj.storage_class, "STANDARD");
@@ -597,12 +598,126 @@ TEST_F(DBStoreBaseTest, ListObject) {
 	ASSERT_EQ(params.op.obj.state.size, 12);
 }
 
+TEST_F(DBStoreBaseTest, ObjectOmapSetVal) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+
+    DBStore::raw_obj raw_obj(db, params.op.bucket.info.bucket.name,
+                    params.op.obj.state.obj.key.name,
+                    params.op.obj.state.obj.key.instance,
+                    params.op.obj.state.obj.key.ns,
+                    params.op.obj_data.multipart_part_num,
+                    params.op.obj_data.part_num);
+
+    string val = "part1_val";
+    bufferlist bl;
+    encode(val, bl);
+    ret = raw_obj.obj_omap_set_val_by_key("part1", bl, false);
+	ASSERT_EQ(ret, 0);
+
+    val = "part2_val";
+    bl.clear();
+    encode(val, bl);
+    ret = raw_obj.obj_omap_set_val_by_key("part2", bl, false);
+	ASSERT_EQ(ret, 0);
+
+    val = "part3_val";
+    bl.clear();
+    encode(val, bl);
+    ret = raw_obj.obj_omap_set_val_by_key("part3", bl, false);
+	ASSERT_EQ(ret, 0);
+
+    val = "part4_val";
+    bl.clear();
+    encode(val, bl);
+    ret = raw_obj.obj_omap_set_val_by_key("part4", bl, false);
+	ASSERT_EQ(ret, 0);
+}
+
+TEST_F(DBStoreBaseTest, ObjectOmapGetValsByKeys) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+    std::set<std::string> keys;
+    std::map<std::string, bufferlist> vals;
+
+    DBStore::raw_obj raw_obj(db, params.op.bucket.info.bucket.name,
+                    params.op.obj.state.obj.key.name,
+                    params.op.obj.state.obj.key.instance,
+                    params.op.obj.state.obj.key.ns,
+                    params.op.obj_data.multipart_part_num,
+                    params.op.obj_data.part_num);
+
+    keys.insert("part2");
+    keys.insert("part4");
+
+    ret = raw_obj.obj_omap_get_vals_by_keys("", keys, &vals);
+	ASSERT_EQ(ret, 0);
+    ASSERT_EQ(vals.size(), 2);
+
+    string val;
+    decode(val, vals["part2"]);
+	ASSERT_EQ(val, "part2_val");
+    decode(val, vals["part4"]);
+	ASSERT_EQ(val, "part4_val");
+}
+
+TEST_F(DBStoreBaseTest, ObjectOmapGetAll) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+    std::map<std::string, bufferlist> vals;
+
+    DBStore::raw_obj raw_obj(db, params.op.bucket.info.bucket.name,
+                    params.op.obj.state.obj.key.name,
+                    params.op.obj.state.obj.key.instance,
+                    params.op.obj.state.obj.key.ns,
+                    params.op.obj_data.multipart_part_num,
+                    params.op.obj_data.part_num);
+
+    ret = raw_obj.obj_omap_get_all(&vals);
+	ASSERT_EQ(ret, 0);
+    ASSERT_EQ(vals.size(), 4);
+
+    string val;
+    decode(val, vals["part1"]);
+	ASSERT_EQ(val, "part1_val");
+    decode(val, vals["part2"]);
+	ASSERT_EQ(val, "part2_val");
+    decode(val, vals["part3"]);
+	ASSERT_EQ(val, "part3_val");
+    decode(val, vals["part4"]);
+	ASSERT_EQ(val, "part4_val");
+}
+
+TEST_F(DBStoreBaseTest, ObjectOmapGetVals) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+    std::set<std::string> keys;
+    std::map<std::string, bufferlist> vals;
+    bool pmore;
+
+    DBStore::raw_obj raw_obj(db, params.op.bucket.info.bucket.name,
+                    params.op.obj.state.obj.key.name,
+                    params.op.obj.state.obj.key.instance,
+                    params.op.obj.state.obj.key.ns,
+                    params.op.obj_data.multipart_part_num,
+                    params.op.obj_data.part_num);
+
+    ret = raw_obj.obj_omap_get_vals("part3", 10, &vals, &pmore);
+	ASSERT_EQ(ret, 0);
+    ASSERT_EQ(vals.size(), 2);
+
+    string val;
+    decode(val, vals["part3"]);
+	ASSERT_EQ(val, "part3_val");
+    decode(val, vals["part4"]);
+	ASSERT_EQ(val, "part4_val");
+}
 TEST_F(DBStoreBaseTest, ListAllObjects) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
 	ret = db->ListAllObjects(&params);
-	ASSERT_EQ(ret, 0);
+	ASSERT_GE(ret, 0);
 }
 
 TEST_F(DBStoreBaseTest, PutObjectData) {

@@ -250,22 +250,41 @@ class SQLRemoveObject : public SQLiteDB, public RemoveObjectOp {
         int Bind(DBOpParams *params);
 };
 
-class SQLListObject : public SQLiteDB, public ListObjectOp {
+class SQLGetObject : public SQLiteDB, public GetObjectOp {
 	private:
 	sqlite3 **sdb = NULL;
 	sqlite3_stmt *stmt = NULL; // Prepared statement
 
 	public:
-	SQLListObject(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
-	SQLListObject(sqlite3 **sdbi) : SQLiteDB(*sdbi), sdb(sdbi) {}
+	SQLGetObject(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLGetObject(sqlite3 **sdbi) : SQLiteDB(*sdbi), sdb(sdbi) {}
 
-	~SQLListObject() {
+	~SQLGetObject() {
 		if (stmt)
 			sqlite3_finalize(stmt);
 	}
         int Prepare(DBOpParams *params);
         int Execute(DBOpParams *params);
         int Bind(DBOpParams *params);
+};
+
+class SQLUpdateObject : public SQLiteDB, public UpdateObjectOp {
+	private:
+	sqlite3 **sdb = NULL;
+	sqlite3_stmt *omap_stmt = NULL; // Prepared statement
+
+	public:
+	SQLUpdateObject(void **db) : SQLiteDB((sqlite3 *)(*db)), sdb((sqlite3 **)db) {}
+	SQLUpdateObject(sqlite3 **sdbi) : SQLiteDB(*sdbi), sdb(sdbi) {}
+
+	~SQLUpdateObject() {
+		if (omap_stmt)
+			sqlite3_finalize(omap_stmt);
+	}
+
+    int Prepare(DBOpParams *params);
+    int Execute(DBOpParams *params);
+    int Bind(DBOpParams *params);
 };
 
 class SQLPutObjectData : public SQLiteDB, public PutObjectDataOp {

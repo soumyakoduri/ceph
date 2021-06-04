@@ -257,6 +257,7 @@ enum GetObject {
  TailPlacementStorageClass,
  ManifestPartObjs,
  ManifestPartRules,
+ Omap,
  IsMultipart,
  HeadData
 };
@@ -459,6 +460,7 @@ static int list_object(DBOpInfo &op, sqlite3_stmt *stmt) {
     op.obj.tail_placement.placement_rule.storage_class = (const char*)sqlite3_column_text(stmt, TailPlacementStorageClass);
     SQL_DECODE_BLOB_PARAM(stmt, ManifestPartObjs, op.obj.objs, sdb);
     SQL_DECODE_BLOB_PARAM(stmt, ManifestPartRules, op.obj.rules, sdb);
+    SQL_DECODE_BLOB_PARAM(stmt, Omap, op.obj.omap, sdb);
     op.obj.is_multipart = sqlite3_column_int(stmt, IsMultipart);
     SQL_DECODE_BLOB_PARAM(stmt, HeadData, op.obj.head_data, sdb);
 
@@ -860,7 +862,8 @@ int SQLObjectOp::InitializeObjectOps()
 {
         InsertObject = new SQLInsertObject(sdb);
 	RemoveObject = new SQLRemoveObject(sdb);
-	ListObject = new SQLListObject(sdb);
+	GetObject = new SQLGetObject(sdb);
+	UpdateObject = new SQLUpdateObject(sdb);
 	PutObjectData = new SQLPutObjectData(sdb);
 	GetObjectData = new SQLGetObjectData(sdb);
 	DeleteObjectData = new SQLDeleteObjectData(sdb);
@@ -872,7 +875,8 @@ int SQLObjectOp::FreeObjectOps()
 {
 	delete InsertObject;
 	delete RemoveObject;
-	delete ListObject;
+	delete GetObject;
+	delete UpdateObject;
 	delete PutObjectData;
 	delete GetObjectData;
 	delete DeleteObjectData;
@@ -1253,11 +1257,8 @@ int SQLInsertBucket::Execute(struct DBOpParams *params)
 
 	objectmapInsert(bucket_name, ObPtr);
 
-	params->object_table = bucket_name + ".object.table";
-	params->objectdata_table = bucket_name + ".objectdata.table";
-
-	(void)createObjectTable(params);
-	(void)createObjectDataTable(params);
+//	(void)createObjectTable(params);
+//	(void)createObjectDataTable(params);
 
 	SQL_EXECUTE(params, stmt, NULL);
 out:
@@ -1556,7 +1557,7 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct DBOpParams copy = *params;
-    string bucket_name;
+    string bucket_name = params->op.bucket.info.bucket.name;
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLInsertObject - no db\n";
@@ -1564,9 +1565,10 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 	}
 
     if (p_params.object_table.empty()) {
-        bucket_name = params->op.bucket.info.bucket.name;
 	    p_params.object_table = bucket_name + ".object.table";
     }
+	params->object_table = p_params.object_table;
+	(void)createObjectTable(params);
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareInsertObject");
 
@@ -1712,6 +1714,9 @@ int SQLInsertObject::Bind(struct DBOpParams *params)
 	SQL_BIND_INDEX(stmt, index, p_params.op.obj.manifest_part_rules.c_str(), sdb);
     SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.rules, sdb);
 
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.omap.c_str(), sdb);
+    SQL_ENCODE_BLOB_PARAM(stmt, index, params->op.obj.omap, sdb);
+
 	SQL_BIND_INDEX(stmt, index, p_params.op.obj.is_multipart.c_str(), sdb);
 	SQL_BIND_INT(stmt, index, params->op.obj.is_multipart, sdb);
 
@@ -1737,7 +1742,7 @@ int SQLRemoveObject::Prepare(struct DBOpParams *params)
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
 	struct DBOpParams copy = *params;
-    string bucket_name;
+    string bucket_name = params->op.bucket.info.bucket.name;
 
 	if (!*sdb) {
 		dbout(L_ERR)<<"In SQLRemoveObject - no db\n";
@@ -1745,9 +1750,10 @@ int SQLRemoveObject::Prepare(struct DBOpParams *params)
 	}
 
     if (p_params.object_table.empty()) {
-        bucket_name = params->op.bucket.info.bucket.name;
 	    p_params.object_table = bucket_name + ".object.table";
     }
+	params->object_table = p_params.object_table;
+	(void)createObjectTable(params);
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareRemoveObject");
 
@@ -1761,14 +1767,14 @@ int SQLRemoveObject::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
-
-	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
-
 	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
-
 	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_instance.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.instance.c_str(), sdb);
 out:
 	return rc;
 }
@@ -1782,7 +1788,59 @@ out:
 	return ret;
 }
 
-int SQLListObject::Prepare(struct DBOpParams *params)
+int SQLGetObject::Prepare(struct DBOpParams *params)
+{
+	int ret = -1;
+	struct DBOpPrepareParams p_params = PrepareParams;
+	struct DBOpParams copy = *params;
+    string bucket_name = params->op.bucket.info.bucket.name;
+
+	if (!*sdb) {
+		dbout(L_ERR)<<"In SQLGetObject - no db\n";
+		goto out;
+	}
+
+    if (p_params.object_table.empty()) {
+	    p_params.object_table = bucket_name + ".object.table";
+    }
+	params->object_table = p_params.object_table;
+	(void)createObjectTable(params);
+
+	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetObject");
+
+out:
+	return ret;
+}
+
+int SQLGetObject::Bind(struct DBOpParams *params)
+{
+	int index = -1;
+	int rc = 0;
+	struct DBOpPrepareParams p_params = PrepareParams;
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
+
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_instance.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.instance.c_str(), sdb);
+
+out:
+	return rc;
+}
+
+int SQLGetObject::Execute(struct DBOpParams *params)
+{
+	int ret = -1;
+
+	SQL_EXECUTE(params, stmt, list_object);
+out:
+	return ret;
+}
+
+int SQLUpdateObject::Prepare(struct DBOpParams *params)
 {
 	int ret = -1;
 	struct DBOpPrepareParams p_params = PrepareParams;
@@ -1790,7 +1848,7 @@ int SQLListObject::Prepare(struct DBOpParams *params)
     string bucket_name;
 
 	if (!*sdb) {
-		dbout(L_ERR)<<"In SQLListObject - no db\n";
+		dbout(L_ERR)<<"In SQLUpdateObject - no db\n";
 		goto out;
 	}
 
@@ -1799,35 +1857,68 @@ int SQLListObject::Prepare(struct DBOpParams *params)
 	    p_params.object_table = bucket_name + ".object.table";
     }
 
-	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareListObject");
+	p_params.op.query_str = params->op.query_str;
+
+    if (params->op.query_str == "omap") {
+	    SQL_PREPARE(p_params, sdb, omap_stmt, ret, "PrepareUpdateObject");
+    } else {
+	  dbout(L_ERR)<<"In SQLUpdateObject invalid query_str:" <<
+                     params->op.query_str << "\n";
+      goto out;
+    }
 
 out:
 	return ret;
 }
 
-int SQLListObject::Bind(struct DBOpParams *params)
+int SQLUpdateObject::Bind(struct DBOpParams *params)
 {
 	int index = -1;
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
+	sqlite3_stmt** stmt = NULL; // Prepared statement
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
+    /* All below fields for attrs */
+	if (params->op.query_str == "omap") { 
+      stmt = &omap_stmt;
+    } else {
+	  dbout(L_ERR)<<"In SQLUpdateObject invalid query_str:" <<
+                     params->op.query_str << "\n";
+      goto out;
+	}
 
-	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
+	SQL_BIND_INDEX(*stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
+	SQL_BIND_TEXT(*stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
+	SQL_BIND_INDEX(*stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
+	SQL_BIND_TEXT(*stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
+	SQL_BIND_INDEX(*stmt, index, p_params.op.obj.obj_instance.c_str(), sdb);
+	SQL_BIND_TEXT(*stmt, index, params->op.obj.state.obj.key.instance.c_str(), sdb);
+
+	if (params->op.query_str == "omap") { 
+	    SQL_BIND_INDEX(*stmt, index, p_params.op.obj.omap.c_str(), sdb);
+        SQL_ENCODE_BLOB_PARAM(*stmt, index, params->op.obj.omap, sdb);
+    }
 
 out:
 	return rc;
 }
 
-int SQLListObject::Execute(struct DBOpParams *params)
+int SQLUpdateObject::Execute(struct DBOpParams *params)
 {
 	int ret = -1;
+	sqlite3_stmt** stmt = NULL; // Prepared statement
 
-	SQL_EXECUTE(params, stmt, list_object);
+	if (params->op.query_str == "omap") { 
+      stmt = &omap_stmt;
+    } else {
+	  dbout(L_ERR)<<"In SQLUpdateObject invalid query_str:" <<
+                     params->op.query_str << "\n";
+      goto out;
+    }
+
+	SQL_EXECUTE(params, *stmt, NULL);
 out:
 	return ret;
 }
@@ -1850,6 +1941,10 @@ int SQLPutObjectData::Prepare(struct DBOpParams *params)
     if (p_params.objectdata_table.empty()) {
 	    p_params.objectdata_table = bucket_name + ".objectdata.table";
     }
+	params->bucket_table = p_params.bucket_table;
+	params->object_table = p_params.object_table;
+	params->objectdata_table = p_params.objectdata_table;
+	(void)createObjectDataTable(params);
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PreparePutObjectData");
 
@@ -1929,6 +2024,9 @@ int SQLGetObjectData::Prepare(struct DBOpParams *params)
     if (p_params.objectdata_table.empty()) {
 	    p_params.objectdata_table = bucket_name + ".objectdata.table";
     }
+	params->object_table = p_params.object_table;
+	params->objectdata_table = p_params.objectdata_table;
+	(void)createObjectDataTable(params);
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareGetObjectData");
 
@@ -1942,13 +2040,15 @@ int SQLGetObjectData::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
 	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_instance.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.instance.c_str(), sdb);
 
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 out:
 	return rc;
 }
@@ -1980,6 +2080,9 @@ int SQLDeleteObjectData::Prepare(struct DBOpParams *params)
     if (p_params.objectdata_table.empty()) {
 	    p_params.objectdata_table = bucket_name + ".objectdata.table";
     }
+	params->object_table = p_params.object_table;
+	params->objectdata_table = p_params.objectdata_table;
+	(void)createObjectDataTable(params);
 
 	SQL_PREPARE(p_params, sdb, stmt, ret, "PrepareDeleteObjectData");
 
@@ -1993,13 +2096,14 @@ int SQLDeleteObjectData::Bind(struct DBOpParams *params)
 	int rc = 0;
 	struct DBOpPrepareParams p_params = PrepareParams;
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_name.c_str(), sdb);
 	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.name.c_str(), sdb);
 
-	SQL_BIND_INDEX(stmt, index, p_params.op.bucket.bucket_name.c_str(), sdb);
-
-	SQL_BIND_TEXT(stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
+	SQL_BIND_INDEX(stmt, index, p_params.op.obj.obj_instance.c_str(), sdb);
+	SQL_BIND_TEXT(stmt, index, params->op.obj.state.obj.key.instance.c_str(), sdb);
 out:
 	return rc;
 }

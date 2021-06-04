@@ -176,8 +176,10 @@ DBOp * DBStore::getDBOp(string Op, struct DBOpParams *params)
 		return Ob->InsertObject;
 	if (!Op.compare("RemoveObject"))
 		return Ob->RemoveObject;
-	if (!Op.compare("ListObject"))
-		return Ob->ListObject;
+	if (!Op.compare("GetObject"))
+		return Ob->GetObject;
+	if (!Op.compare("UpdateObject"))
+		return Ob->UpdateObject;
 	if (!Op.compare("PutObjectData"))
 		return Ob->PutObjectData;
 	if (!Op.compare("GetObjectData"))
@@ -732,4 +734,177 @@ int DBStore::update_bucket(const std::string& query_str,
 
 out:
   return ret;
+}
+
+int DBStore::raw_obj::InitializeParamsfromRawObj (DBOpParams* params) {
+  int ret = 0;
+
+  if (!params)
+    return -1;
+
+  params->object_table = obj_table;
+  params->objectdata_table = obj_data_table;
+  params->op.bucket.info.bucket.name = bucket_name;
+  params->op.obj.state.obj.key.name = obj_name;
+  params->op.obj.state.obj.key.instance = obj_instance;
+  params->op.obj.state.obj.key.ns = obj_ns;
+
+  if (multipart_partnum != 0) {
+    params->op.obj.is_multipart = true;
+  } else {
+    params->op.obj.is_multipart = false;
+  }
+
+  params->op.obj_data.multipart_part_num = multipart_partnum;
+  params->op.obj_data.part_num = part_num;
+
+  return ret;
+}
+
+int DBStore::raw_obj::obj_omap_set_val_by_key(const std::string& key, bufferlist& val,
+                                bool must_exist) {
+	int ret = 0;
+
+    DBOpParams params = {};
+    db->InitializeParams("GetObject", &params);
+    InitializeParamsfromRawObj(&params);
+
+    ret = db->ProcessOp("GetObject", &params);
+
+    if (ret) {
+	  dbout(L_ERR)<<"In GetObject failed err:(" <<ret<<") \n";
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+    if (params.op.obj.storage_class.empty()) {
+	  dbout(L_ERR)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist \n";
+      return -1;
+    }
+
+    params.op.obj.omap[key] = val;
+    params.op.query_str = "omap";
+
+    ret = db->ProcessOp("UpdateObject", &params);
+
+    if (ret) {
+	  dbout(L_ERR)<<"In UpdateObject failed err:(" <<ret<<") \n";
+      goto out;
+    }
+
+out:
+	return ret;
+}
+
+int DBStore::raw_obj::obj_omap_get_vals_by_keys(const std::string& oid,
+                                  const std::set<std::string>& keys,
+                                  std::map<std::string, bufferlist>* vals) {
+	int ret = 0;
+    DBOpParams params = {};
+    std::map<std::string, bufferlist> omap;
+
+    if (!vals)
+      return -1;
+
+    db->InitializeParams("GetObject", &params);
+    InitializeParamsfromRawObj(&params);
+
+    ret = db->ProcessOp("GetObject", &params);
+
+    if (ret) {
+	  dbout(L_ERR)<<"In GetObject failed err:(" <<ret<<") \n";
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+    if (params.op.obj.storage_class.empty()) {
+	  dbout(L_ERR)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist \n";
+      return -1;
+    }
+
+    omap = params.op.obj.omap;
+
+    for (const auto& k :  keys) {
+      (*vals)[k] = omap[k];
+    }
+
+out:
+  return ret;
+}
+
+int DBStore::raw_obj::obj_omap_get_all(std::map<std::string, bufferlist> *m) {
+	int ret = 0;
+    DBOpParams params = {};
+    std::map<std::string, bufferlist> omap;
+
+    if (!m)
+      return -1;
+
+    db->InitializeParams("GetObject", &params);
+    InitializeParamsfromRawObj(&params);
+
+    ret = db->ProcessOp("GetObject", &params);
+
+    if (ret) {
+	  dbout(L_ERR)<<"In GetObject failed err:(" <<ret<<") \n";
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+    if (params.op.obj.storage_class.empty()) {
+	  dbout(L_ERR)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist \n";
+      return -1;
+    }
+
+    (*m) = params.op.obj.omap;
+
+out:
+    return ret;
+}
+
+int DBStore::raw_obj::obj_omap_get_vals(const std::string& marker,
+                         uint64_t max_count,
+                        std::map<std::string, bufferlist> *m, bool* pmore) {
+	int ret = 0;
+    DBOpParams params = {};
+    std::map<std::string, bufferlist> omap;
+    map<string, bufferlist>::iterator iter;
+    uint64_t count = 0;
+
+    if (!m)
+      return -1;
+
+    db->InitializeParams("GetObject", &params);
+    InitializeParamsfromRawObj(&params);
+
+    ret = db->ProcessOp("GetObject", &params);
+
+    if (ret) {
+	  dbout(L_ERR)<<"In GetObject failed err:(" <<ret<<") \n";
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+    if (params.op.obj.storage_class.empty()) {
+	  dbout(L_ERR)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist \n";
+      return -1;
+    }
+
+    omap = params.op.obj.omap;
+
+    for (iter = omap.begin(); iter != omap.end(); ++iter) {
+
+      if (iter->first < marker)
+        continue;
+
+      if ((++count) > max_count) {
+        *pmore = true;
+        break;
+      }
+
+      (*m)[iter->first] = iter->second;
+    }
+
+out:
+    return ret;
 }

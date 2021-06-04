@@ -31,7 +31,7 @@ struct DBOpUserInfo {
 };
 
 struct DBOpBucketInfo {
-    RGWBucketEnt ent; // maybe not needed. not used in create/get_bucket
+    RGWBucketEnt ent; // maybe not needed. not used in create/get_bucket,
     RGWBucketInfo info;
     RGWUser* owner = nullptr;
     rgw::sal::Attrs bucket_attrs;
@@ -71,6 +71,9 @@ struct DBOpObjectInfo {
   map<uint64_t, RGWObjManifestRule> rules;
   string tail_instance; /* tail object's instance */
 
+
+  /* Obj's omap <key,value> store */
+  std::map<std::string, bufferlist> omap;
 
   /* Extra fields */
   bool is_multipart;
@@ -241,6 +244,7 @@ struct DBOpObjectPrepareInfo {
     string tail_placement_storage_class  = ":tail_placement_storage_class";
     string manifest_part_objs = ":manifest_part_objs";
     string manifest_part_rules = ":manifest_part_rules";
+    string omap = ":omap";
     string is_multipart = ":is_multipart";
     string head_data = ":head_data";
 };
@@ -264,18 +268,17 @@ struct DBOpPrepareInfo {
 
 struct DBOpPrepareParams {
   /* Tables */
-  string user_table = ":user_table";
-  string bucket_table = ":bucket_table";
-  string object_table = ":object_table";
+  string user_table;
+  string bucket_table;
+  string object_table;
 
   /* Ops */
   DBOpPrepareInfo op;
 
 
 	/* below subject to change */
-	string objectdata_table = ":objectdata_table";
-	string quota_table = ":quota_table";
-	string object = ":object";
+	string objectdata_table;
+	string quota_table;
 };
 
 struct DBOps {
@@ -297,7 +300,8 @@ class ObjectOp {
 
         class InsertObjectOp *InsertObject;
         class RemoveObjectOp *RemoveObject;
-        class ListObjectOp *ListObject;
+        class GetObjectOp *GetObject;
+	    class UpdateObjectOp *UpdateObject;
         class PutObjectDataOp *PutObjectData;
         class GetObjectDataOp *GetObjectData;
         class DeleteObjectDataOp *DeleteObjectData;
@@ -484,11 +488,13 @@ class DBOp {
             TailPlacementStorageClass String, \
             ManifestPartObjs    BLOB,   \
             ManifestPartRules   BLOB,   \
+            Omap    BLOB,   \
             IsMultipart     BOOL,   \
             HeadData  BLOB,   \
 			PRIMARY KEY (ObjName, ObjInstance, BucketName), \
 			FOREIGN KEY (BucketName) \
 				REFERENCES '{}' (BucketName) ON DELETE CASCADE ON UPDATE CASCADE \n);";
+
         const string CreateObjectDataTableQ =
         /* Extra field 'MultipartPartNum' added which signifies multipart upload
          * part number.  For regular object, it is '0'
@@ -510,8 +516,8 @@ class DBOp {
 			Size 	 INTEGER, \
             MultipartPartNum INTEGER, \
 			PRIMARY KEY (ObjName, BucketName, ObjInstance, MultipartPartNum, PartNum), \
-                        FOREIGN KEY (BucketName, ObjName) \
-                                REFERENCES '{}' (BucketName, ObjName) ON DELETE CASCADE ON UPDATE CASCADE \n);";
+                        FOREIGN KEY (BucketName, ObjName, ObjInstance) \
+                                REFERENCES '{}' (BucketName, ObjName, ObjInstance) ON DELETE CASCADE ON UPDATE CASCADE \n);";
 
 	const string CreateQuotaTableQ =
 		"CREATE TABLE IF NOT EXISTS '{}' ( \
@@ -847,9 +853,9 @@ class InsertObjectOp: public DBOp {
      ObjVersion, ObjVersionTag, ObjAttrs, HeadSize, MaxHeadSize, \
      Prefix, TailInstance, HeadPlacementRuleName, HeadPlacementRuleStorageClass, \
      TailPlacementRuleName, TailPlacementStorageClass, \
-     ManifestPartObjs, ManifestPartRules, IsMultipart, HeadData )     \
+     ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, HeadData )     \
      VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
-             {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+             {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
              {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})";
 
 	public:
@@ -879,7 +885,7 @@ class InsertObjectOp: public DBOp {
             params.op.obj.tail_placement_rule_name,
             params.op.obj.tail_placement_storage_class,
             params.op.obj.manifest_part_objs,
-            params.op.obj.manifest_part_rules,
+            params.op.obj.manifest_part_rules, params.op.obj.omap,
             params.op.obj.is_multipart, params.op.obj.head_data);
 	}
 };
@@ -887,18 +893,20 @@ class InsertObjectOp: public DBOp {
 class RemoveObjectOp: public DBOp {
 	private:
 	const string Query =
-	"DELETE from '{}' where BucketName = {} and ObjName = {}";
+	"DELETE from '{}' where BucketName = {} and ObjName = {} and ObjInstance = {}";
 
 	public:
 	virtual ~RemoveObjectOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(), params.object_table.c_str(),
-			       params.op.bucket.bucket_name.c_str(), params.op.obj.obj_name.c_str());
+			       params.op.bucket.bucket_name.c_str(),
+                   params.op.obj.obj_name.c_str(),
+                   params.op.obj.obj_instance.c_str());
 	}
 };
 
-class ListObjectOp: public DBOp {
+class GetObjectOp: public DBOp {
 	private:
 	const string Query =
 	"SELECT  \
@@ -910,16 +918,39 @@ class ListObjectOp: public DBOp {
      ObjVersion, ObjVersionTag, ObjAttrs, HeadSize, MaxHeadSize, \
      Prefix, TailInstance, HeadPlacementRuleName, HeadPlacementRuleStorageClass, \
      TailPlacementRuleName, TailPlacementStorageClass, \
-     ManifestPartObjs, ManifestPartRules, IsMultipart, HeadData from '{}' \
-     where BucketName = {} and ObjName = {}";
+     ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, HeadData from '{}' \
+     where BucketName = {} and ObjName = {} and ObjInstance = {}";
 
 	public:
-	virtual ~ListObjectOp() {}
+	virtual ~GetObjectOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(),
 		 	params.object_table.c_str(),
-            params.op.bucket.bucket_name.c_str(), params.op.obj.obj_name.c_str());
+			       params.op.bucket.bucket_name.c_str(),
+                   params.op.obj.obj_name.c_str(),
+                   params.op.obj.obj_instance.c_str());
+    }
+};
+
+class UpdateObjectOp: public DBOp {
+	private:
+    // Updates Omap
+	const string OmapQuery =
+    "UPDATE '{}' SET Omap = {} \
+     where BucketName = {} and ObjName = {} and ObjInstance = {}";
+	public:
+	virtual ~UpdateObjectOp() {}
+
+	string Schema(DBOpPrepareParams &params) {
+		if (params.op.query_str == "omap") {
+		    return fmt::format(OmapQuery.c_str(),
+		 	        params.object_table.c_str(), params.op.obj.omap.c_str(),
+			        params.op.bucket.bucket_name.c_str(),
+                    params.op.obj.obj_name.c_str(),
+                    params.op.obj.obj_instance.c_str());
+        }
+        return "";
     }
 };
 
@@ -950,30 +981,34 @@ class GetObjectDataOp: public DBOp {
 	const string Query =
 	"SELECT  \
      ObjName, ObjInstance, ObjNS, BucketName, PartNum, Offset, Data, Size, \
-     MultipartPartNum from '{}' where BucketName = {} and ObjName = {}";
+     MultipartPartNum from '{}' where BucketName = {} and ObjName = {} and ObjInstance = {}";
 
 	public:
 	virtual ~GetObjectDataOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(),
-		 	params.objectdata_table.c_str(), params.op.bucket.bucket_name.c_str(),
-		        params.op.obj.obj_name.c_str());
+		 	params.objectdata_table.c_str(),
+			       params.op.bucket.bucket_name.c_str(),
+                   params.op.obj.obj_name.c_str(),
+                   params.op.obj.obj_instance.c_str());
 	}
 };
 
 class DeleteObjectDataOp: public DBOp {
 	private:
 	const string Query =
-	"DELETE from '{}' where BucketName = {} and ObjName = {}";
+	"DELETE from '{}' where BucketName = {} and ObjName = {} and ObjInstance = {}";
 
 	public:
 	virtual ~DeleteObjectDataOp() {}
 
 	string Schema(DBOpPrepareParams &params) {
 		return fmt::format(Query.c_str(),
-	 		params.objectdata_table.c_str(), params.op.bucket.bucket_name.c_str(),
-	        	params.op.obj.obj_name.c_str());
+	 		params.objectdata_table.c_str(),
+			       params.op.bucket.bucket_name.c_str(),
+                   params.op.obj.obj_name.c_str(),
+                   params.op.obj.obj_instance.c_str());
 	}
 };
 
@@ -1092,6 +1127,51 @@ class DBStore {
                       ceph::real_time* pmtime, RGWObjVersionTracker* pobjv);
 
     int get_max_stripe_size() { return ObjStripeSize; }
+
+    struct raw_obj {
+      DBStore* db;
+
+      string bucket_name;
+      string obj_name;
+      string obj_instance;
+      string obj_ns;
+      int multipart_partnum;
+      int part_num;
+
+      string obj_table;
+      string obj_data_table;
+
+      raw_obj(DBStore* _db) {
+        db = _db;
+      }
+
+      raw_obj(DBStore* _db, string& oid) {
+        db = _db;
+      }
+
+      raw_obj(DBStore* _db, string& _bname, string& _obj_name, string& _obj_instance,
+              string& _obj_ns, int _mp_partnum, int _part_num) {
+        db = _db;
+        bucket_name = _bname;
+        obj_name = _obj_name;
+        obj_instance = _obj_instance;
+        obj_ns = _obj_ns;
+        multipart_partnum = _mp_partnum;
+        part_num = _part_num;
+
+        obj_table = bucket_name+".object.table";
+        obj_data_table = bucket_name+".objectdata.table";
+      }
+    int InitializeParamsfromRawObj (DBOpParams* params);
+
+    int obj_omap_set_val_by_key(const std::string& key, bufferlist& val, bool must_exist);
+    int obj_omap_get_vals_by_keys(const std::string& oid,
+                                  const std::set<std::string>& keys,
+                                  std::map<std::string, bufferlist>* vals);
+    int obj_omap_get_all(std::map<std::string, bufferlist> *m);
+    int obj_omap_get_vals(const std::string& marker, uint64_t count,
+                        std::map<std::string, bufferlist> *m, bool* pmore);
+    };
 
     class Object {
       friend class DBStore;
