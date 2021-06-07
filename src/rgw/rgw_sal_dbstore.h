@@ -235,6 +235,10 @@ class DBObject : public Object {
   private:
     RGWDBStore* store;
     RGWAccessControlPolicy acls;
+    /* XXX: to be removed. Till Dan's patch comes, a placeholder
+     * for RGWObjState
+     */
+    RGWObjState* state;
 
   public:
 
