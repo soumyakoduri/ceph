@@ -445,7 +445,6 @@ int DBStore::get_bucket_info(const std::string& query_str,
 	}
 
     DBOpParams params = {};
-    DBOpParams params2 = {};
     InitializeParams("GetBucket", &params);
 
     if (query_str == "name") {
@@ -907,4 +906,90 @@ int DBStore::raw_obj::obj_omap_get_vals(const std::string& marker,
 
 out:
     return ret;
+}
+
+int DBStore::follow_olh(const RGWBucketInfo& bucket_info, RGWObjState *state,
+               const rgw_obj& olh_obj, rgw_obj *target)
+{
+  auto iter = state->attrset.find(RGW_ATTR_OLH_INFO);
+  if (iter == state->attrset.end()) {
+    return -EINVAL;
+  }
+
+  DBOLHInfo olh;
+  string s;
+  const bufferlist& bl = iter->second;
+  try {
+    auto biter = bl.cbegin();
+    decode(olh, biter);
+  } catch (buffer::error& err) {
+    return -EIO;
+  }
+
+  if (olh.removed) {
+    return -ENOENT;
+  }
+
+  *target = olh.target;
+
+  return 0;
+}
+
+int DBStore::get_olh_target_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+                      RGWObjState* olh_state, RGWObjState& target) {
+  int ret = 0;
+  rgw_obj target_obj;
+
+  if (!olh_state->is_olh) {
+    return EINVAL;
+  }
+
+  ret = follow_olh(bucket_info, olh_state, obj, &target_obj); /* might return -EAGAIN */
+  if (ret < 0) {
+	dbout(L_ERR)<<"In get_olh_target_state follow_olh() failed err:(" <<ret<<") \n";
+    return ret;
+  }
+
+  ret = get_obj_state(bucket_info, target_obj, false, target);
+
+  return ret;
+}
+
+int DBStore::get_obj_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj, bool follow_olh,
+                      RGWObjState& state) {
+	int ret = 0;
+
+    DBOpParams params = {};
+    RGWObjState s;
+    InitializeParams("GetObject", &params);
+
+	params.op.bucket.info.bucket.name = bucket_info.bucket.name;
+    params.op.obj.state.obj = obj;
+
+    ret = ProcessOp("GetObject", &params);
+
+	if (ret) {
+		dbout(L_ERR)<<"In GetObject failed err:(" <<ret<<") \n";
+		goto out;
+    }
+
+   if (params.op.obj.storage_class.empty()) {
+     return -ENOENT;
+   }
+   
+   s = params.op.obj.state;
+   state = s;
+   
+   if (follow_olh && params.op.obj.state.obj.key.instance.empty()) {
+     /* fetch current version obj details */
+    ret = get_olh_target_state(bucket_info, obj, &s, state);
+
+    if (ret < 0) {
+	  dbout(L_ERR)<<"get_olh_target_state failed err:(" <<ret<<") \n";
+    }
+   }
+
+out:
+	return ret;
+
 }

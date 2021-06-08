@@ -1012,6 +1012,27 @@ class DeleteObjectDataOp: public DBOp {
 	}
 };
 
+    /* taken from rgw_rados.h::RGWOLHInfo */
+    struct DBOLHInfo {
+        rgw_obj target;
+        bool removed;
+        DBOLHInfo() : removed(false) {}
+        void encode(bufferlist& bl) const {
+            ENCODE_START(1, 1, bl);
+            encode(target, bl);
+            encode(removed, bl);
+            ENCODE_FINISH(bl);
+        }
+
+        void decode(bufferlist::const_iterator& bl) {
+             DECODE_START(1, bl);
+             decode(target, bl);
+             decode(removed, bl);
+             DECODE_FINISH(bl);
+        }
+    };
+    WRITE_CLASS_ENCODER(DBOLHInfo)
+
 class DBStore {
 	private:
 	const string db_name;
@@ -1127,6 +1148,15 @@ class DBStore {
                       ceph::real_time* pmtime, RGWObjVersionTracker* pobjv);
 
     int get_max_stripe_size() { return ObjStripeSize; }
+
+    /* XXX: the parameters may be subject to change. All we need is bucket name
+     * & obj name,instance - keys */
+    int get_obj_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj, bool follow_olh,
+                      RGWObjState& state);
+    int get_olh_target_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+                          RGWObjState* olh_state, RGWObjState& target);
+    int follow_olh(const RGWBucketInfo& bucket_info, RGWObjState *state,
+                   const rgw_obj& olh_obj, rgw_obj *target);
 
     struct raw_obj {
       DBStore* db;

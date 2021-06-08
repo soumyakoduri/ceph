@@ -579,6 +579,7 @@ TEST_F(DBStoreBaseTest, InsertObject) {
     encode("HELLO WORLD", b1);
     params.op.obj.head_data = b1;
     params.op.obj.state.size = 12;
+    params.op.obj.state.is_olh = false;
 
 	ret = db->ProcessOp("InsertObject", &params);
 	ASSERT_EQ(ret, 0);
@@ -596,6 +597,18 @@ TEST_F(DBStoreBaseTest, GetObject) {
     decode(data, params.op.obj.head_data);
 	ASSERT_EQ(data, "HELLO WORLD");
 	ASSERT_EQ(params.op.obj.state.size, 12);
+}
+
+TEST_F(DBStoreBaseTest, GetObjectState) {
+	struct DBOpParams params = GlobalParams;
+	int ret = -1;
+    RGWObjState state;
+
+	ret = db->get_obj_state(params.op.bucket.info, params.op.obj.state.obj,
+                            false, state);
+	ASSERT_EQ(ret, 0);
+	ASSERT_EQ(state.size, 12);
+    ASSERT_EQ(state.is_olh, false);
 }
 
 TEST_F(DBStoreBaseTest, ObjectOmapSetVal) {
