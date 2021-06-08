@@ -603,9 +603,10 @@ TEST_F(DBStoreBaseTest, GetObjectState) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
     RGWObjState state;
+    RGWObjState *s = &state;
 
 	ret = db->get_obj_state(params.op.bucket.info, params.op.obj.state.obj,
-                            false, state);
+                            false, &s);
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(state.size, 12);
     ASSERT_EQ(state.is_olh, false);

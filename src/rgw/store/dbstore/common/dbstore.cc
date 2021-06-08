@@ -936,7 +936,7 @@ int DBStore::follow_olh(const RGWBucketInfo& bucket_info, RGWObjState *state,
 }
 
 int DBStore::get_olh_target_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj,
-                      RGWObjState* olh_state, RGWObjState& target) {
+                      RGWObjState* olh_state, RGWObjState** target) {
   int ret = 0;
   rgw_obj target_obj;
 
@@ -955,12 +955,12 @@ int DBStore::get_olh_target_state(const RGWBucketInfo& bucket_info, const rgw_ob
   return ret;
 }
 
-int DBStore::get_obj_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj, bool follow_olh,
-                      RGWObjState& state) {
+int DBStore::get_obj_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+                            bool follow_olh, RGWObjState **state) {
 	int ret = 0;
 
     DBOpParams params = {};
-    RGWObjState s;
+    RGWObjState* s;
     InitializeParams("GetObject", &params);
 
 	params.op.bucket.info.bucket.name = bucket_info.bucket.name;
@@ -977,12 +977,12 @@ int DBStore::get_obj_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj,
      return -ENOENT;
    }
    
-   s = params.op.obj.state;
-   state = s;
+   s = &params.op.obj.state;
+   **state = *s;
    
    if (follow_olh && params.op.obj.state.obj.key.instance.empty()) {
      /* fetch current version obj details */
-    ret = get_olh_target_state(bucket_info, obj, &s, state);
+    ret = get_olh_target_state(bucket_info, obj, s, state);
 
     if (ret < 0) {
 	  dbout(L_ERR)<<"get_olh_target_state failed err:(" <<ret<<") \n";
@@ -993,3 +993,147 @@ out:
 	return ret;
 
 }
+
+int DBStore::Object::get_state(RGWObjState **pstate, bool follow_olh)
+{
+  return store->get_obj_state(bucket_info, obj, follow_olh, pstate);
+}
+
+int DBStore::Object::Read::get_attr(const char *name, bufferlist& dest)
+{
+  RGWObjState *state;
+  int r = source->get_state(&state, true);
+  if (r < 0)
+    return r;
+  if (!state->exists)
+    return -ENOENT;
+  if (!state->get_attr(name, dest))
+    return -ENODATA;
+
+  return 0;
+}
+
+int DBStore::Object::Read::prepare()
+{
+  DBStore *store = source->get_store();
+  CephContext *cct = store->ctx();
+
+  bufferlist etag;
+
+  map<string, bufferlist>::iterator iter;
+
+  RGWObjState *astate;
+  int r = source->get_state(&astate, true);
+  if (r < 0)
+    return r;
+
+  if (!astate->exists) {
+    return -ENOENT;
+  }
+
+  const RGWBucketInfo& bucket_info = source->get_bucket_info();
+
+  state.obj = astate->obj;
+  store->obj_to_raw_head(bucket_info.placement_rule, state.obj, &state.head_obj);
+
+  state.cur_pool = state.head_obj.pool;
+
+  if (params.target_obj) {
+    *params.target_obj = state.obj;
+  }
+  if (params.attrs) {
+    *params.attrs = astate->attrset;
+    if (cct->_conf->subsys.should_gather<ceph_subsys_rgw, 20>()) {
+      for (iter = params.attrs->begin(); iter != params.attrs->end(); ++iter) {
+        //ldpp_dout(dpp, 20) << "Read xattr rgw_rados: " << iter->first << dendl;
+      }
+    }
+  }
+
+  /* Convert all times go GMT to make them compatible */
+  if (conds.mod_ptr || conds.unmod_ptr) {
+    obj_time_weight src_weight;
+    src_weight.init(astate);
+    src_weight.high_precision = conds.high_precision_time;
+
+    obj_time_weight dest_weight;
+    dest_weight.high_precision = conds.high_precision_time;
+
+    if (conds.mod_ptr && !conds.if_nomatch) {
+      dest_weight.init(*conds.mod_ptr, conds.mod_zone_id, conds.mod_pg_ver);
+//      ldpp_dout(dpp, 10) << "If-Modified-Since: " << dest_weight << " Last-Modified: " << src_weight << dendl;
+      if (!(dest_weight < src_weight)) {
+        return -ERR_NOT_MODIFIED;
+      }
+    }
+
+    if (conds.unmod_ptr && !conds.if_match) {
+      dest_weight.init(*conds.unmod_ptr, conds.mod_zone_id, conds.mod_pg_ver);
+      //ldpp_dout(dpp, 10) << "If-UnModified-Since: " << dest_weight << " Last-Modified: " << src_weight << dendl;
+      if (dest_weight < src_weight) {
+        return -ERR_PRECONDITION_FAILED;
+      }
+    }
+  }
+  if (conds.if_match || conds.if_nomatch) {
+    r = get_attr(RGW_ATTR_ETAG, etag);
+    if (r < 0)
+      return r;
+
+    if (conds.if_match) {
+      string if_match_str = rgw_string_unquote(conds.if_match);
+    //  ldpp_dout(dpp, 10) << "ETag: " << string(etag.c_str(), etag.length()) << " " << " If-Match: " << if_match_str << dendl;
+      if (if_match_str.compare(0, etag.length(), etag.c_str(), etag.length()) != 0) {
+        return -ERR_PRECONDITION_FAILED;
+      }
+    }
+
+    if (conds.if_nomatch) {
+      string if_nomatch_str = rgw_string_unquote(conds.if_nomatch);
+  //    ldpp_dout(dpp, 10) << "ETag: " << string(etag.c_str(), etag.length()) << " " << " If-NoMatch: " << if_nomatch_str << dendl;
+      if (if_nomatch_str.compare(0, etag.length(), etag.c_str(), etag.length()) == 0) {
+        return -ERR_NOT_MODIFIED;
+      }
+    }
+  }
+
+  if (params.obj_size)
+    *params.obj_size = astate->size;
+  if (params.lastmod)
+    *params.lastmod = astate->mtime;
+
+  return 0;
+}
+
+bool DBStore::obj_to_raw_head(const rgw_placement_rule& placement_rule, const rgw_obj& obj, rgw_raw_obj *raw_obj)
+{
+
+  raw_obj->oid = obj.bucket.name + "_" + obj.key.name + "_" + obj.key.instance;
+  raw_obj->oid += "_0_0"; // "_multipart-partnum_partnum"
+
+  raw_obj->pool.name = getObjectTable(obj.bucket.name);
+  return true;
+}
+
+int DBStore::Object::Read::range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t &end)
+{
+  if (ofs < 0) {
+    ofs += obj_size;
+    if (ofs < 0)
+      ofs = 0;
+    end = obj_size - 1;
+  } else if (end < 0) {
+    end = obj_size - 1;
+  }
+
+  if (obj_size > 0) {
+    if (ofs >= (off_t)obj_size) {
+      return -ERANGE;
+    }
+    if (end >= (off_t)obj_size) {
+      end = obj_size - 1;
+    }
+  }
+  return 0;
+}
+

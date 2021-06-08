@@ -1063,9 +1063,9 @@ class DBStore {
 /*	DBStore() {}*/
 
 	DBStore() : db_name("default_db"),
-       		    user_table("user.table"),
-		    bucket_table("bucket.table"),
-		    quota_table("quota.table")
+       		    user_table(db_name+".user.table"),
+		    bucket_table(db_name+".bucket.table"),
+		    quota_table(db_name+".quota.table")
        		    {}
 	virtual	~DBStore() {}
 
@@ -1073,6 +1073,10 @@ class DBStore {
 	const string getUserTable() { return user_table; }
 	const string getBucketTable() { return bucket_table; }
 	const string getQuotaTable() { return quota_table; }
+    const string getObjectTable(string bucket) {
+         return db_name+"."+bucket+".object.table"; }
+    const string getObjectDataTable(string bucket) {
+         return db_name+"."+bucket+".objectdata.table"; }
 
 	map<string, class ObjectOp*> getObjectMap();
 
@@ -1151,13 +1155,28 @@ class DBStore {
 
     /* XXX: the parameters may be subject to change. All we need is bucket name
      * & obj name,instance - keys */
-    int get_obj_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj, bool follow_olh,
-                      RGWObjState& state);
+    int get_obj_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+                      bool follow_olh, RGWObjState **state);
     int get_olh_target_state(const RGWBucketInfo& bucket_info, const rgw_obj& obj,
-                          RGWObjState* olh_state, RGWObjState& target);
+                          RGWObjState* olh_state, RGWObjState** target);
     int follow_olh(const RGWBucketInfo& bucket_info, RGWObjState *state,
                    const rgw_obj& olh_obj, rgw_obj *target);
+    bool obj_to_raw_head(const rgw_placement_rule& placement_rule, const rgw_obj& obj,
+                    rgw_raw_obj *raw_obj);
 
+    /* struct rgw_raw_obj {
+     *  rgw_pool pool;
+     *  string oid;
+     *  string loc;
+     * }
+     *
+     * mapping it to raw_obj below -
+     *  pool - store object table name
+     *  oid - store "bucket-name_objname_instance_multipart-partnum_partnum"
+     *
+     *  For head objects, multiper-partnum & partnum are '0'
+     *
+     */
     struct raw_obj {
       DBStore* db;
 
@@ -1229,6 +1248,7 @@ class DBStore {
       struct GetObjState {
         rgw_obj obj;
         rgw_raw_obj head_obj;
+        rgw_pool cur_pool;
       } state;
       
       struct ConditionParams {
@@ -1257,11 +1277,11 @@ class DBStore {
 
       explicit Read(DBStore::Object *_source) : source(_source) {}
 
-/*      int prepare(optional_yield y, const DoutPrefixProvider *dpp);
+      int prepare();
       static int range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t &end);
-      int read(int64_t ofs, int64_t end, bufferlist& bl, optional_yield y, const DoutPrefixProvider *dpp);
-      int iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb, optional_yield y);
-      int get_attr(const DoutPrefixProvider *dpp, const char *name, bufferlist& dest, optional_yield y); */
+/*      int read(int64_t ofs, int64_t end, bufferlist& bl, optional_yield y, const DoutPrefixProvider *dpp);
+      int iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb, optional_yield y);*/
+      int get_attr(const char *name, bufferlist& dest);
     };
 
     struct Write {
@@ -1372,6 +1392,11 @@ class DBStore {
     private:
       int finish();
     };
+    int get_state(RGWObjState **pstate, bool follow_olh);
+    DBStore *get_store() { return store; }
+    rgw_obj& get_obj() { return obj; }
+    RGWObjectCtx& get_ctx() { return ctx; }
+    RGWBucketInfo& get_bucket_info() { return bucket_info; }
 
     };
 };

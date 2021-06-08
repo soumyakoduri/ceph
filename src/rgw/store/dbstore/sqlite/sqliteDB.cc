@@ -844,8 +844,7 @@ int SQLiteDB::ListAllObjects(DBOpParams *params)
 
 	for (iter = objectmap.begin(); iter != objectmap.end(); ++iter) {
 		bucket = iter->first;
-		params->object_table = bucket +
-					".object.table";
+		params->object_table = getObjectTable(bucket);
 		schema = ListTableSchema(params->object_table);
 
 		ret = exec(schema.c_str(), &list_callback);
@@ -1565,7 +1564,7 @@ int SQLInsertObject::Prepare(struct DBOpParams *params)
 	}
 
     if (p_params.object_table.empty()) {
-	    p_params.object_table = bucket_name + ".object.table";
+	    p_params.object_table = getObjectTable(bucket_name);
     }
 	params->object_table = p_params.object_table;
 	(void)createObjectTable(params);
@@ -1750,7 +1749,7 @@ int SQLRemoveObject::Prepare(struct DBOpParams *params)
 	}
 
     if (p_params.object_table.empty()) {
-	    p_params.object_table = bucket_name + ".object.table";
+	    p_params.object_table = getObjectTable(bucket_name);
     }
 	params->object_table = p_params.object_table;
 	(void)createObjectTable(params);
@@ -1801,7 +1800,7 @@ int SQLGetObject::Prepare(struct DBOpParams *params)
 	}
 
     if (p_params.object_table.empty()) {
-	    p_params.object_table = bucket_name + ".object.table";
+	    p_params.object_table = getObjectTable(bucket_name);
     }
 	params->object_table = p_params.object_table;
 	(void)createObjectTable(params);
@@ -1854,7 +1853,7 @@ int SQLUpdateObject::Prepare(struct DBOpParams *params)
 
     if (p_params.object_table.empty()) {
         bucket_name = params->op.bucket.info.bucket.name;
-	    p_params.object_table = bucket_name + ".object.table";
+	    p_params.object_table = getObjectTable(bucket_name);
     }
 
 	p_params.op.query_str = params->op.query_str;
@@ -1936,10 +1935,10 @@ int SQLPutObjectData::Prepare(struct DBOpParams *params)
 	}
 
     if (p_params.object_table.empty()) {
-	    p_params.object_table = bucket_name + ".object.table";
+	    p_params.object_table = getObjectTable(bucket_name);
     }
     if (p_params.objectdata_table.empty()) {
-	    p_params.objectdata_table = bucket_name + ".objectdata.table";
+	    p_params.objectdata_table = getObjectDataTable(bucket_name);
     }
 	params->bucket_table = p_params.bucket_table;
 	params->object_table = p_params.object_table;
@@ -2019,10 +2018,10 @@ int SQLGetObjectData::Prepare(struct DBOpParams *params)
 	}
 
     if (p_params.object_table.empty()) {
-	    p_params.object_table = bucket_name + ".object.table";
+	    p_params.object_table = getObjectTable(bucket_name);
     }
     if (p_params.objectdata_table.empty()) {
-	    p_params.objectdata_table = bucket_name + ".objectdata.table";
+	    p_params.objectdata_table = getObjectDataTable(bucket_name);
     }
 	params->object_table = p_params.object_table;
 	params->objectdata_table = p_params.objectdata_table;
@@ -2075,10 +2074,10 @@ int SQLDeleteObjectData::Prepare(struct DBOpParams *params)
 	}
 
     if (p_params.object_table.empty()) {
-	    p_params.object_table = bucket_name + ".object.table";
+	    p_params.object_table = getObjectTable(bucket_name);
     }
     if (p_params.objectdata_table.empty()) {
-	    p_params.objectdata_table = bucket_name + ".objectdata.table";
+	    p_params.objectdata_table = getObjectDataTable(bucket_name);
     }
 	params->object_table = p_params.object_table;
 	params->objectdata_table = p_params.objectdata_table;

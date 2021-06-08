@@ -547,7 +547,29 @@ DBObject::DBReadOp::DBReadOp(DBObject *_source, RGWObjectCtx *_rctx) :
 
 int DBObject::DBReadOp::prepare(optional_yield y, const DoutPrefixProvider* dpp)
 {
-  return 0;
+  uint64_t obj_size;
+
+  parent_op.conds.mod_ptr = params.mod_ptr;
+  parent_op.conds.unmod_ptr = params.unmod_ptr;
+  parent_op.conds.high_precision_time = params.high_precision_time;
+  parent_op.conds.mod_zone_id = params.mod_zone_id;
+  parent_op.conds.mod_pg_ver = params.mod_pg_ver;
+  parent_op.conds.if_match = params.if_match;
+  parent_op.conds.if_nomatch = params.if_nomatch;
+  parent_op.params.lastmod = params.lastmod;
+  parent_op.params.target_obj = params.target_obj;
+  parent_op.params.obj_size = &obj_size;
+  parent_op.params.attrs = &source->get_attrs();
+
+  int ret = parent_op.prepare();
+  if (ret < 0)
+    return ret;
+
+  source->set_key(parent_op.state.obj.key);
+  source->set_obj_size(obj_size);
+  result.head_obj = parent_op.state.head_obj;
+
+  return ret;
 }
 
 int DBObject::DBReadOp::read(int64_t ofs, int64_t end, bufferlist& bl, optional_yield y, const DoutPrefixProvider* dpp)
@@ -563,7 +585,7 @@ int DBObject::DBReadOp::get_manifest(const DoutPrefixProvider* dpp, RGWObjManife
 
 int DBObject::DBReadOp::get_attr(const DoutPrefixProvider* dpp, const char* name, bufferlist& dest, optional_yield y)
 {
-  return 0;
+  return parent_op.get_attr(name, dest);
 }
 
 std::unique_ptr<Object::DeleteOp> DBObject::get_delete_op(RGWObjectCtx* ctx)
