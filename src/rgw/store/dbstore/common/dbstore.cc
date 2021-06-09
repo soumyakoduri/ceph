@@ -1137,3 +1137,30 @@ int DBStore::Object::Read::range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t
   return 0;
 }
 
+/* XXX: Should ideally make this aync operation. But its synchronous now */
+int DBStore::Object::Stat::stat_async()
+{
+  rgw_obj& obj = source->get_obj();
+
+  RGWObjState *s;
+  /* XXX: Read from the Object state stored in object? */
+  result.obj = obj;
+  int r = source->get_state(&s, true);
+  if (r < 0)
+    return r;
+
+  if (s->has_attrs) {
+    result.size = s->size;
+    result.mtime = ceph::real_clock::to_timespec(s->mtime);
+    result.attrs = s->attrset;
+    result.manifest = s->manifest;
+  }
+
+  return r;
+}
+
+int DBStore::Object::Stat::wait()
+{
+  return 0;
+}
+

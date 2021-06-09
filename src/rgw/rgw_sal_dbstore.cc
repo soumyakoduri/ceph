@@ -637,12 +637,41 @@ DBObject::DBStatOp::DBStatOp(DBObject *_source, RGWObjectCtx *_rctx) :
 
 int DBObject::DBStatOp::stat_async(const DoutPrefixProvider *dpp)
 {
-  return 0;
+  /* XXX:
+   * Once Object has state part of it, read from it 
+   *
+   *
+  if (this->s->has_attrs) {
+    state.ret = 0;
+    result.size = s->size;
+    result.mtime = ceph::real_clock::to_timespec(s->mtime);
+    result.attrs = s->attrset;
+    result.manifest = s->manifest;
+    return 0;
+  }
+  */
+  return parent_op.stat_async();
 }
 
 int DBObject::DBStatOp::wait()
 {
-  return 0;
+  result.obj = source;
+  int ret =  parent_op.wait();
+  if (ret < 0)
+    return ret;
+
+  source->obj_size = parent_op.result.size;
+  source->mtime = ceph::real_clock::from_timespec(parent_op.result.mtime);
+  source->attrs = parent_op.result.attrs;
+  source->key = parent_op.result.obj.key;
+  source->in_extra_data = parent_op.result.obj.in_extra_data;
+  source->index_hash_source = parent_op.result.obj.index_hash_source;
+  if (parent_op.result.manifest)
+    result.manifest = &(*parent_op.result.manifest);
+  else
+    result.manifest = nullptr;
+
+  return ret;
 }
 
 int DBObject::copy_object(RGWObjectCtx& obj_ctx,

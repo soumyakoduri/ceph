@@ -1375,22 +1375,10 @@ class DBStore {
         map<string, bufferlist> attrs;
       } result;
 
-      struct State {
-        librados::IoCtx io_ctx;
-        librados::AioCompletion *completion;
-        int ret;
-
-        State() : completion(NULL), ret(0) {}
-      } state;
-
-
       explicit Stat(DBStore::Object *_source) : source(_source) {}
 
-/*      int stat_async(const DoutPrefixProvider *dpp);
+      int stat_async();
       int wait();
-      int stat();*/
-    private:
-      int finish();
     };
     int get_state(RGWObjState **pstate, bool follow_olh);
     DBStore *get_store() { return store; }
