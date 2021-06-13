@@ -580,7 +580,7 @@ int DBObject::DBReadOp::read(int64_t ofs, int64_t end, bufferlist& bl, optional_
 int DBObject::DBReadOp::get_manifest(const DoutPrefixProvider* dpp, RGWObjManifest **pmanifest,
 					      optional_yield y)
 {
-  return 0;
+  return op_target.get_manifest(pmanifest);
 }
 
 int DBObject::DBReadOp::get_attr(const DoutPrefixProvider* dpp, const char* name, bufferlist& dest, optional_yield y)
@@ -1260,6 +1260,7 @@ extern "C" {
 
       store->setDBStoreManager(dbsm);
       store->setDBStore(dbstore);
+      dbstore->set_store((rgw::sal::Store*)store);
     }
 
     return store;

@@ -908,6 +908,27 @@ out:
     return ret;
 }
 
+int DBStore::raw_obj::read(int64_t ofs, uint64_t len, bufferlist& bl) {
+	int ret = 0;
+    DBOpParams params = {};
+
+    db->InitializeParams("GetObjectData", &params);
+    InitializeParamsfromRawObj(&params);
+
+    ret = db->ProcessOp("GetObjectData", &params);
+
+    if (ret) {
+	  dbout(L_ERR)<<"In GetObjectData failed err:(" <<ret<<") \n";
+      return ret;
+    }
+
+    bufferlist& read_bl = params.op.obj_data.data;
+
+        unsigned copy_len = std::min((uint64_t)read_bl.length() - ofs, len);
+        read_bl.begin(ofs).copy(copy_len, bl);
+	    return bl.length();
+}
+
 int DBStore::follow_olh(const RGWBucketInfo& bucket_info, RGWObjState *state,
                const rgw_obj& olh_obj, rgw_obj *target)
 {
@@ -997,6 +1018,19 @@ out:
 int DBStore::Object::get_state(RGWObjState **pstate, bool follow_olh)
 {
   return store->get_obj_state(bucket_info, obj, follow_olh, pstate);
+}
+
+int DBStore::Object::get_manifest(RGWObjManifest **pmanifest)
+{
+  RGWObjState *astate;
+  int r = get_state(&astate, true);
+  if (r < 0) {
+    return r;
+  }
+
+  *pmanifest = &(*astate->manifest);
+
+  return 0;
 }
 
 int DBStore::Object::Read::get_attr(const char *name, bufferlist& dest)
@@ -1108,10 +1142,9 @@ int DBStore::Object::Read::prepare()
 bool DBStore::obj_to_raw_head(const rgw_placement_rule& placement_rule, const rgw_obj& obj, rgw_raw_obj *raw_obj)
 {
 
-  raw_obj->oid = obj.bucket.name + "_" + obj.key.name + "_" + obj.key.instance;
-  raw_obj->oid += "_0_0"; // "_multipart-partnum_partnum"
-
+  raw_obj->oid = to_oid(obj.bucket.name, obj.key.name, obj.key.instance, 0, 0);
   raw_obj->pool.name = getObjectTable(obj.bucket.name);
+
   return true;
 }
 
@@ -1135,6 +1168,76 @@ int DBStore::Object::Read::range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t
     }
   }
   return 0;
+}
+
+int DBStore::Object::Read::read(int64_t ofs, int64_t end, bufferlist& bl, const DoutPrefixProvider *dpp)
+{
+  DBStore *store = source->get_store();
+
+  rgw_raw_obj read_obj;
+  uint64_t read_ofs = ofs;
+  uint64_t len, read_len;
+  bool reading_from_head = true;
+
+  bufferlist read_bl;
+
+  RGWObjState *astate;
+  int r = source->get_state(&astate, true);
+  if (r < 0)
+    return r;
+
+  if (astate->size == 0) {
+    end = 0;
+  } else if (end >= (int64_t)astate->size) {
+    end = astate->size - 1;
+  }
+
+  if (end < 0)
+    len = 0;
+  else
+    len = end - ofs + 1;
+
+  if (astate->manifest && astate->manifest->has_tail()) {
+    /* now get the relevant object part */
+    RGWObjManifest::obj_iterator iter = astate->manifest->obj_find(dpp, ofs);
+
+    uint64_t stripe_ofs = iter.get_stripe_ofs();
+    read_obj = iter.get_location().get_raw_obj(store->store);
+    len = std::min(len, iter.get_stripe_size() - (ofs - stripe_ofs));
+    read_ofs = iter.location_ofs() + (ofs - stripe_ofs);
+    reading_from_head = (read_obj == state.head_obj);
+  } else {
+    read_obj = state.head_obj;
+  }
+
+  read_len = len;
+
+  if (reading_from_head) {
+    if (astate && astate->prefetch_data) {
+      if (!ofs && astate->data.length() >= len) {
+        bl = astate->data;
+        return bl.length();
+      }
+
+      if (ofs < astate->data.length()) {
+        unsigned copy_len = std::min((uint64_t)astate->data.length() - ofs, len);
+        astate->data.begin(ofs).copy(copy_len, bl);
+        return bl.length();
+      }
+    }
+  }
+
+//  ldpp_dout(dpp, 20) << "rados->read obj-ofs=" << ofs << " read_ofs=" << read_ofs << " read_len=" << read_len << dendl;
+
+  // read from non head object
+  raw_obj db_obj(store, read_obj.oid);
+  r = db_obj.read(read_ofs, read_len, bl);
+
+  if (r < 0) {
+    return r;
+  }
+
+  return bl.length();
 }
 
 /* XXX: Should ideally make this aync operation. But its synchronous now */

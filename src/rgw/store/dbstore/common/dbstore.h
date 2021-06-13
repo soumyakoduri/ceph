@@ -1046,6 +1046,7 @@ class DBStore {
 			       // ProcessOp()). If required this can be
 			       // made further granular by taking separate
 			       // locks for objectmap and db operations etc.
+    rgw::sal::Store* store;
 
     protected:
 	void *db;
@@ -1077,10 +1078,14 @@ class DBStore {
          return db_name+"."+bucket+".object.table"; }
     const string getObjectDataTable(string bucket) {
          return db_name+"."+bucket+".objectdata.table"; }
-
+    
 	map<string, class ObjectOp*> getObjectMap();
 
 	struct DBOps dbops; // DB operations, make it private?
+
+    void set_store(rgw::sal::Store* _store) {
+      store = _store;
+    }
 
     void set_context(CephContext *_cct) {
       cct = _cct;
@@ -1164,6 +1169,29 @@ class DBStore {
     bool obj_to_raw_head(const rgw_placement_rule& placement_rule, const rgw_obj& obj,
                     rgw_raw_obj *raw_obj);
 
+    // db raw obj string is of format -
+    // "<bucketname>_<objname>_<objinstance>_<multipart-partnum>_<partnum>"
+    const string raw_obj_oid = "{1}_{2}_{3}_{4}_{5}";
+
+    inline string to_oid(const string& bucket, const string& obj_name, const string& obj_instance,
+                         uint64_t mp_num, uint64_t partnum) {
+	  string s = fmt::format(raw_obj_oid.c_str(), bucket, obj_name, obj_instance, mp_num, partnum);
+      return s;
+    }
+    inline int from_oid(string& oid, string& bucket, string& obj_name,
+                         string& obj_instance,
+                         uint64_t& mp_num, uint64_t& partnum) {
+      vector<std::string> result;
+      boost::split(result, oid, boost::is_any_of("_"));
+      bucket = result[0];
+      obj_name = result[1];
+      obj_instance = result[2];
+      mp_num = stoi(result[3]);
+      partnum = stoi(result[4]);
+
+      return 0;
+    }
+
     /* struct rgw_raw_obj {
      *  rgw_pool pool;
      *  string oid;
@@ -1184,17 +1212,13 @@ class DBStore {
       string obj_name;
       string obj_instance;
       string obj_ns;
-      int multipart_partnum;
-      int part_num;
+      uint64_t multipart_partnum;
+      uint64_t part_num;
 
       string obj_table;
       string obj_data_table;
 
       raw_obj(DBStore* _db) {
-        db = _db;
-      }
-
-      raw_obj(DBStore* _db, string& oid) {
         db = _db;
       }
 
@@ -1211,6 +1235,22 @@ class DBStore {
         obj_table = bucket_name+".object.table";
         obj_data_table = bucket_name+".objectdata.table";
       }
+
+      raw_obj(DBStore* _db, string& oid) {
+        int r;
+
+        db = _db;
+        r = db->from_oid(oid, bucket_name, obj_name, obj_instance, multipart_partnum,
+                 part_num);
+        if (r < 0) {
+          multipart_partnum = 0;
+          part_num = 0;
+        }
+
+        obj_table = bucket_name+".object.table";
+        obj_data_table = bucket_name+".objectdata.table";
+      }
+
     int InitializeParamsfromRawObj (DBOpParams* params);
 
     int obj_omap_set_val_by_key(const std::string& key, bufferlist& val, bool must_exist);
@@ -1220,6 +1260,7 @@ class DBStore {
     int obj_omap_get_all(std::map<std::string, bufferlist> *m);
     int obj_omap_get_vals(const std::string& marker, uint64_t count,
                         std::map<std::string, bufferlist> *m, bool* pmore);
+    int read(int64_t ofs, uint64_t end, bufferlist& bl);
     };
 
     class Object {
@@ -1279,7 +1320,7 @@ class DBStore {
 
       int prepare();
       static int range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t &end);
-      int read(int64_t ofs, int64_t end, bufferlist& bl);
+      int read(int64_t ofs, int64_t end, bufferlist& bl, const DoutPrefixProvider *dpp);
 /*      int iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb, optional_yield y);*/
       int get_attr(const char *name, bufferlist& dest);
     };
@@ -1380,7 +1421,10 @@ class DBStore {
       int stat_async();
       int wait();
     };
+
     int get_state(RGWObjState **pstate, bool follow_olh);
+    int get_manifest(RGWObjManifest **pmanifest);
+
     DBStore *get_store() { return store; }
     rgw_obj& get_obj() { return obj; }
     RGWObjectCtx& get_ctx() { return ctx; }
