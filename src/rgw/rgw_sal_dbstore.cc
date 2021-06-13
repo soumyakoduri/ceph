@@ -605,18 +605,47 @@ DBObject::DBDeleteOp::DBDeleteOp(DBObject *_source, RGWObjectCtx *_rctx) :
 
 int DBObject::DBDeleteOp::delete_obj(const DoutPrefixProvider* dpp, optional_yield y)
 {
-  return 0;
+  parent_op.params.bucket_owner = params.bucket_owner.get_id();
+  parent_op.params.versioning_status = params.versioning_status;
+  parent_op.params.obj_owner = params.obj_owner;
+  parent_op.params.olh_epoch = params.olh_epoch;
+  parent_op.params.marker_version_id = params.marker_version_id;
+  parent_op.params.bilog_flags = params.bilog_flags;
+  parent_op.params.remove_objs = params.remove_objs;
+  parent_op.params.expiration_time = params.expiration_time;
+  parent_op.params.unmod_since = params.unmod_since;
+  parent_op.params.mtime = params.mtime;
+  parent_op.params.high_precision_time = params.high_precision_time;
+  parent_op.params.zones_trace = params.zones_trace;
+  parent_op.params.abortmp = params.abortmp;
+  parent_op.params.parts_accounted_size = params.parts_accounted_size;
+
+  int ret = parent_op.delete_obj();
+  if (ret < 0)
+    return ret;
+
+  result.delete_marker = parent_op.result.delete_marker;
+  result.version_id = parent_op.result.version_id;
+
+  return ret;
 }
 
 int DBObject::delete_object(const DoutPrefixProvider* dpp, RGWObjectCtx* obj_ctx, optional_yield y)
 {
-  return 0;
+  DBStore::Object del_target(store->getDBStore(), bucket->get_info(), *obj_ctx, get_obj());
+  DBStore::Object::Delete del_op(&del_target);
+
+  del_op.params.bucket_owner = bucket->get_info().owner;
+  del_op.params.versioning_status = bucket->get_info().versioning_status();
+
+  return del_op.delete_obj();
 }
 
 int DBObject::delete_obj_aio(const DoutPrefixProvider* dpp, RGWObjState* astate,
 				   Completions* aio, bool keep_index_consistent,
 				   optional_yield y)
 {
+  /* XXX: Make it async */
   return 0;
 }
 

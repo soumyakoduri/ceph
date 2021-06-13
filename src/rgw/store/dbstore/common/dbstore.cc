@@ -1164,3 +1164,35 @@ int DBStore::Object::Stat::wait()
   return 0;
 }
 
+int DBStore::Object::Delete::delete_obj() {
+  int ret = 0;
+  DBStore *store = target->get_store();
+  RGWObjState *astate;
+
+  int r = target->get_state(&astate, true);
+  if (r < 0)
+    return r;
+
+  if (!astate->exists) {
+    return -ENOENT;
+  }
+
+  /* XXX: handle versioned objects. Create delete marker */
+
+  /* XXX: check params conditions */
+  DBOpParams del_params = {};
+  const RGWBucketInfo& bucket_info = target->get_bucket_info();
+
+  store->InitializeParams("RemoveObject", &del_params);
+  del_params.op.obj.state.obj = astate->obj ;
+  del_params.op.bucket.info = bucket_info;
+
+  ret = store->ProcessOp("RemoveObject", &del_params);
+  if (ret) {
+    dbout(L_ERR)<<"In RemoveObject failed err:(" <<ret<<") \n";
+	goto out;
+  }
+
+out:
+  return ret;
+}

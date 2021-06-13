@@ -1279,8 +1279,8 @@ class DBStore {
 
       int prepare();
       static int range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t &end);
-/*      int read(int64_t ofs, int64_t end, bufferlist& bl, optional_yield y, const DoutPrefixProvider *dpp);
-      int iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb, optional_yield y);*/
+      int read(int64_t ofs, int64_t end, bufferlist& bl);
+/*      int iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb, optional_yield y);*/
       int get_attr(const char *name, bufferlist& dest);
     };
 
@@ -1361,7 +1361,7 @@ class DBStore {
       
       explicit Delete(DBStore::Object *_target) : target(_target) {}
 
-//      int delete_obj(optional_yield y, const DoutPrefixProvider *dpp);
+      int delete_obj();
     };
 
     struct Stat {
