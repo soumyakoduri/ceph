@@ -757,11 +757,36 @@ DBObject::DBWriteOp::DBWriteOp(DBObject* _source, RGWObjectCtx* _rctx) :
 
 int DBObject::DBWriteOp::prepare(optional_yield y)
 {
+  op_target.set_versioning_disabled(params.versioning_disabled);
+  parent_op.meta.mtime = params.mtime;
+  parent_op.meta.rmattrs = params.rmattrs;
+  parent_op.meta.data = params.data;
+  parent_op.meta.manifest = params.manifest;
+  parent_op.meta.ptag = params.ptag;
+  parent_op.meta.remove_objs = params.remove_objs;
+  parent_op.meta.set_mtime = params.set_mtime;
+  parent_op.meta.owner = params.owner.get_id();
+  parent_op.meta.category = params.category;
+  parent_op.meta.flags = params.flags;
+  parent_op.meta.if_match = params.if_match;
+  parent_op.meta.if_nomatch = params.if_nomatch;
+  parent_op.meta.olh_epoch = params.olh_epoch;
+  parent_op.meta.delete_at = params.delete_at;
+  parent_op.meta.canceled = params.canceled;
+  parent_op.meta.user_data = params.user_data;
+  parent_op.meta.zones_trace = params.zones_trace;
+  parent_op.meta.modify_tail = params.modify_tail;
+  parent_op.meta.completeMultipart = params.completeMultipart;
+  parent_op.meta.appendable = params.appendable;
+
   return 0;
 }
 
 int DBObject::DBWriteOp::write_meta(const DoutPrefixProvider* dpp, uint64_t size, uint64_t accounted_size, optional_yield y)
 {
+  int ret = parent_op.write_meta(dpp, size, accounted_size, *params.attrs, y);
+  params.canceled = parent_op.meta.canceled;
+
   return 0;
 }
 
