@@ -1124,14 +1124,18 @@ int RGWLCCloudTierCR::operate(const DoutPrefixProvider *dpp) {
     }
 
     if (!bucket_created){
-      yield {
+//      yield {
         ldout(tier_ctx.cct,10) << "Cloud_tier_ctx: creating bucket:" << tier_ctx.target_bucket_name << dendl;
         bufferlist bl;
-        call(new RGWPutRawRESTResourceCR <bufferlist> (tier_ctx.cct, tier_ctx.conn.get(),
-             tier_ctx.http_manager,
-             tier_ctx.target_bucket_name, nullptr, bl, &out_bl));
-      }
-      if (retcode < 0 ) {
+        string resource = tier_ctx.target_bucket_name;
+
+        int ret = tier_ctx.conn->put_resource(tier_ctx.dpp, resource, nullptr, nullptr,
+                                out_bl, &bl, nullptr, null_yield);
+    //    call(new RGWPutRawRESTResourceCR <bufferlist> (tier_ctx.cct, tier_ctx.conn.get(),
+      //       tier_ctx.http_manager,
+        //     tier_ctx.target_bucket_name, nullptr, bl, &out_bl));
+  //    }
+      if (ret < 0 ) {
         ldout(tier_ctx.cct, 0) << "ERROR: failed to create target bucket: " << tier_ctx.target_bucket_name << ", retcode:" << retcode << dendl;
         return set_cr_error(retcode);
       }
