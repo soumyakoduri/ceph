@@ -1075,7 +1075,7 @@ int RGWLCCloudCheckCR::operate(const DoutPrefixProvider *dpp) {
         return -1;
     }
 
-    get_crf.reset(new RGWLCStreamGetCRF(tier_ctx.cct, get_env(), this, tier_ctx.http_manager, obj_properties,
+    get_crf.reset(new RGWLCStreamGetCRF(tier_ctx.cct, get_env(), this, obj_properties,
                   tier_ctx.conn, dest_obj.get()));
 
     /* Having yield here doesn't seem to wait for init2() to fetch the headers

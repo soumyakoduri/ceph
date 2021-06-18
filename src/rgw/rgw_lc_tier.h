@@ -158,12 +158,11 @@ struct rgw_lc_multipart_upload_info {
 };
 WRITE_CLASS_ENCODER(rgw_lc_multipart_upload_info)
 
-class RGWLCStreamGetCRF : public RGWStreamReadHTTPResourceCRF
+class RGWLCStreamGetCRF
 {
   RGWRESTConn::get_obj_params req_params;
 
   CephContext *cct;
-  RGWHTTPManager *http_manager;
   rgw_lc_obj_properties obj_properties;
   std::shared_ptr<RGWRESTConn> conn;
   rgw::sal::Object* dest_obj;
@@ -175,13 +174,10 @@ class RGWLCStreamGetCRF : public RGWStreamReadHTTPResourceCRF
   RGWLCStreamGetCRF(CephContext *_cct,
       RGWCoroutinesEnv *_env,
       RGWCoroutine *_caller,
-      RGWHTTPManager *_http_manager,
       const rgw_lc_obj_properties&  _obj_properties,
       std::shared_ptr<RGWRESTConn> _conn,
       rgw::sal::Object* _dest_obj) :
-    RGWStreamReadHTTPResourceCRF(_cct, _env, _caller, _http_manager, _dest_obj->get_key()),
-                                 cct(_cct), http_manager(_http_manager), obj_properties(_obj_properties),
-                                 conn(_conn), dest_obj(_dest_obj) {}
+                                 cct(_cct), obj_properties(_obj_properties), conn(_conn), dest_obj(_dest_obj) {}
   int init(const DoutPrefixProvider *dpp);
   int is_already_tiered();
 };
