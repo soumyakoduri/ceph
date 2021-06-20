@@ -284,15 +284,14 @@ class RGWLCStreamReadCRF
     return 0;
   }
 
-  int read(off_t ofs, off_t end, bufferlist &bl) {
-    optional_yield y = null_yield;
-
-    return read_op->read(ofs, end, bl, y, dpp);
+  int read(off_t ofs, off_t end, RGWGetDataCB *out_cb) {
+    int ret = read_op->iterate(dpp, ofs, end, out_cb, null_yield);
+    return ret;
   }
 };
 
 
-class RGWLCStreamPutCRF : public RGWStreamWriteHTTPResourceCRF
+class RGWLCStreamPutCRF
 {
   CephContext *cct;
   RGWHTTPManager *http_manager;
@@ -300,6 +299,15 @@ class RGWLCStreamPutCRF : public RGWStreamWriteHTTPResourceCRF
   std::shared_ptr<RGWRESTConn> conn;
   rgw::sal::Object* dest_obj;
   string etag;
+  RGWRESTStreamS3PutObj *out_req{nullptr};
+
+  struct multipart_info {
+    bool is_multipart{false};
+    string upload_id;
+    int part_num{0};
+    uint64_t part_size;
+  } multipart;
+
 
   public:
   RGWLCStreamPutCRF(CephContext *_cct,
@@ -309,15 +317,12 @@ class RGWLCStreamPutCRF : public RGWStreamWriteHTTPResourceCRF
       const rgw_lc_obj_properties&  _obj_properties,
       std::shared_ptr<RGWRESTConn> _conn,
       rgw::sal::Object* _dest_obj) :
-    RGWStreamWriteHTTPResourceCRF(_cct, _env, _caller, _http_manager),
     cct(_cct), http_manager(_http_manager), obj_properties(_obj_properties), conn(_conn), dest_obj(_dest_obj) {
     }
 
 
-  int init() override {
+  int init() {
     /* init output connection */
-    RGWRESTStreamS3PutObj *out_req{nullptr};
-
     if (multipart.is_multipart) {
       char buf[32];
       snprintf(buf, sizeof(buf), "%d", multipart.part_num);
@@ -329,9 +334,8 @@ class RGWLCStreamPutCRF : public RGWStreamWriteHTTPResourceCRF
       conn->put_obj_send_init(dest_obj, nullptr, &out_req);
     }
 
-    set_req(out_req);
 
-    return RGWStreamWriteHTTPResourceCRF::init();
+    return 0;
   }
 
   static bool keep_attr(const string& h) {
@@ -474,8 +478,8 @@ class RGWLCStreamPutCRF : public RGWStreamWriteHTTPResourceCRF
     }
   }
 
-  void send_ready(const DoutPrefixProvider *dpp, const rgw_rest_obj& rest_obj) override {
-    RGWRESTStreamS3PutObj *r = static_cast<RGWRESTStreamS3PutObj *>(req);
+  void send_ready(const DoutPrefixProvider *dpp, const rgw_rest_obj& rest_obj) {
+    auto r = static_cast<RGWRESTStreamS3PutObj *>(out_req);
 
     map<string, string> new_attrs;
     if (!multipart.is_multipart) {
@@ -504,6 +508,28 @@ class RGWLCStreamPutCRF : public RGWStreamWriteHTTPResourceCRF
     *petag = etag;
     return true;
   }
+
+  void set_multipart(const string& upload_id, int part_num, uint64_t part_size) {
+    multipart.is_multipart = true;
+    multipart.upload_id = upload_id;
+    multipart.part_num = part_num;
+    multipart.part_size = part_size;
+  }
+
+  int send() {
+    int ret = RGWHTTP::send(out_req);
+    return ret;
+  }
+
+  RGWGetDataCB *get_cb() {
+    return out_req->get_out_cb();
+  }
+
+  int complete_request() {
+    int ret = conn->complete_request(out_req, etag, &obj_properties.mtime, null_yield);
+    return ret;
+  }
+
 };
 
 
@@ -512,7 +538,7 @@ class RGWStreamWriteCR : public RGWCoroutine {
   RGWHTTPManager *http_manager;
   string url;
   std::shared_ptr<RGWLCStreamReadCRF> in_crf;
-  std::shared_ptr<RGWStreamWriteHTTPResourceCRF> out_crf;
+  std::shared_ptr<RGWLCStreamPutCRF> out_crf;
   bufferlist bl;
   bool need_retry{false};
   bool sent_attrs{false};
@@ -526,7 +552,7 @@ class RGWStreamWriteCR : public RGWCoroutine {
 public:
   RGWStreamWriteCR(CephContext *_cct, RGWHTTPManager *_mgr,
                     std::shared_ptr<RGWLCStreamReadCRF>& _in_crf,
-                    std::shared_ptr<RGWStreamWriteHTTPResourceCRF>& _out_crf);
+                    std::shared_ptr<RGWLCStreamPutCRF>& _out_crf);
   ~RGWStreamWriteCR();
 
   int operate(const DoutPrefixProvider *dpp) override;
@@ -534,7 +560,7 @@ public:
 
 RGWStreamWriteCR::RGWStreamWriteCR(CephContext* _cct, RGWHTTPManager* _mgr,
                            shared_ptr<RGWLCStreamReadCRF>& _in_crf,
-                           shared_ptr<RGWStreamWriteHTTPResourceCRF>& _out_crf) : RGWCoroutine(_cct), cct(_cct), http_manager(_mgr),
+                           shared_ptr<RGWLCStreamPutCRF>& _out_crf) : RGWCoroutine(_cct), cct(_cct), http_manager(_mgr),
                            in_crf(_in_crf), out_crf(_out_crf) {}
 RGWStreamWriteCR::~RGWStreamWriteCR() { }
 
@@ -547,27 +573,6 @@ int RGWStreamWriteCR::operate(const DoutPrefixProvider* dpp) {
     }
     in_crf->get_range(ofs, end);
     rest_obj = in_crf->get_rest_obj();
-
-    do {
-      bl.clear();
-      yield {
-        ret = in_crf->read(ofs, end, bl);
-        if (ret < 0) {
-          ldout(cct, 0) << "ERROR: fail to read object data, ret = " << ret << dendl;
-          return set_cr_error(ret);
-        }
-      }
-      if (retcode < 0) {
-        ldout(cct, 20) << __func__ << ": read_op.read() retcode=" << retcode << dendl;
-        return set_cr_error(ret);
-      }
-
-      read_len = bl.length();
- 
-      if (bl.length() == 0) {
-        break;
-      } 
-
       if (!sent_attrs) {
         ret = out_crf->init();
         if (ret < 0) {
@@ -583,43 +588,18 @@ int RGWStreamWriteCR::operate(const DoutPrefixProvider* dpp) {
         sent_attrs = true;
       }
 
-      total_read += bl.length();
+      ret = in_crf->read(ofs, end, out_crf->get_cb());
 
-      do {
-        yield {
-          ret = out_crf->write(bl, &need_retry);
-          if (ret < 0)  {
-            return set_cr_error(ret);
-          }
-        }
-
-        if (retcode < 0) {
-          ldout(cct, 20) << __func__ << ": out_crf->write() retcode=" << retcode << dendl;
-          return set_cr_error(ret);
-        }
-      } while (need_retry);
-
-      ofs += read_len;
-
-    } while (ofs <= end);
-
-    do {
-      /* Ensure out_crf is initialized */
-      if (!sent_attrs) {
-        break;
+      if (ret < 0) {
+        return set_cr_error(ret);
       }
 
-      /* This has to be under yield. Otherwise sometimes this loop
-       * never finishes, infinitely waiting for req to be done.
-       */
-      yield {
-        int ret = out_crf->drain_writes(&need_retry);
-        if (ret < 0) {
-          return set_cr_error(ret);
-        }
+      ret = out_crf->complete_request();
+      if (ret < 0) {
+        return set_cr_error(ret);
       }
-    } while (need_retry);
 
+    
     return set_cr_done();
   }
   return 0;
@@ -630,7 +610,7 @@ class RGWLCStreamObjToCloudPlainCR : public RGWCoroutine {
   RGWLCCloudTierCtx& tier_ctx;
 
   std::shared_ptr<RGWLCStreamReadCRF> in_crf;
-  std::shared_ptr<RGWStreamWriteHTTPResourceCRF> out_crf;
+  std::shared_ptr<RGWLCStreamPutCRF> out_crf;
 
   std::unique_ptr<rgw::sal::Bucket> dest_bucket;
   std::unique_ptr<rgw::sal::Object> dest_obj;
@@ -703,7 +683,7 @@ class RGWLCStreamObjToCloudMultipartPartCR : public RGWCoroutine {
 
   string *petag;
   std::shared_ptr<RGWLCStreamReadCRF> in_crf;
-  std::shared_ptr<RGWStreamWriteHTTPResourceCRF> out_crf;
+  std::shared_ptr<RGWLCStreamPutCRF> out_crf;
 
   std::unique_ptr<rgw::sal::Bucket> dest_bucket;
   std::unique_ptr<rgw::sal::Object> dest_obj;
@@ -750,7 +730,7 @@ class RGWLCStreamObjToCloudMultipartPartCR : public RGWCoroutine {
                    tier_ctx.rctx, tier_ctx.obj, tier_ctx.o.meta.mtime));
 
       end = part_info.ofs + part_info.size - 1;
-      std::static_pointer_cast<RGWLCStreamReadCRF>(in_crf)->set_multipart(part_info.size, part_info.ofs, end);
+      in_crf->set_multipart(part_info.size, part_info.ofs, end);
 
       /* Prepare write */
       out_crf.reset(new RGWLCStreamPutCRF((CephContext *)(tier_ctx.cct), get_env(), this,
