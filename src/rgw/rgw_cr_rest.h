@@ -625,27 +625,3 @@ public:
 
 };
 
-class RGWStreamWriteCR : public RGWCoroutine {
-  CephContext *cct;
-  RGWHTTPManager *http_manager;
-  string url;
-  std::shared_ptr<RGWStreamReadCRF> in_crf;
-  std::shared_ptr<RGWStreamWriteHTTPResourceCRF> out_crf;
-  bufferlist bl;
-  bool need_retry{false};
-  bool sent_attrs{false};
-  uint64_t total_read{0};
-  int ret{0};
-  off_t ofs;
-  off_t end;
-  uint64_t read_len = 0;
-  rgw_rest_obj rest_obj;
-
-public:
-  RGWStreamWriteCR(CephContext *_cct, RGWHTTPManager *_mgr,
-                    std::shared_ptr<RGWStreamReadCRF>& _in_crf,
-                    std::shared_ptr<RGWStreamWriteHTTPResourceCRF>& _out_crf);
-  ~RGWStreamWriteCR();
-
-  int operate(const DoutPrefixProvider *dpp) override;
-};

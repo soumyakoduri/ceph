@@ -157,7 +157,7 @@ int RGWLCStreamGetCRF::is_already_tiered() {
     return 0;
   }
 
-class RGWLCStreamReadCRF : public RGWStreamReadCRF
+class RGWLCStreamReadCRF
 {
   CephContext *cct;
   const DoutPrefixProvider *dpp;
@@ -171,14 +171,37 @@ class RGWLCStreamReadCRF : public RGWStreamReadCRF
   off_t m_part_off;
   off_t m_part_end;
 
+  std::unique_ptr<rgw::sal::Object::ReadOp> read_op;
+  off_t ofs;
+  off_t end;
+  rgw_rest_obj rest_obj;
+
   public:
   RGWLCStreamReadCRF(CephContext *_cct, const DoutPrefixProvider *_dpp,
                      RGWObjectCtx& obj_ctx, std::unique_ptr<rgw::sal::Object>* _obj,
                      const real_time &_mtime) :
-                     RGWStreamReadCRF(_obj, obj_ctx), cct(_cct),
-                     dpp(_dpp), obj(_obj), mtime(_mtime) {}
+                     cct(_cct), dpp(_dpp), obj(_obj), mtime(_mtime),
+                     read_op((*obj)->get_read_op(&obj_ctx)) {}
 
   ~RGWLCStreamReadCRF() {};
+
+  int set_range(off_t _ofs, off_t _end) {
+    ofs = _ofs;
+    end = _end;
+
+    return 0;
+  }
+
+  int get_range(off_t &_ofs, off_t &_end) {
+    _ofs = ofs;
+    _end = end;
+
+    return 0;
+  }
+
+  rgw_rest_obj get_rest_obj() {
+    return rest_obj;
+  }
 
   void set_multipart(uint64_t part_size, off_t part_off, off_t part_end) {
     multipart = true;
@@ -187,7 +210,7 @@ class RGWLCStreamReadCRF : public RGWStreamReadCRF
     m_part_end = part_end;
   }
 
-  int init() override {
+  int init() {
     optional_yield y = null_yield;
     real_time read_mtime;
 
@@ -221,7 +244,7 @@ class RGWLCStreamReadCRF : public RGWStreamReadCRF
     return 0;
   }
 
-  int init_rest_obj() override {
+  int init_rest_obj() {
     /* Initialize rgw_rest_obj. 
      * Reference: do_decode_rest_obj
      * Check how to copy headers content */ 
@@ -484,11 +507,129 @@ class RGWLCStreamPutCRF : public RGWStreamWriteHTTPResourceCRF
 };
 
 
+class RGWStreamWriteCR : public RGWCoroutine {
+  CephContext *cct;
+  RGWHTTPManager *http_manager;
+  string url;
+  std::shared_ptr<RGWLCStreamReadCRF> in_crf;
+  std::shared_ptr<RGWStreamWriteHTTPResourceCRF> out_crf;
+  bufferlist bl;
+  bool need_retry{false};
+  bool sent_attrs{false};
+  uint64_t total_read{0};
+  int ret{0};
+  off_t ofs;
+  off_t end;
+  uint64_t read_len = 0;
+  rgw_rest_obj rest_obj;
+
+public:
+  RGWStreamWriteCR(CephContext *_cct, RGWHTTPManager *_mgr,
+                    std::shared_ptr<RGWLCStreamReadCRF>& _in_crf,
+                    std::shared_ptr<RGWStreamWriteHTTPResourceCRF>& _out_crf);
+  ~RGWStreamWriteCR();
+
+  int operate(const DoutPrefixProvider *dpp) override;
+};
+
+RGWStreamWriteCR::RGWStreamWriteCR(CephContext* _cct, RGWHTTPManager* _mgr,
+                           shared_ptr<RGWLCStreamReadCRF>& _in_crf,
+                           shared_ptr<RGWStreamWriteHTTPResourceCRF>& _out_crf) : RGWCoroutine(_cct), cct(_cct), http_manager(_mgr),
+                           in_crf(_in_crf), out_crf(_out_crf) {}
+RGWStreamWriteCR::~RGWStreamWriteCR() { }
+
+int RGWStreamWriteCR::operate(const DoutPrefixProvider* dpp) {
+  reenter(this) {
+    ret = in_crf->init();
+    if (ret < 0) {
+      ldout(cct, 0) << "ERROR: fail to initialize in_crf, ret = " << ret << dendl;
+      return set_cr_error(ret);
+    }
+    in_crf->get_range(ofs, end);
+    rest_obj = in_crf->get_rest_obj();
+
+    do {
+      bl.clear();
+      yield {
+        ret = in_crf->read(ofs, end, bl);
+        if (ret < 0) {
+          ldout(cct, 0) << "ERROR: fail to read object data, ret = " << ret << dendl;
+          return set_cr_error(ret);
+        }
+      }
+      if (retcode < 0) {
+        ldout(cct, 20) << __func__ << ": read_op.read() retcode=" << retcode << dendl;
+        return set_cr_error(ret);
+      }
+
+      read_len = bl.length();
+ 
+      if (bl.length() == 0) {
+        break;
+      } 
+
+      if (!sent_attrs) {
+        ret = out_crf->init();
+        if (ret < 0) {
+          ldout(cct, 0) << "ERROR: fail to initialize out_crf, ret = " << ret << dendl;
+          return set_cr_error(ret);
+        }
+              
+        out_crf->send_ready(dpp, rest_obj);
+        ret = out_crf->send();
+        if (ret < 0) {
+          return set_cr_error(ret);
+        }
+        sent_attrs = true;
+      }
+
+      total_read += bl.length();
+
+      do {
+        yield {
+          ret = out_crf->write(bl, &need_retry);
+          if (ret < 0)  {
+            return set_cr_error(ret);
+          }
+        }
+
+        if (retcode < 0) {
+          ldout(cct, 20) << __func__ << ": out_crf->write() retcode=" << retcode << dendl;
+          return set_cr_error(ret);
+        }
+      } while (need_retry);
+
+      ofs += read_len;
+
+    } while (ofs <= end);
+
+    do {
+      /* Ensure out_crf is initialized */
+      if (!sent_attrs) {
+        break;
+      }
+
+      /* This has to be under yield. Otherwise sometimes this loop
+       * never finishes, infinitely waiting for req to be done.
+       */
+      yield {
+        int ret = out_crf->drain_writes(&need_retry);
+        if (ret < 0) {
+          return set_cr_error(ret);
+        }
+      }
+    } while (need_retry);
+
+    return set_cr_done();
+  }
+  return 0;
+}
+
 
 class RGWLCStreamObjToCloudPlainCR : public RGWCoroutine {
   RGWLCCloudTierCtx& tier_ctx;
 
-  std::shared_ptr<RGWStreamReadCRF> in_crf;
+  std::shared_ptr<RGWLCStreamReadCRF> in_crf;
   std::shared_ptr<RGWStreamWriteHTTPResourceCRF> out_crf;
 
   std::unique_ptr<rgw::sal::Bucket> dest_bucket;
@@ -561,7 +702,7 @@ class RGWLCStreamObjToCloudMultipartPartCR : public RGWCoroutine {
   rgw_lc_multipart_part_info part_info;
 
   string *petag;
-  std::shared_ptr<RGWStreamReadCRF> in_crf;
+  std::shared_ptr<RGWLCStreamReadCRF> in_crf;
   std::shared_ptr<RGWStreamWriteHTTPResourceCRF> out_crf;
 
   std::unique_ptr<rgw::sal::Bucket> dest_bucket;
@@ -912,7 +1053,7 @@ class RGWLCStreamObjToCloudMultipartCR : public RGWCoroutine {
   rgw_rest_obj rest_obj;
 
   rgw_lc_multipart_upload_info status;
-  std::shared_ptr<RGWStreamReadCRF> in_crf;
+  std::shared_ptr<RGWLCStreamReadCRF> in_crf;
 
   map<string, string> new_attrs;
 
