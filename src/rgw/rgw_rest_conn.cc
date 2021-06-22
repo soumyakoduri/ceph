@@ -374,9 +374,10 @@ int RGWRESTConn::get_resource(const DoutPrefixProvider *dpp,
   return req.complete_request(y);
 }
 
-int RGWRESTConn::put_resource(const DoutPrefixProvider *dpp,
+int RGWRESTConn::send_resource(const DoutPrefixProvider *dpp,
+                     const string& method,
                      const string& resource,
-		     param_vec_t *extra_params,
+                     rgw_http_param_pair *extra_params,
 		     map<string, string> *extra_headers,
 		     bufferlist& bl,
                      bufferlist *send_data,
@@ -391,14 +392,14 @@ int RGWRESTConn::put_resource(const DoutPrefixProvider *dpp,
   param_vec_t params;
 
   if (extra_params) {
-    params.insert(params.end(), extra_params->begin(), extra_params->end());
+    params = make_param_list(extra_params);
   }
 
   populate_params(params, nullptr, self_zone_group);
 
   RGWStreamIntoBufferlist cb(bl);
 
-  RGWRESTStreamWriteRequest req(cct, url, &cb, NULL, &params, api_name, host_style);
+  RGWRESTStreamSendRequest req(cct, method, url, &cb, NULL, &params, api_name, host_style);
 
   map<string, string> headers;
   if (extra_headers) {

@@ -689,7 +689,6 @@ private:
     public:
       C_WorkQTimerCtx(WorkQ* _wq): wq(_wq) {}
       void finish(int r) override {
-        wq->stop_http_manager();
       }
   };
 
@@ -702,9 +701,6 @@ private:
   uint32_t flags;
   vector<WorkItem> items;
   work_f f;
-  std::unique_ptr<RGWCoroutinesManager> crs;
-  std::unique_ptr<RGWHTTPManager> http_manager;
-  bool is_http_mgr_started{false};
   ceph::mutex timer_mtx;
   SafeTimer timer;
   int timer_wait_sec = 200; //seconds
@@ -731,51 +727,6 @@ public:
 
   void setf(work_f _f) {
     f = _f;
-  }
-
-  RGWCoroutinesManager* get_crs() { return crs.get(); }
-  RGWHTTPManager* get_http_manager() { return http_manager.get(); }
-
-  int start_http_manager(rgw::sal::Store* store) {
-    int ret = 0;
-
-    if (is_http_mgr_started)
-      return 0;
-
-    /* http_mngr */
-    if(!crs) {
-      crs.reset(new RGWCoroutinesManager(store->ctx(), store->get_cr_registry()));
-    }
-    if (!http_manager) {
-      http_manager.reset(new RGWHTTPManager(store->ctx(), crs.get()->get_completion_mgr()));
-    }      
-
-    ret = http_manager->start();
-    if (ret < 0) {
-      dout(5) << "RGWLC:: http_manager->start() failed ret = "
-	          << ret << dendl;
-      return ret;
-    }
-
-    is_http_mgr_started = true;
-    flags |= FLAG_HTTP_MGR;
-
-    return ret;
-  }
-
-  int stop_http_manager() {
-    if (!is_http_mgr_started) {
-      return 0;
-    }
-
-    http_manager.reset();
-    crs.reset();
-  
-    is_http_mgr_started = false;
-	flags &= ~FLAG_HTTP_MGR;
-    timer.cancel_all_events();
-    timer_ctx = nullptr;
-    return 0;
   }
 
   void enqueue(WorkItem&& item) {
@@ -1461,6 +1412,7 @@ public:
 
   int transition_obj_to_cloud(lc_op_ctx& oc) {
     std::shared_ptr<RGWRESTConn> conn;
+    std::unique_ptr<RGWLCCloudTier> ctier;
 
     /* init */
     string id = "cloudid";
@@ -1482,52 +1434,23 @@ public:
       boost::algorithm::to_lower(bucket_name);
     }
 
+    /* Create RGW REST connection */
     conn.reset(new S3RESTConn(oc.cct, oc.store, id, { endpoint }, key, region, host_style));
-
-    int ret = oc.wq->start_http_manager(oc.store);
-    if (ret < 0) {
-      ldpp_dout(oc.dpp, 0) << "failed in start_http_manager() ret=" << ret << dendl;
-      return ret;
-    }
-
-    RGWCoroutinesManager* crs = oc.wq->get_crs();
-    RGWHTTPManager* http_manager = oc.wq->get_http_manager();
-
-    if (!crs || !http_manager) {
-      /* maybe race..return and retry */
-      ldpp_dout(oc.dpp, 0) << " http_manager and crs not initialized" << dendl;
-      return -1;
-    }
 
     RGWLCCloudTierCtx tier_ctx(oc.cct, oc.dpp, oc.o, oc.store, oc.bucket->get_info(),
                         &oc.obj, oc.rctx, conn, bucket_name,
-                        oc.tier.t.s3.target_storage_class, http_manager);
+                        oc.tier.t.s3.target_storage_class);
     tier_ctx.acl_mappings = oc.tier.t.s3.acl_mappings;
     tier_ctx.multipart_min_part_size = oc.tier.t.s3.multipart_min_part_size;
     tier_ctx.multipart_sync_threshold = oc.tier.t.s3.multipart_sync_threshold;
     tier_ctx.storage_class = oc.tier.storage_class;
 
-    bool al_tiered = false;
 
-    /* Since multiple zones may try to transition the same object to the cloud,
-     * verify if the object is already transitioned. And since its just a best
-     * effort, do not bail out in case of any errors.
-     */
-    ret = crs->run(oc.dpp, new RGWLCCloudCheckCR(tier_ctx, &al_tiered));
-    
-    if (ret < 0) {
-      ldpp_dout(oc.dpp, 0) << "ERROR: failed in RGWCloudCheckCR() ret=" << ret << dendl;
-    }
+    ctier.reset(new RGWLCCloudTier(tier_ctx));
+    int ret = ctier->process();
 
-    if (al_tiered) {
-      ldout(tier_ctx.cct, 20) << "Object (" << oc.o.key << ") is already tiered" << dendl;
-      return 0;
-    } else {
-	  ret = crs->run(oc.dpp, new RGWLCCloudTierCR(tier_ctx));
-    }
-         
     if (ret < 0) {
-      ldpp_dout(oc.dpp, 0) << "ERROR: failed in RGWCloudTierCR() ret=" << ret << dendl;
+      ldpp_dout(oc.dpp, 0) << "ERROR: failed in RGWLCCloudTier() ret=" << ret << dendl;
       return ret;
     }
 
@@ -1551,6 +1474,13 @@ public:
   int process(lc_op_ctx& oc) {
     auto& o = oc.o;
     int r;
+
+    if (oc.o.meta.category == RGWObjCategory::CloudTiered) {
+      /* Skip objects which are already cloud tiered. */
+      ldpp_dout(oc.dpp, 30) << "Object(key:" << oc.o.key << ") is already cloud tiered to cloud-s3 tier: " << oc.o.meta.storage_class << dendl;
+      return 0;
+    }
+
     std::string tier_type = ""; 
     const RGWZoneGroup& zonegroup = oc.store->get_zone()->get_zonegroup();
 
@@ -1561,13 +1491,7 @@ public:
     r = get_tier_target(zonegroup, target_placement, target_placement.storage_class, oc.tier);
 
     if (!r && oc.tier.tier_type == "cloud-s3") {
-      ldpp_dout(oc.dpp, 20) << "Found cloud s3 tier: " << target_placement.storage_class << dendl;
-      if (oc.o.meta.category == RGWObjCategory::CloudTiered) {
-        /* Skip objects which are already cloud tiered. */
-        ldpp_dout(oc.dpp, 20) << "Object(key:" << oc.o.key << ") is already cloud tiered to cloud-s3 tier: " << oc.o.meta.storage_class << dendl;
-        return 0;
-      }
-
+      ldpp_dout(oc.dpp, 30) << "Found cloud s3 tier: " << target_placement.storage_class << dendl;
       if (!oc.o.is_current() &&
           !pass_object_lock_check(oc.store, oc.obj.get(), oc.rctx, oc.dpp)) {
         /* Skip objects which has object lock enabled. */

@@ -200,9 +200,10 @@ public:
                    RGWHTTPManager *mgr,
                    optional_yield y);
 
-  int put_resource(const DoutPrefixProvider *dpp,
+  int send_resource(const DoutPrefixProvider *dpp,
+                   const string& method,
                    const string& resource,
-		   param_vec_t *extra_params,
+		           rgw_http_param_pair *extra_params,
                    map<string, string>* extra_headers,
                    bufferlist& bl,
                    bufferlist *send_data,
