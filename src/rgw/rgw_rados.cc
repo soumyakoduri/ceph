@@ -2015,10 +2015,15 @@ int RGWRados::Bucket::List::list_objects_ordered(
       " INFO end of outer loop, truncated=" << truncated <<
       ", count=" << count << ", attempt=" << attempt << dendl;
 
-    if (!truncated || count >= (max + 1) / 2) {
+    if (!truncated || count == 0 || count >= (max + 1) / 2) {
       // if we finished listing, or if we're returning at least half the
       // requested entries, that's enough; S3 and swift protocols allow
       // returning fewer than max entries
+      break;
+    } else if (count == 0) {
+      // no objects returned, could be because they may have expired.
+      // Set truncated to false and return.
+      is_truncated = false;
       break;
     } else if (attempt > 8 && count >= 1) {
       // if we've made at least 8 attempts and we have some, but very
