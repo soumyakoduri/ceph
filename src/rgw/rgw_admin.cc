@@ -3828,10 +3828,11 @@ int main(int argc, const char **argv)
     bool need_cache = readonly_ops_list.find(opt_cmd) == readonly_ops_list.end();
     bool need_gc = (gc_ops_list.find(opt_cmd) != gc_ops_list.end()) && !bypass_gc;
 
+    string store_name = "dbstore";
     if (raw_storage_op) {
-      store = StoreManager::get_raw_storage(dpp(), g_ceph_context, "rados");
+      store = StoreManager::get_raw_storage(dpp(), g_ceph_context, store_name);
     } else {
-      store = StoreManager::get_storage(dpp(), g_ceph_context, "rados", false, false, false,
+      store = StoreManager::get_storage(dpp(), g_ceph_context, store_name, false, false, false,
 					   false, false,
 					   need_cache && g_conf()->rgw_cache_enabled, need_gc);
     }

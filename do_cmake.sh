@@ -8,10 +8,10 @@ fi
 : ${BUILD_DIR:=build}
 : ${CEPH_GIT_DIR:=..}
 
-if [ -e $BUILD_DIR ]; then
-    echo "'$BUILD_DIR' dir already exists; either rm -rf '$BUILD_DIR' and re-run, or set BUILD_DIR env var to a different directory name"
-    exit 1
-fi
+#if [ -e $BUILD_DIR ]; then
+ #   echo "'$BUILD_DIR' dir already exists; either rm -rf '$BUILD_DIR' and re-run, or set BUILD_DIR env var to a different directory name"
+  #  exit 1
+#fi
 
 PYBUILD="3"
 ARGS="-GNinja"
@@ -64,7 +64,7 @@ if [[ ! "$ARGS $@" =~ "-DBOOST_J" ]] ; then
     [ -n "$ncpu" -a "$ncpu" -gt 1 ] && ARGS+=" -DBOOST_J=$(expr $ncpu / 2)"
 fi
 
-mkdir $BUILD_DIR
+#mkdir $BUILD_DIR
 cd $BUILD_DIR
 if type cmake3 > /dev/null 2>&1 ; then
     CMAKE=cmake3

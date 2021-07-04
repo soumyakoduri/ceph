@@ -349,7 +349,7 @@ int radosgw_Main(int argc, const char **argv)
 
   rgw::sal::Store* store =
     StoreManager::get_storage(&dp, g_ceph_context,
-				 (!rgw_d3n_datacache_enabled) ? "rados" : "d3n",
+				 "dbstore",
 				 g_conf()->rgw_enable_gc_threads,
 				 g_conf()->rgw_enable_lc_threads,
 				 g_conf()->rgw_enable_quota_threads,
