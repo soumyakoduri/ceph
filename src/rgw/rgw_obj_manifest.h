@@ -536,3 +536,121 @@ public:
   };
 };
 WRITE_CLASS_ENCODER(RGWObjManifest)
+
+struct RGWObjState {
+  rgw_obj obj;
+  bool is_atomic{false};
+  bool has_attrs{false};
+  bool exists{false};
+  uint64_t size{0}; //< size of raw object
+  uint64_t accounted_size{0}; //< size before compression, encryption
+  ceph::real_time mtime;
+  uint64_t epoch{0};
+  bufferlist obj_tag;
+  bufferlist tail_tag;
+  string write_tag;
+  bool fake_tag{false};
+  std::optional<RGWObjManifest> manifest;
+  string shadow_obj;
+  bool has_data{false};
+  bufferlist data;
+  bool prefetch_data{false};
+  bool keep_tail{false};
+  bool is_olh{false};
+  bufferlist olh_tag;
+  uint64_t pg_ver{false};
+  uint32_t zone_short_id{0};
+
+  /* important! don't forget to update copy constructor */
+
+  RGWObjVersionTracker objv_tracker;
+
+  map<string, bufferlist> attrset;
+
+  RGWObjState();
+  RGWObjState(const RGWObjState& rhs);
+  ~RGWObjState();
+
+  bool get_attr(string name, bufferlist& dest) {
+    map<string, bufferlist>::iterator iter = attrset.find(name);
+    if (iter != attrset.end()) {
+      dest = iter->second;
+      return true;
+    }
+    return false;
+  }
+};
+
+struct obj_time_weight {
+  real_time mtime;
+  uint32_t zone_short_id;
+  uint64_t pg_ver;
+  bool high_precision;
+
+  obj_time_weight() : zone_short_id(0), pg_ver(0), high_precision(false) {}
+
+  bool compare_low_precision(const obj_time_weight& rhs) {
+    struct timespec l = ceph::real_clock::to_timespec(mtime);
+    struct timespec r = ceph::real_clock::to_timespec(rhs.mtime);
+    l.tv_nsec = 0;
+    r.tv_nsec = 0;
+    if (l > r) {
+      return false;
+    }
+    if (l < r) {
+      return true;
+    }
+    if (!zone_short_id || !rhs.zone_short_id) {
+      /* don't compare zone ids, if one wasn't provided */
+      return false;
+    }
+    if (zone_short_id != rhs.zone_short_id) {
+      return (zone_short_id < rhs.zone_short_id);
+    }
+    return (pg_ver < rhs.pg_ver);
+
+  }
+
+  bool operator<(const obj_time_weight& rhs) {
+    if (!high_precision || !rhs.high_precision) {
+      return compare_low_precision(rhs);
+    }
+    if (mtime > rhs.mtime) {
+      return false;
+    }
+    if (mtime < rhs.mtime) {
+      return true;
+    }
+    if (!zone_short_id || !rhs.zone_short_id) {
+      /* don't compare zone ids, if one wasn't provided */
+      return false;
+    }
+    if (zone_short_id != rhs.zone_short_id) {
+      return (zone_short_id < rhs.zone_short_id);
+    }
+    return (pg_ver < rhs.pg_ver);
+  }
+
+  void init(const real_time& _mtime, uint32_t _short_id, uint64_t _pg_ver) {
+    mtime = _mtime;
+    zone_short_id = _short_id;
+    pg_ver = _pg_ver;
+  }
+
+  void init(RGWObjState *state) {
+    mtime = state->mtime;
+    zone_short_id = state->zone_short_id;
+    pg_ver = state->pg_ver;
+  }
+};
+
+inline ostream& operator<<(ostream& out, const obj_time_weight &o) {
+  out << o.mtime;
+
+  if (o.zone_short_id != 0 || o.pg_ver != 0) {
+    out << "[zid=" << o.zone_short_id << ", pgv=" << o.pg_ver << "]";
+  }
+
+  return out;
+}
+

@@ -326,7 +326,7 @@ namespace rgw::sal {
 
   std::unique_ptr<Object> DBBucket::get_object(const rgw_obj_key& k)
   {
-    return nullptr;
+    return std::unique_ptr<Object>(new DBObject(this->store, k, this));
   }
 
   int DBBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, ListResults& results, optional_yield y)
@@ -398,6 +398,411 @@ namespace rgw::sal {
     return std::unique_ptr<LuaScriptManager>(new DBLuaScriptManager(this));
   }
 
+  int DBObject::get_obj_state(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, RGWObjState **state, optional_yield y, bool follow_olh)
+  {
+    return 0;
+    //store->getRados()->get_obj_state(dpp, rctx, bucket->get_info(), get_obj(), state, follow_olh, y);
+  }
+
+  int DBObject::read_attrs(const DoutPrefixProvider* dpp, DBStore::Object::Read &read_op, optional_yield y, rgw_obj* target_obj)
+  {
+    return 0;
+  }
+
+  int DBObject::set_obj_attrs(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, Attrs* setattrs, Attrs* delattrs, optional_yield y, rgw_obj* target_obj)
+  {
+    return 0;
+  }
+
+  int DBObject::get_obj_attrs(RGWObjectCtx* rctx, optional_yield y, const DoutPrefixProvider* dpp, rgw_obj* target_obj)
+  {
+    return 0;
+  }
+
+  int DBObject::modify_obj_attrs(RGWObjectCtx* rctx, const char* attr_name, bufferlist& attr_val, optional_yield y, const DoutPrefixProvider* dpp)
+  {
+    return 0;
+  }
+
+  int DBObject::delete_obj_attrs(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, const char* attr_name, optional_yield y)
+  {
+    return 0;
+  }
+
+  int DBObject::copy_obj_data(RGWObjectCtx& rctx, Bucket* dest_bucket,
+      Object* dest_obj,
+      uint16_t olh_epoch,
+      std::string* petag,
+      const DoutPrefixProvider* dpp,
+      optional_yield y)
+  {
+    return 0;
+  }
+
+  void DBObject::set_atomic(RGWObjectCtx* rctx) const
+  {
+  }
+
+  void DBObject::set_prefetch_data(RGWObjectCtx* rctx)
+  {
+  }
+
+  bool DBObject::is_expired() {
+    return false;
+  }
+
+  void DBObject::gen_rand_obj_instance_name()
+  {
+  }
+
+  void DBObject::raw_obj_to_obj(const rgw_raw_obj& raw_obj)
+  {
+  }
+
+  void DBObject::get_raw_obj(rgw_raw_obj* raw_obj)
+  {
+  }
+
+  int DBObject::omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker, uint64_t count,
+      std::map<std::string, bufferlist> *m,
+      bool* pmore, optional_yield y)
+  {
+    //  DBStore::raw_obj raw_obj(this->state->raw_obj.key.name,  .. )
+    DBStore::raw_obj raw_obj(store->getDBStore());
+    return raw_obj.obj_omap_get_vals(dpp, marker, count, m, pmore);
+  }
+
+  int DBObject::omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m,
+      optional_yield y)
+  {
+    DBStore::raw_obj raw_obj(store->getDBStore());
+    return raw_obj.obj_omap_get_all(dpp, m);
+  }
+
+  int DBObject::omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
+      const std::set<std::string>& keys,
+      Attrs* vals)
+  {
+    DBStore::raw_obj raw_obj(store->getDBStore());
+    return raw_obj.obj_omap_get_vals_by_keys(dpp, oid, keys, vals);
+  }
+
+  int DBObject::omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val,
+      bool must_exist, optional_yield y)
+  {
+    DBStore::raw_obj raw_obj(store->getDBStore());
+    return raw_obj.obj_omap_set_val_by_key(dpp, key, val, must_exist);
+  }
+
+  MPSerializer* DBObject::get_serializer(const DoutPrefixProvider *dpp, const std::string& lock_name)
+  {
+    return nullptr;
+  }
+
+  int DBObject::transition(RGWObjectCtx& rctx,
+      Bucket* bucket,
+      const rgw_placement_rule& placement_rule,
+      const real_time& mtime,
+      uint64_t olh_epoch,
+      const DoutPrefixProvider* dpp,
+      optional_yield y)
+  {
+    return 0;
+  }
+
+  /* for now default stripe size, chunk size etc are all set to 4M.
+   * XXX: Make them configurable
+   */
+  int DBObject::get_max_chunk_size(const DoutPrefixProvider* dpp, rgw_placement_rule placement_rule, uint64_t* max_chunk_size, uint64_t* alignment)
+  {
+    return store->getDBStore()->get_max_stripe_size();
+  }
+
+  void DBObject::get_max_aligned_size(uint64_t size, uint64_t alignment,
+      uint64_t* max_size)
+  {
+    *max_size = store->getDBStore()->get_max_stripe_size();
+  }
+
+  bool DBObject::placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2)
+  {
+    /* XXX: support single default zone and zonegroup for now */
+    return true;
+  }
+
+  std::unique_ptr<Object::ReadOp> DBObject::get_read_op(RGWObjectCtx* ctx)
+  {
+    return std::unique_ptr<Object::ReadOp>(new DBObject::DBReadOp(this, ctx));
+  }
+
+  DBObject::DBReadOp::DBReadOp(DBObject *_source, RGWObjectCtx *_rctx) :
+    source(_source),
+    rctx(_rctx),
+    op_target(_source->store->getDBStore(),
+        _source->get_bucket()->get_info(),
+        *static_cast<RGWObjectCtx *>(rctx),
+        _source->get_obj()),
+    parent_op(&op_target)
+  { }
+
+  int DBObject::DBReadOp::prepare(optional_yield y, const DoutPrefixProvider* dpp)
+  {
+    uint64_t obj_size;
+
+    parent_op.conds.mod_ptr = params.mod_ptr;
+    parent_op.conds.unmod_ptr = params.unmod_ptr;
+    parent_op.conds.high_precision_time = params.high_precision_time;
+    parent_op.conds.mod_zone_id = params.mod_zone_id;
+    parent_op.conds.mod_pg_ver = params.mod_pg_ver;
+    parent_op.conds.if_match = params.if_match;
+    parent_op.conds.if_nomatch = params.if_nomatch;
+    parent_op.params.lastmod = params.lastmod;
+    parent_op.params.target_obj = params.target_obj;
+    parent_op.params.obj_size = &obj_size;
+    parent_op.params.attrs = &source->get_attrs();
+
+    int ret = parent_op.prepare(dpp);
+    if (ret < 0)
+      return ret;
+
+    source->set_key(parent_op.state.obj.key);
+    source->set_obj_size(obj_size);
+    result.head_obj = parent_op.state.head_obj;
+
+    return ret;
+  }
+
+  int DBObject::DBReadOp::read(int64_t ofs, int64_t end, bufferlist& bl, optional_yield y, const DoutPrefixProvider* dpp)
+  {
+    return 0;
+  }
+
+  int DBObject::DBReadOp::get_manifest(const DoutPrefixProvider* dpp, RGWObjManifest **pmanifest,
+      optional_yield y)
+  {
+    return op_target.get_manifest(dpp, pmanifest);
+  }
+
+  int DBObject::DBReadOp::get_attr(const DoutPrefixProvider* dpp, const char* name, bufferlist& dest, optional_yield y)
+  {
+    return parent_op.get_attr(dpp, name, dest);
+  }
+
+  std::unique_ptr<Object::DeleteOp> DBObject::get_delete_op(RGWObjectCtx* ctx)
+  {
+    return std::unique_ptr<Object::DeleteOp>(new DBObject::DBDeleteOp(this, ctx));
+  }
+
+  DBObject::DBDeleteOp::DBDeleteOp(DBObject *_source, RGWObjectCtx *_rctx) :
+    source(_source),
+    rctx(_rctx),
+    op_target(_source->store->getDBStore(),
+        _source->get_bucket()->get_info(),
+        *static_cast<RGWObjectCtx *>(rctx),
+        _source->get_obj()),
+    parent_op(&op_target)
+  { }
+
+  int DBObject::DBDeleteOp::delete_obj(const DoutPrefixProvider* dpp, optional_yield y)
+  {
+    parent_op.params.bucket_owner = params.bucket_owner.get_id();
+    parent_op.params.versioning_status = params.versioning_status;
+    parent_op.params.obj_owner = params.obj_owner;
+    parent_op.params.olh_epoch = params.olh_epoch;
+    parent_op.params.marker_version_id = params.marker_version_id;
+    parent_op.params.bilog_flags = params.bilog_flags;
+    parent_op.params.remove_objs = params.remove_objs;
+    parent_op.params.expiration_time = params.expiration_time;
+    parent_op.params.unmod_since = params.unmod_since;
+    parent_op.params.mtime = params.mtime;
+    parent_op.params.high_precision_time = params.high_precision_time;
+    parent_op.params.zones_trace = params.zones_trace;
+    parent_op.params.abortmp = params.abortmp;
+    parent_op.params.parts_accounted_size = params.parts_accounted_size;
+
+    int ret = parent_op.delete_obj(dpp);
+    if (ret < 0)
+      return ret;
+
+    result.delete_marker = parent_op.result.delete_marker;
+    result.version_id = parent_op.result.version_id;
+
+    return ret;
+  }
+
+  int DBObject::delete_object(const DoutPrefixProvider* dpp, RGWObjectCtx* obj_ctx, optional_yield y, bool prevent_versioning)
+  {
+    DBStore::Object del_target(store->getDBStore(), bucket->get_info(), *obj_ctx, get_obj());
+    DBStore::Object::Delete del_op(&del_target);
+
+    del_op.params.bucket_owner = bucket->get_info().owner;
+    del_op.params.versioning_status = bucket->get_info().versioning_status();
+
+    return del_op.delete_obj(dpp);
+  }
+
+  int DBObject::delete_obj_aio(const DoutPrefixProvider* dpp, RGWObjState* astate,
+      Completions* aio, bool keep_index_consistent,
+      optional_yield y)
+  {
+    /* XXX: Make it async */
+    return 0;
+  }
+
+  std::unique_ptr<Object::StatOp> DBObject::get_stat_op(RGWObjectCtx* ctx)
+  {
+    return std::unique_ptr<Object::StatOp>(new DBObject::DBStatOp(this, ctx));
+  }
+
+  DBObject::DBStatOp::DBStatOp(DBObject *_source, RGWObjectCtx *_rctx) :
+    source(_source),
+    rctx(_rctx),
+    op_target(_source->store->getDBStore(),
+        _source->get_bucket()->get_info(),
+        *static_cast<RGWObjectCtx *>(rctx),
+        _source->get_obj()),
+    parent_op(&op_target)
+  { }
+
+  int DBObject::DBStatOp::stat_async(const DoutPrefixProvider *dpp)
+  {
+    /* XXX:
+     * Once Object has state part of it, read from it 
+     *
+     *
+     if (this->s->has_attrs) {
+     state.ret = 0;
+     result.size = s->size;
+     result.mtime = ceph::real_clock::to_timespec(s->mtime);
+     result.attrs = s->attrset;
+     result.manifest = s->manifest;
+     return 0;
+     }
+     */
+    return parent_op.stat_async(dpp);
+  }
+
+  int DBObject::DBStatOp::wait(const DoutPrefixProvider *dpp)
+  {
+    result.obj = source;
+    int ret =  parent_op.wait(dpp);
+    if (ret < 0)
+      return ret;
+
+    source->obj_size = parent_op.result.size;
+    source->mtime = ceph::real_clock::from_timespec(parent_op.result.mtime);
+    source->attrs = parent_op.result.attrs;
+    source->key = parent_op.result.obj.key;
+    source->in_extra_data = parent_op.result.obj.in_extra_data;
+    source->index_hash_source = parent_op.result.obj.index_hash_source;
+    if (parent_op.result.manifest)
+      result.manifest = &(*parent_op.result.manifest);
+    else
+      result.manifest = nullptr;
+
+    return ret;
+  }
+
+  int DBObject::copy_object(RGWObjectCtx& obj_ctx,
+      User* user,
+      req_info* info,
+      const rgw_zone_id& source_zone,
+      rgw::sal::Object* dest_object,
+      rgw::sal::Bucket* dest_bucket,
+      rgw::sal::Bucket* src_bucket,
+      const rgw_placement_rule& dest_placement,
+      ceph::real_time* src_mtime,
+      ceph::real_time* mtime,
+      const ceph::real_time* mod_ptr,
+      const ceph::real_time* unmod_ptr,
+      bool high_precision_time,
+      const char* if_match,
+      const char* if_nomatch,
+      AttrsMod attrs_mod,
+      bool copy_if_newer,
+      Attrs& attrs,
+      RGWObjCategory category,
+      uint64_t olh_epoch,
+      boost::optional<ceph::real_time> delete_at,
+      std::string* version_id,
+      std::string* tag,
+      std::string* etag,
+      void (*progress_cb)(off_t, void *),
+      void* progress_data,
+      const DoutPrefixProvider* dpp,
+      optional_yield y)
+      {
+        return 0;
+      }
+
+  int DBObject::DBReadOp::iterate(const DoutPrefixProvider* dpp, int64_t ofs, int64_t end, RGWGetDataCB* cb, optional_yield y)
+  {
+    return 0;
+  }
+
+  std::unique_ptr<Object::WriteOp> DBObject::get_write_op(RGWObjectCtx* ctx)
+  {
+    return std::unique_ptr<Object::WriteOp>(new DBObject::DBWriteOp(this, ctx));
+  }
+
+  DBObject::DBWriteOp::DBWriteOp(DBObject* _source, RGWObjectCtx* _rctx) :
+    source(_source),
+    rctx(_rctx),
+    op_target(_source->store->getDBStore(),
+        _source->get_bucket()->get_info(),
+        *static_cast<RGWObjectCtx *>(rctx),
+        _source->get_obj()),
+    parent_op(&op_target)
+  { }
+
+  int DBObject::DBWriteOp::prepare(optional_yield y)
+  {
+    //op_target.set_versioning_disabled(params.versioning_disabled);
+    parent_op.meta.mtime = params.mtime;
+    parent_op.meta.rmattrs = params.rmattrs;
+    parent_op.meta.data = params.data;
+    parent_op.meta.manifest = params.manifest;
+    parent_op.meta.ptag = params.ptag;
+    parent_op.meta.remove_objs = params.remove_objs;
+    parent_op.meta.set_mtime = params.set_mtime;
+    parent_op.meta.owner = params.owner.get_id();
+    parent_op.meta.category = params.category;
+    parent_op.meta.flags = params.flags;
+    parent_op.meta.if_match = params.if_match;
+    parent_op.meta.if_nomatch = params.if_nomatch;
+    parent_op.meta.olh_epoch = params.olh_epoch;
+    parent_op.meta.delete_at = params.delete_at;
+    parent_op.meta.canceled = params.canceled;
+    parent_op.meta.user_data = params.user_data;
+    parent_op.meta.zones_trace = params.zones_trace;
+    parent_op.meta.modify_tail = params.modify_tail;
+    parent_op.meta.completeMultipart = params.completeMultipart;
+    parent_op.meta.appendable = params.appendable;
+
+    return 0;
+  }
+
+  int DBObject::DBWriteOp::write_meta(const DoutPrefixProvider* dpp, uint64_t size, uint64_t accounted_size, optional_yield y)
+  {
+    //int ret = parent_op.write_meta(dpp, size, accounted_size, *params.attrs, y);
+    params.canceled = parent_op.meta.canceled;
+
+    return 0;
+  }
+
+  int DBObject::swift_versioning_restore(RGWObjectCtx* obj_ctx,
+      bool& restored,
+      const DoutPrefixProvider* dpp)
+  {
+    return 0;
+  }
+
+  int DBObject::swift_versioning_copy(RGWObjectCtx* obj_ctx,
+      const DoutPrefixProvider* dpp,
+      optional_yield y)
+  {
+    return 0;
+  }
 
   std::unique_ptr<RGWRole> RGWDBStore::get_role(std::string name,
       std::string tenant,
@@ -498,7 +903,7 @@ namespace rgw::sal {
 
   std::unique_ptr<Object> RGWDBStore::get_object(const rgw_obj_key& k)
   {
-    return NULL;
+    return std::unique_ptr<Object>(new DBObject(this, k));
   }
 
 
@@ -860,6 +1265,7 @@ extern "C" {
 
       store->setDBStoreManager(dbsm);
       store->setDBStore(dbstore);
+      dbstore->set_store((rgw::sal::Store*)store);
     }
 
     return store;

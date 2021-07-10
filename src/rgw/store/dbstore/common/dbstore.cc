@@ -161,8 +161,10 @@ DBOp *DBStore::getDBOp(const DoutPrefixProvider *dpp, string Op, struct DBOpPara
     return Ob->InsertObject;
   if (!Op.compare("RemoveObject"))
     return Ob->RemoveObject;
-  if (!Op.compare("ListObject"))
-    return Ob->ListObject;
+  if (!Op.compare("GetObject"))
+    return Ob->GetObject;
+  if (!Op.compare("UpdateObject"))
+    return Ob->UpdateObject;
   if (!Op.compare("PutObjectData"))
     return Ob->PutObjectData;
   if (!Op.compare("GetObjectData"))
@@ -709,6 +711,571 @@ int DBStore::update_bucket(const DoutPrefixProvider *dpp, const std::string& que
   if (pobjv) {
     pobjv->read_version = params.op.bucket.bucket_version;
     pobjv->write_version = params.op.bucket.bucket_version;
+  }
+
+out:
+  return ret;
+}
+
+int DBStore::raw_obj::InitializeParamsfromRawObj(const DoutPrefixProvider *dpp, DBOpParams* params) {
+  int ret = 0;
+
+  if (!params)
+    return -1;
+
+  params->object_table = obj_table;
+  params->objectdata_table = obj_data_table;
+  params->op.bucket.info.bucket.name = bucket_name;
+  params->op.obj.state.obj.key.name = obj_name;
+  params->op.obj.state.obj.key.instance = obj_instance;
+  params->op.obj.state.obj.key.ns = obj_ns;
+
+  if (multipart_partnum != 0) {
+    params->op.obj.is_multipart = true;
+  } else {
+    params->op.obj.is_multipart = false;
+  }
+
+  params->op.obj_data.multipart_part_num = multipart_partnum;
+  params->op.obj_data.part_num = part_num;
+
+  return ret;
+}
+
+int DBStore::raw_obj::obj_omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val,
+                                bool must_exist) {
+	int ret = 0;
+
+    DBOpParams params = {};
+    db->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromRawObj(dpp, &params);
+
+    ret = db->ProcessOp(dpp, "GetObject", &params);
+
+    if (ret) {
+	  ldpp_dout(dpp, 0) <<"In GetObject failed err:(" <<ret<<")" << dendl;
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+    if (params.op.obj.storage_class.empty()) {
+	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist" << dendl;
+      return -1;
+    }
+
+    params.op.obj.omap[key] = val;
+    params.op.query_str = "omap";
+
+    ret = db->ProcessOp(dpp, "UpdateObject", &params);
+
+    if (ret) {
+	  ldpp_dout(dpp, 0)<<"In UpdateObject failed err:(" <<ret<<") " << dendl;
+      goto out;
+    }
+
+out:
+	return ret;
+}
+
+int DBStore::raw_obj::obj_omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
+                                  const std::set<std::string>& keys,
+                                  std::map<std::string, bufferlist>* vals) {
+	int ret = 0;
+    DBOpParams params = {};
+    std::map<std::string, bufferlist> omap;
+
+    if (!vals)
+      return -1;
+
+    db->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromRawObj(dpp, &params);
+
+    ret = db->ProcessOp(dpp, "GetObject", &params);
+
+    if (ret) {
+	  ldpp_dout(dpp, 0) <<"In GetObject failed err:(" <<ret<<") " << dendl;
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+    if (params.op.obj.storage_class.empty()) {
+	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist" << dendl;
+      return -1;
+    }
+
+    omap = params.op.obj.omap;
+
+    for (const auto& k :  keys) {
+      (*vals)[k] = omap[k];
+    }
+
+out:
+  return ret;
+}
+
+int DBStore::raw_obj::obj_omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m) {
+	int ret = 0;
+    DBOpParams params = {};
+    std::map<std::string, bufferlist> omap;
+
+    if (!m)
+      return -1;
+
+    db->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromRawObj(dpp, &params);
+
+    ret = db->ProcessOp(dpp, "GetObject", &params);
+
+    if (ret) {
+	  ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+    if (params.op.obj.storage_class.empty()) {
+	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist " << dendl;
+      return -1;
+    }
+
+    (*m) = params.op.obj.omap;
+
+out:
+    return ret;
+}
+
+int DBStore::raw_obj::obj_omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker,
+                         uint64_t max_count,
+                        std::map<std::string, bufferlist> *m, bool* pmore) {
+	int ret = 0;
+    DBOpParams params = {};
+    std::map<std::string, bufferlist> omap;
+    map<string, bufferlist>::iterator iter;
+    uint64_t count = 0;
+
+    if (!m)
+      return -1;
+
+    db->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromRawObj(dpp, &params);
+
+    ret = db->ProcessOp(dpp, "GetObject", &params);
+
+    if (ret) {
+	  ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+    if (params.op.obj.storage_class.empty()) {
+	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist " << dendl;
+      return -1;
+    }
+
+    omap = params.op.obj.omap;
+
+    for (iter = omap.begin(); iter != omap.end(); ++iter) {
+
+      if (iter->first < marker)
+        continue;
+
+      if ((++count) > max_count) {
+        *pmore = true;
+        break;
+      }
+
+      (*m)[iter->first] = iter->second;
+    }
+
+out:
+    return ret;
+}
+
+int DBStore::raw_obj::read(const DoutPrefixProvider *dpp, int64_t ofs, uint64_t len, bufferlist& bl) {
+	int ret = 0;
+    DBOpParams params = {};
+
+    db->InitializeParams(dpp, "GetObjectData", &params);
+    InitializeParamsfromRawObj(dpp, &params);
+
+    ret = db->ProcessOp(dpp, "GetObjectData", &params);
+
+    if (ret) {
+	  ldpp_dout(dpp, 0)<<"In GetObjectData failed err:(" <<ret<<")" << dendl;
+      return ret;
+    }
+
+    bufferlist& read_bl = params.op.obj_data.data;
+
+        unsigned copy_len = std::min((uint64_t)read_bl.length() - ofs, len);
+        read_bl.begin(ofs).copy(copy_len, bl);
+	    return bl.length();
+}
+
+int DBStore::follow_olh(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, RGWObjState *state,
+               const rgw_obj& olh_obj, rgw_obj *target)
+{
+  auto iter = state->attrset.find(RGW_ATTR_OLH_INFO);
+  if (iter == state->attrset.end()) {
+    return -EINVAL;
+  }
+
+  DBOLHInfo olh;
+  string s;
+  const bufferlist& bl = iter->second;
+  try {
+    auto biter = bl.cbegin();
+    decode(olh, biter);
+  } catch (buffer::error& err) {
+    return -EIO;
+  }
+
+  if (olh.removed) {
+    return -ENOENT;
+  }
+
+  *target = olh.target;
+
+  return 0;
+}
+
+int DBStore::get_olh_target_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+                      RGWObjState* olh_state, RGWObjState** target) {
+  int ret = 0;
+  rgw_obj target_obj;
+
+  if (!olh_state->is_olh) {
+    return EINVAL;
+  }
+
+  ret = follow_olh(dpp, bucket_info, olh_state, obj, &target_obj); /* might return -EAGAIN */
+  if (ret < 0) {
+	ldpp_dout(dpp, 0)<<"In get_olh_target_state follow_olh() failed err:(" <<ret<<")" << dendl;
+    return ret;
+  }
+
+  ret = get_obj_state(dpp, bucket_info, target_obj, false, target);
+
+  return ret;
+}
+
+int DBStore::get_obj_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+                            bool follow_olh, RGWObjState **state) {
+	int ret = 0;
+
+    DBOpParams params = {};
+    RGWObjState* s;
+    InitializeParams(dpp, "GetObject", &params);
+
+	params.op.bucket.info.bucket.name = bucket_info.bucket.name;
+    params.op.obj.state.obj = obj;
+
+    ret = ProcessOp(dpp, "GetObject", &params);
+
+	if (ret) {
+		ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
+		goto out;
+    }
+
+   if (params.op.obj.storage_class.empty()) {
+     return -ENOENT;
+   }
+   
+   s = &params.op.obj.state;
+   **state = *s;
+   
+   if (follow_olh && params.op.obj.state.obj.key.instance.empty()) {
+     /* fetch current version obj details */
+    ret = get_olh_target_state(dpp, bucket_info, obj, s, state);
+
+    if (ret < 0) {
+	  ldpp_dout(dpp, 0)<<"get_olh_target_state failed err:(" <<ret<<")" << dendl;
+    }
+   }
+
+out:
+	return ret;
+
+}
+
+int DBStore::Object::get_state(const DoutPrefixProvider *dpp, RGWObjState **pstate, bool follow_olh)
+{
+  return store->get_obj_state(dpp, bucket_info, obj, follow_olh, pstate);
+}
+
+int DBStore::Object::get_manifest(const DoutPrefixProvider *dpp, RGWObjManifest **pmanifest)
+{
+  RGWObjState *astate;
+  int r = get_state(dpp, &astate, true);
+  if (r < 0) {
+    return r;
+  }
+
+  *pmanifest = &(*astate->manifest);
+
+  return 0;
+}
+
+int DBStore::Object::Read::get_attr(const DoutPrefixProvider *dpp, const char *name, bufferlist& dest)
+{
+  RGWObjState *state;
+  int r = source->get_state(dpp, &state, true);
+  if (r < 0)
+    return r;
+  if (!state->exists)
+    return -ENOENT;
+  if (!state->get_attr(name, dest))
+    return -ENODATA;
+
+  return 0;
+}
+
+int DBStore::Object::Read::prepare(const DoutPrefixProvider *dpp)
+{
+  DBStore *store = source->get_store();
+  CephContext *cct = store->ctx();
+
+  bufferlist etag;
+
+  map<string, bufferlist>::iterator iter;
+
+  RGWObjState *astate;
+  int r = source->get_state(dpp, &astate, true);
+  if (r < 0)
+    return r;
+
+  if (!astate->exists) {
+    return -ENOENT;
+  }
+
+  const RGWBucketInfo& bucket_info = source->get_bucket_info();
+
+  state.obj = astate->obj;
+  store->obj_to_raw_head(dpp, bucket_info.placement_rule, state.obj, &state.head_obj);
+
+  state.cur_pool = state.head_obj.pool;
+
+  if (params.target_obj) {
+    *params.target_obj = state.obj;
+  }
+  if (params.attrs) {
+    *params.attrs = astate->attrset;
+    if (cct->_conf->subsys.should_gather<ceph_subsys_rgw, 20>()) {
+      for (iter = params.attrs->begin(); iter != params.attrs->end(); ++iter) {
+        ldpp_dout(dpp, 20) << "Read xattr rgw_rados: " << iter->first << dendl;
+      }
+    }
+  }
+
+  /* Convert all times go GMT to make them compatible */
+  if (conds.mod_ptr || conds.unmod_ptr) {
+    obj_time_weight src_weight;
+    src_weight.init(astate);
+    src_weight.high_precision = conds.high_precision_time;
+
+    obj_time_weight dest_weight;
+    dest_weight.high_precision = conds.high_precision_time;
+
+    if (conds.mod_ptr && !conds.if_nomatch) {
+      dest_weight.init(*conds.mod_ptr, conds.mod_zone_id, conds.mod_pg_ver);
+      ldpp_dout(dpp, 10) << "If-Modified-Since: " << dest_weight << " Last-Modified: " << src_weight << dendl;
+      if (!(dest_weight < src_weight)) {
+        return -ERR_NOT_MODIFIED;
+      }
+    }
+
+    if (conds.unmod_ptr && !conds.if_match) {
+      dest_weight.init(*conds.unmod_ptr, conds.mod_zone_id, conds.mod_pg_ver);
+      ldpp_dout(dpp, 10) << "If-UnModified-Since: " << dest_weight << " Last-Modified: " << src_weight << dendl;
+      if (dest_weight < src_weight) {
+        return -ERR_PRECONDITION_FAILED;
+      }
+    }
+  }
+  if (conds.if_match || conds.if_nomatch) {
+    r = get_attr(dpp, RGW_ATTR_ETAG, etag);
+    if (r < 0)
+      return r;
+
+    if (conds.if_match) {
+      string if_match_str = rgw_string_unquote(conds.if_match);
+      ldpp_dout(dpp, 10) << "ETag: " << string(etag.c_str(), etag.length()) << " " << " If-Match: " << if_match_str << dendl;
+      if (if_match_str.compare(0, etag.length(), etag.c_str(), etag.length()) != 0) {
+        return -ERR_PRECONDITION_FAILED;
+      }
+    }
+
+    if (conds.if_nomatch) {
+      string if_nomatch_str = rgw_string_unquote(conds.if_nomatch);
+      ldpp_dout(dpp, 10) << "ETag: " << string(etag.c_str(), etag.length()) << " " << " If-NoMatch: " << if_nomatch_str << dendl;
+      if (if_nomatch_str.compare(0, etag.length(), etag.c_str(), etag.length()) == 0) {
+        return -ERR_NOT_MODIFIED;
+      }
+    }
+  }
+
+  if (params.obj_size)
+    *params.obj_size = astate->size;
+  if (params.lastmod)
+    *params.lastmod = astate->mtime;
+
+  return 0;
+}
+
+bool DBStore::obj_to_raw_head(const DoutPrefixProvider *dpp, const rgw_placement_rule& placement_rule, const rgw_obj& obj, rgw_raw_obj *raw_obj)
+{
+
+  raw_obj->oid = to_oid(obj.bucket.name, obj.key.name, obj.key.instance, 0, 0);
+  raw_obj->pool.name = getObjectTable(obj.bucket.name);
+
+  return true;
+}
+
+int DBStore::Object::Read::range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t &end)
+{
+  if (ofs < 0) {
+    ofs += obj_size;
+    if (ofs < 0)
+      ofs = 0;
+    end = obj_size - 1;
+  } else if (end < 0) {
+    end = obj_size - 1;
+  }
+
+  if (obj_size > 0) {
+    if (ofs >= (off_t)obj_size) {
+      return -ERANGE;
+    }
+    if (end >= (off_t)obj_size) {
+      end = obj_size - 1;
+    }
+  }
+  return 0;
+}
+
+int DBStore::Object::Read::read(int64_t ofs, int64_t end, bufferlist& bl, const DoutPrefixProvider *dpp)
+{
+  DBStore *store = source->get_store();
+
+  rgw_raw_obj read_obj;
+  uint64_t read_ofs = ofs;
+  uint64_t len, read_len;
+  bool reading_from_head = true;
+
+  bufferlist read_bl;
+
+  RGWObjState *astate;
+  int r = source->get_state(dpp, &astate, true);
+  if (r < 0)
+    return r;
+
+  if (astate->size == 0) {
+    end = 0;
+  } else if (end >= (int64_t)astate->size) {
+    end = astate->size - 1;
+  }
+
+  if (end < 0)
+    len = 0;
+  else
+    len = end - ofs + 1;
+
+  if (astate->manifest && astate->manifest->has_tail()) {
+    /* now get the relevant object part */
+    RGWObjManifest::obj_iterator iter = astate->manifest->obj_find(dpp, ofs);
+
+    uint64_t stripe_ofs = iter.get_stripe_ofs();
+    read_obj = iter.get_location().get_raw_obj(store->store);
+    len = std::min(len, iter.get_stripe_size() - (ofs - stripe_ofs));
+    read_ofs = iter.location_ofs() + (ofs - stripe_ofs);
+    reading_from_head = (read_obj == state.head_obj);
+  } else {
+    read_obj = state.head_obj;
+  }
+
+  read_len = len;
+
+  if (reading_from_head) {
+    if (astate && astate->prefetch_data) {
+      if (!ofs && astate->data.length() >= len) {
+        bl = astate->data;
+        return bl.length();
+      }
+
+      if (ofs < astate->data.length()) {
+        unsigned copy_len = std::min((uint64_t)astate->data.length() - ofs, len);
+        astate->data.begin(ofs).copy(copy_len, bl);
+        return bl.length();
+      }
+    }
+  }
+
+  ldpp_dout(dpp, 20) << "rados->read obj-ofs=" << ofs << " read_ofs=" << read_ofs << " read_len=" << read_len << dendl;
+
+  // read from non head object
+  raw_obj db_obj(store, read_obj.oid);
+  r = db_obj.read(dpp, read_ofs, read_len, bl);
+
+  if (r < 0) {
+    return r;
+  }
+
+  return bl.length();
+}
+
+/* XXX: Should ideally make this aync operation. But its synchronous now */
+int DBStore::Object::Stat::stat_async(const DoutPrefixProvider *dpp)
+{
+  rgw_obj& obj = source->get_obj();
+
+  RGWObjState *s;
+  /* XXX: Read from the Object state stored in object? */
+  result.obj = obj;
+  int r = source->get_state(dpp, &s, true);
+  if (r < 0)
+    return r;
+
+  if (s->has_attrs) {
+    result.size = s->size;
+    result.mtime = ceph::real_clock::to_timespec(s->mtime);
+    result.attrs = s->attrset;
+    result.manifest = s->manifest;
+  }
+
+  return r;
+}
+
+int DBStore::Object::Stat::wait(const DoutPrefixProvider *dpp)
+{
+  return 0;
+}
+
+int DBStore::Object::Delete::delete_obj(const DoutPrefixProvider *dpp) {
+  int ret = 0;
+  DBStore *store = target->get_store();
+  RGWObjState *astate;
+
+  int r = target->get_state(dpp, &astate, true);
+  if (r < 0)
+    return r;
+
+  if (!astate->exists) {
+    return -ENOENT;
+  }
+
+  /* XXX: handle versioned objects. Create delete marker */
+
+  /* XXX: check params conditions */
+  DBOpParams del_params = {};
+  const RGWBucketInfo& bucket_info = target->get_bucket_info();
+
+  store->InitializeParams(dpp, "RemoveObject", &del_params);
+  del_params.op.obj.state.obj = astate->obj ;
+  del_params.op.bucket.info = bucket_info;
+
+  ret = store->ProcessOp(dpp, "RemoveObject", &del_params);
+  if (ret) {
+    ldpp_dout(dpp, 0) << "In RemoveObject failed err:(" <<ret<<")" << dendl;
+	goto out;
   }
 
 out:

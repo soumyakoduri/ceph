@@ -255,19 +255,38 @@ class SQLRemoveObject : public SQLiteDB, public RemoveObjectOp {
     int Bind(const DoutPrefixProvider *dpp, DBOpParams *params);
 };
 
-class SQLListObject : public SQLiteDB, public ListObjectOp {
-  private:
-    sqlite3 **sdb = NULL;
-    sqlite3_stmt *stmt = NULL; // Prepared statement
+class SQLGetObject : public SQLiteDB, public GetObjectOp {
+	private:
+	sqlite3 **sdb = NULL;
+	sqlite3_stmt *stmt = NULL; // Prepared statement
 
-  public:
-    SQLListObject(void **db, CephContext *cct) : SQLiteDB((sqlite3 *)(*db), cct), sdb((sqlite3 **)db) {}
-    SQLListObject(sqlite3 **sdbi, CephContext *cct) : SQLiteDB(*sdbi, cct), sdb(sdbi) {}
+	public:
+    SQLGetObject(void **db, CephContext *cct) : SQLiteDB((sqlite3 *)(*db), cct), sdb((sqlite3 **)db) {}
+    SQLGetObject(sqlite3 **sdbi, CephContext *cct) : SQLiteDB(*sdbi, cct), sdb(sdbi) {}
 
-    ~SQLListObject() {
-      if (stmt)
-        sqlite3_finalize(stmt);
-    }
+	~SQLGetObject() {
+		if (stmt)
+			sqlite3_finalize(stmt);
+	}
+    int Prepare(const DoutPrefixProvider *dpp, DBOpParams *params);
+    int Execute(const DoutPrefixProvider *dpp, DBOpParams *params);
+    int Bind(const DoutPrefixProvider *dpp, DBOpParams *params);
+};
+
+class SQLUpdateObject : public SQLiteDB, public UpdateObjectOp {
+	private:
+	sqlite3 **sdb = NULL;
+	sqlite3_stmt *omap_stmt = NULL; // Prepared statement
+
+	public:
+    SQLUpdateObject(void **db, CephContext *cct) : SQLiteDB((sqlite3 *)(*db), cct), sdb((sqlite3 **)db) {}
+    SQLUpdateObject(sqlite3 **sdbi, CephContext *cct) : SQLiteDB(*sdbi, cct), sdb(sdbi) {}
+
+	~SQLUpdateObject() {
+		if (omap_stmt)
+			sqlite3_finalize(omap_stmt);
+	}
+
     int Prepare(const DoutPrefixProvider *dpp, DBOpParams *params);
     int Execute(const DoutPrefixProvider *dpp, DBOpParams *params);
     int Bind(const DoutPrefixProvider *dpp, DBOpParams *params);

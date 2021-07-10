@@ -21,6 +21,7 @@
 #include "global/global_context.h"
 #include "global/global_init.h"
 #include "common/ceph_context.h"
+#include "rgw/rgw_obj_manifest.h"
 
 using namespace std;
 
@@ -45,6 +46,52 @@ struct DBOpBucketInfo {
   list<RGWBucketEnt> list_entries;
 };
 
+struct DBOpObjectInfo {
+  RGWAccessControlPolicy acls;
+  RGWObjState state;
+
+  /* Below are taken from rgw_bucket_dir_entry */
+  RGWObjCategory category;
+  std::string etag;
+  std::string owner;
+  std::string owner_display_name;
+  std::string content_type;
+  std::string storage_class;
+  bool appendable;
+  uint64_t index_ver;
+  std::string tag;
+  uint16_t flags;
+  uint64_t versioned_epoch;
+
+  /* from state.manifest (RGWObjManifest) */
+  map<uint64_t, RGWObjManifestPart> objs;
+  uint64_t head_size{0};
+  rgw_placement_rule head_placement_rule;
+  uint64_t max_head_size{0};
+  string prefix;
+  rgw_bucket_placement tail_placement; /* might be different than the original bucket,
+                                          as object might have been copied across pools */
+  map<uint64_t, RGWObjManifestRule> rules;
+  string tail_instance; /* tail object's instance */
+
+
+  /* Obj's omap <key,value> store */
+  std::map<std::string, bufferlist> omap;
+
+  /* Extra fields */
+  bool is_multipart;
+  bufferlist head_data;
+};
+
+struct DBOpObjectDataInfo {
+  RGWObjState state;
+  uint64_t part_num;
+  uint64_t multipart_part_num;
+  uint64_t offset;
+  uint64_t size;
+  bufferlist data{};
+};
+
 struct DBOpInfo {
   string name; // Op name
   /* Support only single access_key for now. So store
@@ -55,6 +102,8 @@ struct DBOpInfo {
   DBOpUserInfo user;
   string query_str;
   DBOpBucketInfo bucket;
+  DBOpObjectInfo obj;
+  DBOpObjectDataInfo obj_data;
   uint64_t list_max_count;
 };
 
@@ -72,10 +121,7 @@ struct DBOpParams {
   /* Below are subject to change */
   string objectdata_table;
   string quota_table;
-  string object;
-  size_t offset;
-  string data;
-  size_t datalen;
+  string obj;
 };
 
 /* Used for prepared schemas.
@@ -159,30 +205,85 @@ struct DBOpBucketPrepareInfo {
   string max_marker = ":max_marker";
 };
 
+struct DBOpObjectPrepareInfo {
+  string obj_name = ":obj_name";
+  string obj_instance = ":obj_instance";
+  string obj_ns  = ":obj_ns";
+  string acls = ":acls";
+  string index_ver = ":index_ver";
+  string tag = ":tag";
+  string flags = ":flags";
+  string versioned_epoch = ":versioned_epoch";
+  string obj_category = ":obj_category";
+  string etag = ":etag";
+  string owner = ":owner";
+  string owner_display_name = ":owner_display_name";
+  string storage_class = ":storage_class";
+  string appendable = ":appendable";
+  string content_type = ":content_type";
+  string index_hash_source = ":index_hash_source";
+  string obj_size = ":obj_size";
+  string accounted_size = ":accounted_size";
+  string mtime = ":mtime";
+  string epoch = ":epoch";
+  string obj_tag = ":obj_tag";
+  string tail_tag = ":tail_tag";
+  string write_tag = ":write_tag";
+  string fake_tag = ":fake_tag";
+  string shadow_obj = ":shadow_obj";
+  string has_data = ":has_data";
+  string is_olh = ":is_ols";
+  string olh_tag = ":olh_tag";
+  string pg_ver = ":pg_ver";
+  string zone_short_id = ":zone_short_id";
+  string obj_version = ":obj_version";
+  string obj_version_tag = ":obj_version_tag";
+  string obj_attrs = ":obj_attrs";
+  string head_size = ":head_size";
+  string max_head_size = ":max_head_size";
+  string prefix = ":prefix";
+  string tail_instance = ":tail_instance";
+  string head_placement_rule_name = ":head_placement_rule_name";
+  string head_placement_storage_class  = ":head_placement_storage_class";
+  string tail_placement_rule_name = ":tail_placement_rule_name";
+  string tail_placement_storage_class  = ":tail_placement_storage_class";
+  string manifest_part_objs = ":manifest_part_objs";
+  string manifest_part_rules = ":manifest_part_rules";
+  string omap = ":omap";
+  string is_multipart = ":is_multipart";
+  string head_data = ":head_data";
+};
+
+struct DBOpObjectDataPrepareInfo {
+  string part_num = ":part_num";
+  string offset = ":offset";
+  string data = ":data";
+  string size = ":size";
+  string multipart_part_num = ":multipart_part_num";
+};
+
 struct DBOpPrepareInfo {
   DBOpUserPrepareInfo user;
   string query_str = ":query_str";
   DBOpBucketPrepareInfo bucket;
+  DBOpObjectPrepareInfo obj;
+  DBOpObjectDataPrepareInfo obj_data;
   string list_max_count = ":list_max_count";
 };
 
 struct DBOpPrepareParams {
   /* Tables */
-  string user_table = ":user_table";
-  string bucket_table = ":bucket_table";
-  string object_table = ":object_table";
+  string user_table;
+  string bucket_table;
+  string object_table;
 
   /* Ops */
   DBOpPrepareInfo op;
 
 
   /* below subject to change */
-  string objectdata_table = ":objectdata_table";
-  string quota_table = ":quota_table";
-  string object = ":object";
-  string offset = ":offset";
-  string data = ":data";
-  string datalen = ":datalen";
+  string objectdata_table;
+  string quota_table;
 };
 
 struct DBOps {
@@ -204,7 +305,8 @@ class ObjectOp {
 
     class InsertObjectOp *InsertObject;
     class RemoveObjectOp *RemoveObject;
-    class ListObjectOp *ListObject;
+    class GetObjectOp *GetObject;
+    class UpdateObjectOp *UpdateObject;
     class PutObjectDataOp *PutObjectData;
     class GetObjectDataOp *GetObjectData;
     class DeleteObjectDataOp *DeleteObjectData;
@@ -216,7 +318,7 @@ class ObjectOp {
 class DBOp {
   private:
     const string CreateUserTableQ =
-      /* Corresponds to RGWUser
+      /* Corresponds to rgw::sal::User
        *
        * For now only UserID is made Primary key.
        * If multiple tenants are stored in single .db handle, should
@@ -262,7 +364,7 @@ class DBOp {
       PRIMARY KEY (UserID) \n);";
 
     const string CreateBucketTableQ =
-      /* Corresponds to RGWBucket
+      /* Corresponds to rgw::sal::Bucket
        *
        *  For now only BucketName is made Primary key.
        *  If multiple tenants are stored in single .db handle, should
@@ -315,23 +417,112 @@ class DBOp {
       PRIMARY KEY (BucketName) \
       FOREIGN KEY (OwnerID) \
       REFERENCES '{}' (UserID) ON DELETE CASCADE ON UPDATE CASCADE \n);";
+
     const string CreateObjectTableQ =
+      /* Corresponds to rgw::sal::Object
+       *
+       *  For now only BucketName, ObjName is made Primary key.
+       *  If multiple tenants are stored in single .db handle, should
+       *  include Tenant too in the Primary Key. Also should
+       *  reference (BucketID, Tenant) as Foreign key.
+       * 
+       * referring to 
+       * - rgw_bucket_dir_entry - following are added for now
+       *   flags,
+       *   versioned_epoch
+       *   tag
+       *   index_ver
+       *   meta.category
+       *   meta.etag
+       *   meta.storageclass
+       *   meta.appendable
+       *   meta.content_type
+       *   meta.owner
+       *   meta.owner_display_name
+       *
+       * - RGWObjState. Below are omitted from that struct
+       *    as they seem in-memory variables
+       *    * is_atomic, has_atts, exists, prefetch_data, keep_tail, 
+       * - RGWObjManifest
+       *
+       * Extra field added "IsMultipart" to flag multipart uploads,
+       * HeadData to store first chunk data.
+       */
       "CREATE TABLE IF NOT EXISTS '{}' ( \
+      ObjName TEXT NOT NULL , \
+      ObjInstance TEXT, \
+      ObjNS TEXT, \
       BucketName TEXT NOT NULL , \
-      ObjectName TEXT NOT NULL , \
-      PRIMARY KEY (BucketName, ObjectName), \
+      ACLs    BLOB,   \
+      IndexVer    INTEGER,    \
+      Tag TEXT,   \
+      Flags INTEGER, \
+      VersionedEpoch INTEGER, \
+      ObjCategory INTEGER,    \
+      Etag   TEXT,    \
+      Owner TEXT, \
+      OwnerDisplayName TEXT,  \
+      StorageClass    TEXT,   \
+      Appendable  BOOL,   \
+      ContentType TEXT,   \
+      IndexHashSource TEXT, \
+      ObjSize  INTEGER,   \
+      AccountedSize INTEGER,  \
+      Mtime   BLOB,   \
+      Epoch  INTEGER, \
+      ObjTag  BLOB,   \
+      TailTag BLOB,   \
+      WriteTag    TEXT,   \
+      FakeTag BOOL,   \
+      ShadowObj   TEXT,   \
+      HasData  BOOL,  \
+      IsOLH BOOL,  \
+      OLHTag    BLOB, \
+      PGVer   INTEGER, \
+      ZoneShortID  INTEGER,  \
+      ObjVersion   INTEGER,    \
+      ObjVersionTag TEXT,      \
+      ObjAttrs    BLOB,   \
+      HeadSize    INTEGER,    \
+      MaxHeadSize    INTEGER,    \
+      Prefix      String, \
+      TailInstance    String, \
+      HeadPlacementRuleName   String, \
+      HeadPlacementRuleStorageClass String, \
+      TailPlacementRuleName   String, \
+      TailPlacementStorageClass String, \
+      ManifestPartObjs    BLOB,   \
+      ManifestPartRules   BLOB,   \
+      Omap    BLOB,   \
+      IsMultipart     BOOL,   \
+      HeadData  BLOB,   \
+      PRIMARY KEY (ObjName, ObjInstance, BucketName), \
       FOREIGN KEY (BucketName) \
       REFERENCES '{}' (BucketName) ON DELETE CASCADE ON UPDATE CASCADE \n);";
+
     const string CreateObjectDataTableQ =
+      /* Extra field 'MultipartPartNum' added which signifies multipart upload
+       * part number.  For regular object, it is '0'
+       *
+       *  - part: a collection of stripes that make a contiguous part of an
+       object. A regular object will only have one part (although might have
+       many stripes), a multipart object might have many parts. Each part
+       has a fixed stripe size (ObjStripeSize), although the last stripe of a
+       part might be smaller than that.
+       */
       "CREATE TABLE IF NOT EXISTS '{}' ( \
+      ObjName TEXT NOT NULL , \
+      ObjInstance TEXT, \
+      ObjNS TEXT, \
       BucketName TEXT NOT NULL , \
-      ObjectName TEXT NOT NULL , \
-      Offset   INTEGER NOT NULL, \
+      PartNum  INTEGER NOT NULL, \
+      Offset   INTEGER, \
       Data     BLOB,             \
-      Size 	 INTEGER NOT NULL, \
-      PRIMARY KEY (BucketName, ObjectName, Offset), \
-      FOREIGN KEY (BucketName, ObjectName) \
-      REFERENCES '{}' (BucketName, ObjectName) ON DELETE CASCADE ON UPDATE CASCADE \n);";
+      Size 	 INTEGER, \
+      MultipartPartNum INTEGER, \
+      PRIMARY KEY (ObjName, BucketName, ObjInstance, MultipartPartNum, PartNum), \
+      FOREIGN KEY (BucketName, ObjName, ObjInstance) \
+      REFERENCES '{}' (BucketName, ObjName, ObjInstance) ON DELETE CASCADE ON UPDATE CASCADE \n);";
 
     const string CreateQuotaTableQ =
       "CREATE TABLE IF NOT EXISTS '{}' ( \
@@ -658,52 +849,122 @@ class ListUserBucketsOp: public DBOp {
 class InsertObjectOp: public DBOp {
   private:
     const string Query =
-      "INSERT OR REPLACE INTO '{}' (BucketName, ObjectName) VALUES ({}, {})";
+      "INSERT OR REPLACE INTO '{}' \
+      (ObjName, ObjInstance, ObjNS, BucketName, ACLs, IndexVer, Tag, \
+       Flags, VersionedEpoch, ObjCategory, Etag, Owner, OwnerDisplayName, \
+       StorageClass, Appendable, ContentType, IndexHashSource, ObjSize, \
+       AccountedSize, Mtime, Epoch, ObjTag, TailTag, WriteTag, FakeTag, \
+       ShadowObj, HasData, IsOLH, OLHTag, PGVer, ZoneShortID, \
+       ObjVersion, ObjVersionTag, ObjAttrs, HeadSize, MaxHeadSize, \
+       Prefix, TailInstance, HeadPlacementRuleName, HeadPlacementRuleStorageClass, \
+       TailPlacementRuleName, TailPlacementStorageClass, \
+       ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, HeadData )     \
+      VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+          {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+          {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})";
 
   public:
     virtual ~InsertObjectOp() {}
 
     string Schema(DBOpPrepareParams &params) {
       return fmt::format(Query.c_str(),
-          params.object_table.c_str(), params.op.bucket.bucket_name.c_str(),
-          params.object.c_str());
+          params.object_table.c_str(), params.op.obj.obj_name,
+          params.op.obj.obj_instance, params.op.obj.obj_ns,
+          params.op.bucket.bucket_name, params.op.obj.acls, params.op.obj.index_ver,
+          params.op.obj.tag, params.op.obj.flags, params.op.obj.versioned_epoch,
+          params.op.obj.obj_category, params.op.obj.etag, params.op.obj.owner,
+          params.op.obj.owner_display_name, params.op.obj.storage_class,
+          params.op.obj.appendable, params.op.obj.content_type,
+          params.op.obj.index_hash_source, params.op.obj.obj_size,
+          params.op.obj.accounted_size, params.op.obj.mtime,
+          params.op.obj.epoch, params.op.obj.obj_tag, params.op.obj.tail_tag,
+          params.op.obj.write_tag, params.op.obj.fake_tag, params.op.obj.shadow_obj,
+          params.op.obj.has_data, params.op.obj.is_olh, params.op.obj.olh_tag,
+          params.op.obj.pg_ver, params.op.obj.zone_short_id,
+          params.op.obj.obj_version, params.op.obj.obj_version_tag,
+          params.op.obj.obj_attrs, params.op.obj.head_size,
+          params.op.obj.max_head_size, params.op.obj.prefix,
+          params.op.obj.tail_instance,
+          params.op.obj.head_placement_rule_name,
+          params.op.obj.head_placement_storage_class,
+          params.op.obj.tail_placement_rule_name,
+          params.op.obj.tail_placement_storage_class,
+          params.op.obj.manifest_part_objs,
+          params.op.obj.manifest_part_rules, params.op.obj.omap,
+          params.op.obj.is_multipart, params.op.obj.head_data);
     }
 };
 
 class RemoveObjectOp: public DBOp {
   private:
     const string Query =
-      "DELETE from '{}' where BucketName = {} and ObjectName = {}";
+      "DELETE from '{}' where BucketName = {} and ObjName = {} and ObjInstance = {}";
 
   public:
     virtual ~RemoveObjectOp() {}
 
     string Schema(DBOpPrepareParams &params) {
       return fmt::format(Query.c_str(), params.object_table.c_str(),
-          params.op.bucket.bucket_name.c_str(), params.object.c_str());
+          params.op.bucket.bucket_name.c_str(),
+          params.op.obj.obj_name.c_str(),
+          params.op.obj.obj_instance.c_str());
     }
 };
 
-class ListObjectOp: public DBOp {
+class GetObjectOp: public DBOp {
   private:
     const string Query =
-      "SELECT  * from '{}' where BucketName = {} and ObjectName = {}";
-    // XXX: Include queries for specific bucket and user too
+      "SELECT  \
+      ObjName, ObjInstance, ObjNS, BucketName, ACLs, IndexVer, Tag, \
+      Flags, VersionedEpoch, ObjCategory, Etag, Owner, OwnerDisplayName, \
+      StorageClass, Appendable, ContentType, IndexHashSource, ObjSize, \
+      AccountedSize, Mtime, Epoch, ObjTag, TailTag, WriteTag, FakeTag, \
+      ShadowObj, HasData, IsOLH, OLHTag, PGVer, ZoneShortID, \
+      ObjVersion, ObjVersionTag, ObjAttrs, HeadSize, MaxHeadSize, \
+      Prefix, TailInstance, HeadPlacementRuleName, HeadPlacementRuleStorageClass, \
+      TailPlacementRuleName, TailPlacementStorageClass, \
+      ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, HeadData from '{}' \
+      where BucketName = {} and ObjName = {} and ObjInstance = {}";
 
   public:
-    virtual ~ListObjectOp() {}
+    virtual ~GetObjectOp() {}
 
     string Schema(DBOpPrepareParams &params) {
-      return fmt::format(Query.c_str(), params.object_table.c_str(),
-          params.op.bucket.bucket_name.c_str(), params.object.c_str());
+      return fmt::format(Query.c_str(),
+          params.object_table.c_str(),
+          params.op.bucket.bucket_name.c_str(),
+          params.op.obj.obj_name.c_str(),
+          params.op.obj.obj_instance.c_str());
+    }
+};
+
+class UpdateObjectOp: public DBOp {
+  private:
+    // Updates Omap
+    const string OmapQuery =
+      "UPDATE '{}' SET Omap = {} \
+      where BucketName = {} and ObjName = {} and ObjInstance = {}";
+  public:
+    virtual ~UpdateObjectOp() {}
+
+    string Schema(DBOpPrepareParams &params) {
+      if (params.op.query_str == "omap") {
+        return fmt::format(OmapQuery.c_str(),
+            params.object_table.c_str(), params.op.obj.omap.c_str(),
+            params.op.bucket.bucket_name.c_str(),
+            params.op.obj.obj_name.c_str(),
+            params.op.obj.obj_instance.c_str());
+      }
+      return "";
     }
 };
 
 class PutObjectDataOp: public DBOp {
   private:
     const string Query =
-      "INSERT OR REPLACE INTO '{}' (BucketName, ObjectName, Offset, Data, Size) \
-      VALUES ({}, {}, {}, {}, {})";
+      "INSERT OR REPLACE INTO '{}' \
+      (ObjName, ObjInstance, ObjNS, BucketName, PartNum, Offset, Data, Size, MultipartPartNum) \
+      VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})";
 
   public:
     virtual ~PutObjectDataOp() {}
@@ -711,163 +972,481 @@ class PutObjectDataOp: public DBOp {
     string Schema(DBOpPrepareParams &params) {
       return fmt::format(Query.c_str(),
           params.objectdata_table.c_str(),
-          params.op.bucket.bucket_name.c_str(), params.object.c_str(),
-          params.offset.c_str(), params.data.c_str(),
-          params.datalen.c_str());
+          params.op.obj.obj_name, params.op.obj.obj_instance,
+          params.op.obj.obj_ns,
+          params.op.bucket.bucket_name.c_str(),
+          params.op.obj_data.part_num,
+          params.op.obj_data.offset.c_str(), params.op.obj_data.data.c_str(),
+          params.op.obj_data.size, params.op.obj_data.multipart_part_num);
     }
 };
 
 class GetObjectDataOp: public DBOp {
   private:
     const string Query =
-      "SELECT * from '{}' where BucketName = {} and ObjectName = {}";
+      "SELECT  \
+      ObjName, ObjInstance, ObjNS, BucketName, PartNum, Offset, Data, Size, \
+      MultipartPartNum from '{}' where BucketName = {} and ObjName = {} and ObjInstance = {}";
 
   public:
     virtual ~GetObjectDataOp() {}
 
     string Schema(DBOpPrepareParams &params) {
       return fmt::format(Query.c_str(),
-          params.objectdata_table.c_str(), params.op.bucket.bucket_name.c_str(),
-          params.object.c_str());
+          params.objectdata_table.c_str(),
+          params.op.bucket.bucket_name.c_str(),
+          params.op.obj.obj_name.c_str(),
+          params.op.obj.obj_instance.c_str());
     }
 };
 
 class DeleteObjectDataOp: public DBOp {
   private:
     const string Query =
-      "DELETE from '{}' where BucketName = {} and ObjectName = {}";
+      "DELETE from '{}' where BucketName = {} and ObjName = {} and ObjInstance = {}";
 
   public:
     virtual ~DeleteObjectDataOp() {}
 
     string Schema(DBOpPrepareParams &params) {
       return fmt::format(Query.c_str(),
-          params.objectdata_table.c_str(), params.op.bucket.bucket_name.c_str(),
-          params.object.c_str());
+          params.objectdata_table.c_str(),
+          params.op.bucket.bucket_name.c_str(),
+          params.op.obj.obj_name.c_str(),
+          params.op.obj.obj_instance.c_str());
     }
 };
 
-class DBStore {
-  private:
-    const string db_name;
-    const string user_table;
-    const string bucket_table;
-    const string quota_table;
-    static map<string, class ObjectOp*> objectmap;
-    pthread_mutex_t mutex; // to protect objectmap and other shared
-    // objects if any. This mutex is taken
-    // before processing every fop (i.e, in
-    // ProcessOp()). If required this can be
-    // made further granular by taking separate
-    // locks for objectmap and db operations etc.
+/* taken from rgw_rados.h::RGWOLHInfo */
+struct DBOLHInfo {
+  rgw_obj target;
+  bool removed;
+  DBOLHInfo() : removed(false) {}
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(target, bl);
+    encode(removed, bl);
+    ENCODE_FINISH(bl);
+  }
 
-  protected:
-    void *db;
-    CephContext *cct;
-    const DoutPrefix dp;
-    uint64_t max_bucket_id = 0;
-
-  public:	
-    DBStore(string db_name, CephContext *_cct) : db_name(db_name),
-    user_table(db_name+".user.table"),
-    bucket_table(db_name+".bucket.table"),
-    quota_table(db_name+".quota.table"),
-    cct(_cct),
-    dp(_cct, dout_subsys, "rgw DBStore backend: ")
-  {}
-    /*	DBStore() {}*/
-
-    DBStore(CephContext *_cct) : db_name("default_db"),
-    user_table("user.table"),
-    bucket_table("bucket.table"),
-    quota_table("quota.table"),
-    cct(_cct),
-    dp(_cct, dout_subsys, "rgw DBStore backend: ")
-  {}
-    virtual	~DBStore() {}
-
-    const string getDBname() { return db_name + ".db"; }
-    const string getUserTable() { return user_table; }
-    const string getBucketTable() { return bucket_table; }
-    const string getQuotaTable() { return quota_table; }
-
-    map<string, class ObjectOp*> getObjectMap();
-
-    struct DBOps dbops; // DB operations, make it private?
-
-    void set_context(CephContext *_cct) {
-      cct = _cct;
-    }
-
-    CephContext *ctx() { return cct; }
-    const DoutPrefixProvider *get_def_dpp() { return &dp; }
-
-    int Initialize(string logfile, int loglevel);
-    int Destroy(const DoutPrefixProvider *dpp);
-    int LockInit(const DoutPrefixProvider *dpp);
-    int LockDestroy(const DoutPrefixProvider *dpp);
-    int Lock(const DoutPrefixProvider *dpp);
-    int Unlock(const DoutPrefixProvider *dpp);
-
-    int InitializeParams(const DoutPrefixProvider *dpp, string Op, DBOpParams *params);
-    int ProcessOp(const DoutPrefixProvider *dpp, string Op, DBOpParams *params);
-    DBOp* getDBOp(const DoutPrefixProvider *dpp, string Op, struct DBOpParams *params);
-    int objectmapInsert(const DoutPrefixProvider *dpp, string bucket, void *ptr);
-    int objectmapDelete(const DoutPrefixProvider *dpp, string bucket);
-
-    virtual void *openDB(const DoutPrefixProvider *dpp) { return NULL; }
-    virtual int closeDB(const DoutPrefixProvider *dpp) { return 0; }
-    virtual int createTables(const DoutPrefixProvider *dpp) { return 0; }
-    virtual int InitializeDBOps(const DoutPrefixProvider *dpp) { return 0; }
-    virtual int FreeDBOps(const DoutPrefixProvider *dpp) { return 0; }
-    virtual int InitPrepareParams(const DoutPrefixProvider *dpp, DBOpPrepareParams &params) = 0;
-
-    virtual int ListAllBuckets(const DoutPrefixProvider *dpp, DBOpParams *params) = 0;
-    virtual int ListAllUsers(const DoutPrefixProvider *dpp, DBOpParams *params) = 0;
-    virtual int ListAllObjects(const DoutPrefixProvider *dpp, DBOpParams *params) = 0;
-
-    int get_user(const DoutPrefixProvider *dpp,
-        const std::string& query_str, const std::string& query_str_val,
-        RGWUserInfo& uinfo, map<string, bufferlist> *pattrs,
-        RGWObjVersionTracker *pobjv_tracker);
-    int store_user(const DoutPrefixProvider *dpp,
-        RGWUserInfo& uinfo, bool exclusive, map<string, bufferlist> *pattrs,
-        RGWObjVersionTracker *pobjv_tracker, RGWUserInfo* pold_info);
-    int remove_user(const DoutPrefixProvider *dpp,
-        RGWUserInfo& uinfo, RGWObjVersionTracker *pobjv_tracker);
-    int get_bucket_info(const DoutPrefixProvider *dpp, const std::string& query_str,
-        const std::string& query_str_val,
-        RGWBucketInfo& info, rgw::sal::Attrs* pattrs, ceph::real_time* pmtime,
-        obj_version* pbucket_version);
-    int create_bucket(const DoutPrefixProvider *dpp,
-        const RGWUserInfo& owner, rgw_bucket& bucket,
-        const string& zonegroup_id,
-        const rgw_placement_rule& placement_rule,
-        const string& swift_ver_location,
-        const RGWQuotaInfo * pquota_info,
-        map<std::string, bufferlist>& attrs,
-        RGWBucketInfo& info,
-        obj_version *pobjv,
-        obj_version *pep_objv,
-        real_time creation_time,
-        rgw_bucket *pmaster_bucket,
-        uint32_t *pmaster_num_shards,
-        optional_yield y,
-        bool exclusive);
-
-    int next_bucket_id() { return ++max_bucket_id; };
-
-    int remove_bucket(const DoutPrefixProvider *dpp, const RGWBucketInfo info);
-    int list_buckets(const DoutPrefixProvider *dpp, const rgw_user& user,
-        const string& marker,
-        const string& end_marker,
-        uint64_t max,
-        bool need_stats,
-        RGWUserBuckets *buckets,
-        bool *is_truncated);
-    int update_bucket(const DoutPrefixProvider *dpp, const std::string& query_str,
-        RGWBucketInfo& info, bool exclusive,
-        const rgw_user* powner_id, map<std::string, bufferlist>* pattrs,
-        ceph::real_time* pmtime, RGWObjVersionTracker* pobjv);
+  void decode(bufferlist::const_iterator& bl) {
+    DECODE_START(1, bl);
+    decode(target, bl);
+    decode(removed, bl);
+    DECODE_FINISH(bl);
+  }
 };
+WRITE_CLASS_ENCODER(DBOLHInfo)
+
+  class DBStore {
+    private:
+      const string db_name;
+      const string user_table;
+      const string bucket_table;
+      const string quota_table;
+      static map<string, class ObjectOp*> objectmap;
+      pthread_mutex_t mutex; // to protect objectmap and other shared
+      // objects if any. This mutex is taken
+      // before processing every fop (i.e, in
+      // ProcessOp()). If required this can be
+      // made further granular by taking separate
+      // locks for objectmap and db operations etc.
+      rgw::sal::Store* store;
+
+    protected:
+      void *db;
+      CephContext *cct;
+      const DoutPrefix dp;
+      uint64_t max_bucket_id = 0;
+      // XXX: default ObjStripeSize or ObjChunk size - 4M, make them configurable?
+      int ObjStripeSize = 4 * 1024 * 1204;
+
+    public:	
+      DBStore(string db_name, CephContext *_cct) : db_name(db_name),
+      user_table(db_name+".user.table"),
+      bucket_table(db_name+".bucket.table"),
+      quota_table(db_name+".quota.table"),
+      cct(_cct),
+      dp(_cct, dout_subsys, "rgw DBStore backend: ")
+    {}
+      /*	DBStore() {}*/
+
+      DBStore(CephContext *_cct) : db_name("default_db"),
+      user_table("user.table"),
+      bucket_table("bucket.table"),
+      quota_table("quota.table"),
+      cct(_cct),
+      dp(_cct, dout_subsys, "rgw DBStore backend: ")
+    {}
+      virtual	~DBStore() {}
+
+      const string getDBname() { return db_name + ".db"; }
+      const string getUserTable() { return user_table; }
+      const string getBucketTable() { return bucket_table; }
+      const string getQuotaTable() { return quota_table; }
+      const string getObjectTable(string bucket) {
+         return db_name+"."+bucket+".object.table"; }
+      const string getObjectDataTable(string bucket) {
+         return db_name+"."+bucket+".objectdata.table"; }
+
+
+      map<string, class ObjectOp*> getObjectMap();
+
+      struct DBOps dbops; // DB operations, make it private?
+
+      void set_store(rgw::sal::Store* _store) {
+        store = _store;
+      }
+
+      void set_context(CephContext *_cct) {
+        cct = _cct;
+      }
+
+      CephContext *ctx() { return cct; }
+      const DoutPrefixProvider *get_def_dpp() { return &dp; }
+
+      int Initialize(string logfile, int loglevel);
+      int Destroy(const DoutPrefixProvider *dpp);
+      int LockInit(const DoutPrefixProvider *dpp);
+      int LockDestroy(const DoutPrefixProvider *dpp);
+      int Lock(const DoutPrefixProvider *dpp);
+      int Unlock(const DoutPrefixProvider *dpp);
+
+      int InitializeParams(const DoutPrefixProvider *dpp, string Op, DBOpParams *params);
+      int ProcessOp(const DoutPrefixProvider *dpp, string Op, DBOpParams *params);
+      DBOp* getDBOp(const DoutPrefixProvider *dpp, string Op, struct DBOpParams *params);
+      int objectmapInsert(const DoutPrefixProvider *dpp, string bucket, void *ptr);
+      int objectmapDelete(const DoutPrefixProvider *dpp, string bucket);
+
+      virtual void *openDB(const DoutPrefixProvider *dpp) { return NULL; }
+      virtual int closeDB(const DoutPrefixProvider *dpp) { return 0; }
+      virtual int createTables(const DoutPrefixProvider *dpp) { return 0; }
+      virtual int InitializeDBOps(const DoutPrefixProvider *dpp) { return 0; }
+      virtual int FreeDBOps(const DoutPrefixProvider *dpp) { return 0; }
+      virtual int InitPrepareParams(const DoutPrefixProvider *dpp, DBOpPrepareParams &params) = 0;
+
+      virtual int ListAllBuckets(const DoutPrefixProvider *dpp, DBOpParams *params) = 0;
+      virtual int ListAllUsers(const DoutPrefixProvider *dpp, DBOpParams *params) = 0;
+      virtual int ListAllObjects(const DoutPrefixProvider *dpp, DBOpParams *params) = 0;
+
+      int get_user(const DoutPrefixProvider *dpp,
+          const std::string& query_str, const std::string& query_str_val,
+          RGWUserInfo& uinfo, map<string, bufferlist> *pattrs,
+          RGWObjVersionTracker *pobjv_tracker);
+      int store_user(const DoutPrefixProvider *dpp,
+          RGWUserInfo& uinfo, bool exclusive, map<string, bufferlist> *pattrs,
+          RGWObjVersionTracker *pobjv_tracker, RGWUserInfo* pold_info);
+      int remove_user(const DoutPrefixProvider *dpp,
+          RGWUserInfo& uinfo, RGWObjVersionTracker *pobjv_tracker);
+      int get_bucket_info(const DoutPrefixProvider *dpp, const std::string& query_str,
+          const std::string& query_str_val,
+          RGWBucketInfo& info, rgw::sal::Attrs* pattrs, ceph::real_time* pmtime,
+          obj_version* pbucket_version);
+      int create_bucket(const DoutPrefixProvider *dpp,
+          const RGWUserInfo& owner, rgw_bucket& bucket,
+          const string& zonegroup_id,
+          const rgw_placement_rule& placement_rule,
+          const string& swift_ver_location,
+          const RGWQuotaInfo * pquota_info,
+          map<std::string, bufferlist>& attrs,
+          RGWBucketInfo& info,
+          obj_version *pobjv,
+          obj_version *pep_objv,
+          real_time creation_time,
+          rgw_bucket *pmaster_bucket,
+          uint32_t *pmaster_num_shards,
+          optional_yield y,
+          bool exclusive);
+
+      int next_bucket_id() { return ++max_bucket_id; };
+
+      int remove_bucket(const DoutPrefixProvider *dpp, const RGWBucketInfo info);
+      int list_buckets(const DoutPrefixProvider *dpp, const rgw_user& user,
+          const string& marker,
+          const string& end_marker,
+          uint64_t max,
+          bool need_stats,
+          RGWUserBuckets *buckets,
+          bool *is_truncated);
+      int update_bucket(const DoutPrefixProvider *dpp, const std::string& query_str,
+          RGWBucketInfo& info, bool exclusive,
+          const rgw_user* powner_id, map<std::string, bufferlist>* pattrs,
+          ceph::real_time* pmtime, RGWObjVersionTracker* pobjv);
+
+      int get_max_stripe_size() { return ObjStripeSize; }
+
+      /* XXX: the parameters may be subject to change. All we need is bucket name
+       * & obj name,instance - keys */
+      int get_obj_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+          bool follow_olh, RGWObjState **state);
+      int get_olh_target_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+          RGWObjState* olh_state, RGWObjState** target);
+      int follow_olh(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, RGWObjState *state,
+          const rgw_obj& olh_obj, rgw_obj *target);
+      bool obj_to_raw_head(const DoutPrefixProvider *dpp, const rgw_placement_rule& placement_rule, const rgw_obj& obj,
+          rgw_raw_obj *raw_obj);
+
+      // db raw obj string is of format -
+      // "<bucketname>_<objname>_<objinstance>_<multipart-partnum>_<partnum>"
+      const string raw_obj_oid = "{1}_{2}_{3}_{4}_{5}";
+
+      inline string to_oid(const string& bucket, const string& obj_name, const string& obj_instance,
+          uint64_t mp_num, uint64_t partnum) {
+        string s = fmt::format(raw_obj_oid.c_str(), bucket, obj_name, obj_instance, mp_num, partnum);
+        return s;
+      }
+      inline int from_oid(string& oid, string& bucket, string& obj_name,
+          string& obj_instance,
+          uint64_t& mp_num, uint64_t& partnum) {
+        vector<std::string> result;
+        boost::split(result, oid, boost::is_any_of("_"));
+        bucket = result[0];
+        obj_name = result[1];
+        obj_instance = result[2];
+        mp_num = stoi(result[3]);
+        partnum = stoi(result[4]);
+
+        return 0;
+      }
+
+      /* struct rgw_raw_obj {
+       *  rgw_pool pool;
+       *  string oid;
+       *  string loc;
+       * }
+       *
+       * mapping it to raw_obj below -
+       *  pool - store object table name
+       *  oid - store "bucket-name_objname_instance_multipart-partnum_partnum"
+       *
+       *  For head objects, multiper-partnum & partnum are '0'
+       *
+       */
+      struct raw_obj {
+        DBStore* db;
+
+        string bucket_name;
+        string obj_name;
+        string obj_instance;
+        string obj_ns;
+        uint64_t multipart_partnum;
+        uint64_t part_num;
+
+        string obj_table;
+        string obj_data_table;
+
+        raw_obj(DBStore* _db) {
+          db = _db;
+        }
+
+        raw_obj(DBStore* _db, string& _bname, string& _obj_name, string& _obj_instance,
+            string& _obj_ns, int _mp_partnum, int _part_num) {
+          db = _db;
+          bucket_name = _bname;
+          obj_name = _obj_name;
+          obj_instance = _obj_instance;
+          obj_ns = _obj_ns;
+          multipart_partnum = _mp_partnum;
+          part_num = _part_num;
+
+          obj_table = bucket_name+".object.table";
+          obj_data_table = bucket_name+".objectdata.table";
+        }
+
+        raw_obj(DBStore* _db, string& oid) {
+          int r;
+
+          db = _db;
+          r = db->from_oid(oid, bucket_name, obj_name, obj_instance, multipart_partnum,
+              part_num);
+          if (r < 0) {
+            multipart_partnum = 0;
+            part_num = 0;
+          }
+
+          obj_table = bucket_name+".object.table";
+          obj_data_table = bucket_name+".objectdata.table";
+        }
+
+        int InitializeParamsfromRawObj (const DoutPrefixProvider *dpp, DBOpParams* params);
+
+        int obj_omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val, bool must_exist);
+        int obj_omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
+            const std::set<std::string>& keys,
+            std::map<std::string, bufferlist>* vals);
+        int obj_omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m);
+        int obj_omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker, uint64_t count,
+            std::map<std::string, bufferlist> *m, bool* pmore);
+        int read(const DoutPrefixProvider *dpp, int64_t ofs, uint64_t end, bufferlist& bl);
+      };
+
+      class Object {
+        friend class DBStore;
+        DBStore* store;
+
+        RGWBucketInfo bucket_info;
+        RGWObjectCtx& ctx;
+        rgw_obj obj;
+
+        RGWObjState *state;
+
+        bool versioning_disabled;
+
+        bool bs_initialized;
+
+        public:
+        Object(DBStore *_store, const RGWBucketInfo& _bucket_info, RGWObjectCtx& _ctx, const rgw_obj& _obj) : store(_store), bucket_info(_bucket_info),
+        ctx(_ctx), obj(_obj),
+        state(NULL), versioning_disabled(false),
+        bs_initialized(false) {}
+
+        struct Read {
+          DBStore::Object *source;
+
+          struct GetObjState {
+            rgw_obj obj;
+            rgw_raw_obj head_obj;
+            rgw_pool cur_pool;
+          } state;
+
+          struct ConditionParams {
+            const ceph::real_time *mod_ptr;
+            const ceph::real_time *unmod_ptr;
+            bool high_precision_time;
+            uint32_t mod_zone_id;
+            uint64_t mod_pg_ver;
+            const char *if_match;
+            const char *if_nomatch;
+
+            ConditionParams() : 
+              mod_ptr(NULL), unmod_ptr(NULL), high_precision_time(false), mod_zone_id(0), mod_pg_ver(0),
+              if_match(NULL), if_nomatch(NULL) {}
+          } conds;
+
+          struct Params {
+            ceph::real_time *lastmod;
+            uint64_t *obj_size;
+            map<string, bufferlist> *attrs;
+            rgw_obj *target_obj;
+
+            Params() : lastmod(nullptr), obj_size(nullptr), attrs(nullptr),
+            target_obj(nullptr) {}
+          } params;
+
+          explicit Read(DBStore::Object *_source) : source(_source) {}
+
+          int prepare(const DoutPrefixProvider *dpp);
+          static int range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t &end);
+          int read(int64_t ofs, int64_t end, bufferlist& bl, const DoutPrefixProvider *dpp);
+          /*      int iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb, optional_yield y);*/
+          int get_attr(const DoutPrefixProvider *dpp, const char *name, bufferlist& dest);
+        };
+
+        struct Write {
+          DBStore::Object *target;
+
+          struct MetaParams {
+            ceph::real_time *mtime;
+            map<std::string, bufferlist>* rmattrs;
+            const bufferlist *data;
+            RGWObjManifest *manifest;
+            const string *ptag;
+            list<rgw_obj_index_key> *remove_objs;
+            ceph::real_time set_mtime;
+            rgw_user owner;
+            RGWObjCategory category;
+            int flags;
+            const char *if_match;
+            const char *if_nomatch;
+            std::optional<uint64_t> olh_epoch;
+            ceph::real_time delete_at;
+            bool canceled;
+            const string *user_data;
+            rgw_zone_set *zones_trace;
+            bool modify_tail;
+            bool completeMultipart;
+            bool appendable;
+
+            MetaParams() : mtime(NULL), rmattrs(NULL), data(NULL), manifest(NULL), ptag(NULL),
+            remove_objs(NULL), category(RGWObjCategory::Main), flags(0),
+            if_match(NULL), if_nomatch(NULL), canceled(false), user_data(nullptr), zones_trace(nullptr),
+            modify_tail(false),  completeMultipart(false), appendable(false) {}
+          } meta;
+
+          explicit Write(DBStore::Object *_target) : target(_target) {}
+
+          /*    int _do_write_meta(const DoutPrefixProvider *dpp, 
+                uint64_t size, uint64_t accounted_size,
+                map<std::string, bufferlist>& attrs,
+                bool modify_tail, bool assume_noent,
+                void *index_op, optional_yield y);
+                int write_meta(const DoutPrefixProvider *dpp, uint64_t size, uint64_t accounted_size,
+                map<std::string, bufferlist>& attrs, optional_yield y);
+                int write_data(const char *data, uint64_t ofs, uint64_t len, bool exclusive);
+                const req_state* get_req_state() {
+                return (req_state *)target->get_ctx().get_private();
+                }*/
+        };
+
+        struct Delete {
+          DBStore::Object *target;
+
+          struct DeleteParams {
+            rgw_user bucket_owner;
+            int versioning_status;
+            ACLOwner obj_owner; /* needed for creation of deletion marker */
+            uint64_t olh_epoch;
+            string marker_version_id;
+            uint32_t bilog_flags;
+            list<rgw_obj_index_key> *remove_objs;
+            ceph::real_time expiration_time;
+            ceph::real_time unmod_since;
+            ceph::real_time mtime; /* for setting delete marker mtime */
+            bool high_precision_time;
+            rgw_zone_set *zones_trace;
+            bool abortmp;
+            uint64_t parts_accounted_size;
+
+            DeleteParams() : versioning_status(0), olh_epoch(0), bilog_flags(0), remove_objs(NULL), high_precision_time(false), zones_trace(nullptr), abortmp(false), parts_accounted_size(0) {}
+          } params;
+
+          struct DeleteResult {
+            bool delete_marker;
+            string version_id;
+
+            DeleteResult() : delete_marker(false) {}
+          } result;
+
+          explicit Delete(DBStore::Object *_target) : target(_target) {}
+
+          int delete_obj(const DoutPrefixProvider *dpp);
+        };
+
+        struct Stat {
+          DBStore::Object *source;
+
+          struct Result {
+            rgw_obj obj;
+            std::optional<RGWObjManifest> manifest;
+            uint64_t size{0};
+            struct timespec mtime {};
+            map<string, bufferlist> attrs;
+          } result;
+
+          explicit Stat(DBStore::Object *_source) : source(_source) {}
+
+          int stat_async(const DoutPrefixProvider *dpp);
+          int wait(const DoutPrefixProvider *dpp);
+        };
+
+        int get_state(const DoutPrefixProvider *dpp, RGWObjState **pstate, bool follow_olh);
+        int get_manifest(const DoutPrefixProvider *dpp, RGWObjManifest **pmanifest);
+
+        DBStore *get_store() { return store; }
+        rgw_obj& get_obj() { return obj; }
+        RGWObjectCtx& get_ctx() { return ctx; }
+        RGWBucketInfo& get_bucket_info() { return bucket_info; }
+
+      };
+  };
 #endif
