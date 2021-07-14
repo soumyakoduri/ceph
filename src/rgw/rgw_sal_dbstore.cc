@@ -467,31 +467,35 @@ namespace rgw::sal {
       std::map<std::string, bufferlist> *m,
       bool* pmore, optional_yield y)
   {
-    //  DBStore::raw_obj raw_obj(this->state->raw_obj.key.name,  .. )
-    DBStore::raw_obj raw_obj(store->getDBStore());
-    return raw_obj.obj_omap_get_vals(dpp, marker, count, m, pmore);
+    /* XXX: No need of ctx probably */
+    DBStore::Object op_target(store->getDBStore(),
+        get_bucket()->get_info(), get_obj());
+    return op_target.obj_omap_get_vals(dpp, marker, count, m, pmore);
   }
 
   int DBObject::omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m,
       optional_yield y)
   {
-    DBStore::raw_obj raw_obj(store->getDBStore());
-    return raw_obj.obj_omap_get_all(dpp, m);
+    DBStore::Object op_target(store->getDBStore(),
+        get_bucket()->get_info(), get_obj());
+    return op_target.obj_omap_get_all(dpp, m);
   }
 
   int DBObject::omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
       const std::set<std::string>& keys,
       Attrs* vals)
   {
-    DBStore::raw_obj raw_obj(store->getDBStore());
-    return raw_obj.obj_omap_get_vals_by_keys(dpp, oid, keys, vals);
+    DBStore::Object op_target(store->getDBStore(),
+        get_bucket()->get_info(), get_obj());
+    return op_target.obj_omap_get_vals_by_keys(dpp, oid, keys, vals);
   }
 
   int DBObject::omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val,
       bool must_exist, optional_yield y)
   {
-    DBStore::raw_obj raw_obj(store->getDBStore());
-    return raw_obj.obj_omap_set_val_by_key(dpp, key, val, must_exist);
+    DBStore::Object op_target(store->getDBStore(),
+        get_bucket()->get_info(), get_obj());
+    return op_target.obj_omap_set_val_by_key(dpp, key, val, must_exist);
   }
 
   MPSerializer* DBObject::get_serializer(const DoutPrefixProvider *dpp, const std::string& lock_name)
@@ -540,7 +544,6 @@ namespace rgw::sal {
     rctx(_rctx),
     op_target(_source->store->getDBStore(),
         _source->get_bucket()->get_info(),
-        *static_cast<RGWObjectCtx *>(rctx),
         _source->get_obj()),
     parent_op(&op_target)
   { }
@@ -574,7 +577,7 @@ namespace rgw::sal {
 
   int DBObject::DBReadOp::read(int64_t ofs, int64_t end, bufferlist& bl, optional_yield y, const DoutPrefixProvider* dpp)
   {
-    return 0;
+    return parent_op.read(ofs, end, bl, dpp);
   }
 
   int DBObject::DBReadOp::get_manifest(const DoutPrefixProvider* dpp, RGWObjManifest **pmanifest,
@@ -598,7 +601,6 @@ namespace rgw::sal {
     rctx(_rctx),
     op_target(_source->store->getDBStore(),
         _source->get_bucket()->get_info(),
-        *static_cast<RGWObjectCtx *>(rctx),
         _source->get_obj()),
     parent_op(&op_target)
   { }
@@ -659,7 +661,6 @@ namespace rgw::sal {
     rctx(_rctx),
     op_target(_source->store->getDBStore(),
         _source->get_bucket()->get_info(),
-        *static_cast<RGWObjectCtx *>(rctx),
         _source->get_obj()),
     parent_op(&op_target)
   { }
@@ -737,6 +738,7 @@ namespace rgw::sal {
 
   int DBObject::DBReadOp::iterate(const DoutPrefixProvider* dpp, int64_t ofs, int64_t end, RGWGetDataCB* cb, optional_yield y)
   {
+    //return parent_op.iterate(dpp, ofs, end, cb);
     return 0;
   }
 
@@ -750,7 +752,6 @@ namespace rgw::sal {
     rctx(_rctx),
     op_target(_source->store->getDBStore(),
         _source->get_bucket()->get_info(),
-        *static_cast<RGWObjectCtx *>(rctx),
         _source->get_obj()),
     parent_op(&op_target)
   { }

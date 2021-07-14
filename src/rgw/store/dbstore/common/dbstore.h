@@ -1175,17 +1175,6 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
 
       int get_max_stripe_size() { return ObjStripeSize; }
 
-      /* XXX: the parameters may be subject to change. All we need is bucket name
-       * & obj name,instance - keys */
-      int get_obj_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
-          bool follow_olh, RGWObjState **state);
-      int get_olh_target_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
-          RGWObjState* olh_state, RGWObjState** target);
-      int follow_olh(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, RGWObjState *state,
-          const rgw_obj& olh_obj, rgw_obj *target);
-      bool obj_to_raw_head(const DoutPrefixProvider *dpp, const rgw_placement_rule& placement_rule, const rgw_obj& obj,
-          rgw_raw_obj *raw_obj);
-
       // db raw obj string is of format -
       // "<bucketname>_<objname>_<objinstance>_<multipart-partnum>_<partnum>"
       const string raw_obj_oid = "{1}_{2}_{3}_{4}_{5}";
@@ -1219,7 +1208,7 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
        *  pool - store object table name
        *  oid - store "bucket-name_objname_instance_multipart-partnum_partnum"
        *
-       *  For head objects, multiper-partnum & partnum are '0'
+       *  For head objects, multipart-partnum & partnum are '0'
        *
        */
       struct raw_obj {
@@ -1264,19 +1253,12 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
             part_num = 0;
           }
 
-          obj_table = bucket_name+".object.table";
-          obj_data_table = bucket_name+".objectdata.table";
+          obj_table = db->getObjectTable(bucket_name);
+          obj_data_table = db->getObjectDataTable(bucket_name);
         }
 
         int InitializeParamsfromRawObj (const DoutPrefixProvider *dpp, DBOpParams* params);
 
-        int obj_omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val, bool must_exist);
-        int obj_omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
-            const std::set<std::string>& keys,
-            std::map<std::string, bufferlist>* vals);
-        int obj_omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m);
-        int obj_omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker, uint64_t count,
-            std::map<std::string, bufferlist> *m, bool* pmore);
         int read(const DoutPrefixProvider *dpp, int64_t ofs, uint64_t end, bufferlist& bl);
       };
 
@@ -1285,7 +1267,6 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
         DBStore* store;
 
         RGWBucketInfo bucket_info;
-        RGWObjectCtx& ctx;
         rgw_obj obj;
 
         RGWObjState *state;
@@ -1296,9 +1277,11 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
 
         public:
         Object(DBStore *_store, const RGWBucketInfo& _bucket_info, RGWObjectCtx& _ctx, const rgw_obj& _obj) : store(_store), bucket_info(_bucket_info),
-        ctx(_ctx), obj(_obj),
+        obj(_obj),
         state(NULL), versioning_disabled(false),
         bs_initialized(false) {}
+
+        Object(DBStore *_store, const RGWBucketInfo& _bucket_info, const rgw_obj& _obj) : store(_store), bucket_info(_bucket_info), obj(_obj) {}
 
         struct Read {
           DBStore::Object *source;
@@ -1338,7 +1321,7 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
           int prepare(const DoutPrefixProvider *dpp);
           static int range_to_ofs(uint64_t obj_size, int64_t &ofs, int64_t &end);
           int read(int64_t ofs, int64_t end, bufferlist& bl, const DoutPrefixProvider *dpp);
-          /*      int iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb, optional_yield y);*/
+          int iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb);
           int get_attr(const DoutPrefixProvider *dpp, const char *name, bufferlist& dest);
         };
 
@@ -1439,14 +1422,32 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
           int wait(const DoutPrefixProvider *dpp);
         };
 
+      /* XXX: the parameters may be subject to change. All we need is bucket name
+       * & obj name,instance - keys */
+      int get_obj_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+          bool follow_olh, RGWObjState **state);
+      int get_olh_target_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+          RGWObjState* olh_state, RGWObjState** target);
+      int follow_olh(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, RGWObjState *state,
+          const rgw_obj& olh_obj, rgw_obj *target);
+      bool obj_to_raw_head(const DoutPrefixProvider *dpp, const rgw_placement_rule& placement_rule, const rgw_obj& obj,
+          rgw_raw_obj *raw_obj);
+
         int get_state(const DoutPrefixProvider *dpp, RGWObjState **pstate, bool follow_olh);
         int get_manifest(const DoutPrefixProvider *dpp, RGWObjManifest **pmanifest);
 
         DBStore *get_store() { return store; }
         rgw_obj& get_obj() { return obj; }
-        RGWObjectCtx& get_ctx() { return ctx; }
         RGWBucketInfo& get_bucket_info() { return bucket_info; }
 
+        int InitializeParamsfromObject(const DoutPrefixProvider *dpp, DBOpParams* params);
+        int obj_omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val, bool must_exist);
+        int obj_omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
+            const std::set<std::string>& keys,
+            std::map<std::string, bufferlist>* vals);
+        int obj_omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m);
+        int obj_omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker, uint64_t count,
+            std::map<std::string, bufferlist> *m, bool* pmore);
       };
   };
 #endif

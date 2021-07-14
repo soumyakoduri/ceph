@@ -616,7 +616,10 @@ TEST_F(DBStoreBaseTest, GetObjectState) {
     RGWObjState state;
     RGWObjState *s = &state;
 
-	ret = db->get_obj_state(dpp, params.op.bucket.info, params.op.obj.state.obj,
+    DBStore::Object op_target(db, params.op.bucket.info,
+                    params.op.obj.state.obj);
+
+	ret = op_target.get_obj_state(dpp, params.op.bucket.info, params.op.obj.state.obj,
                             false, &s);
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(state.size, 12);
@@ -627,35 +630,31 @@ TEST_F(DBStoreBaseTest, ObjectOmapSetVal) {
 	struct DBOpParams params = GlobalParams;
 	int ret = -1;
 
-    DBStore::raw_obj raw_obj(db, params.op.bucket.info.bucket.name,
-                    params.op.obj.state.obj.key.name,
-                    params.op.obj.state.obj.key.instance,
-                    params.op.obj.state.obj.key.ns,
-                    params.op.obj_data.multipart_part_num,
-                    params.op.obj_data.part_num);
+    DBStore::Object op_target(db, params.op.bucket.info,
+                    params.op.obj.state.obj);
 
     string val = "part1_val";
     bufferlist bl;
     encode(val, bl);
-    ret = raw_obj.obj_omap_set_val_by_key(dpp, "part1", bl, false);
+    ret = op_target.obj_omap_set_val_by_key(dpp, "part1", bl, false);
 	ASSERT_EQ(ret, 0);
 
     val = "part2_val";
     bl.clear();
     encode(val, bl);
-    ret = raw_obj.obj_omap_set_val_by_key(dpp, "part2", bl, false);
+    ret = op_target.obj_omap_set_val_by_key(dpp, "part2", bl, false);
 	ASSERT_EQ(ret, 0);
 
     val = "part3_val";
     bl.clear();
     encode(val, bl);
-    ret = raw_obj.obj_omap_set_val_by_key(dpp, "part3", bl, false);
+    ret = op_target.obj_omap_set_val_by_key(dpp, "part3", bl, false);
 	ASSERT_EQ(ret, 0);
 
     val = "part4_val";
     bl.clear();
     encode(val, bl);
-    ret = raw_obj.obj_omap_set_val_by_key(dpp, "part4", bl, false);
+    ret = op_target.obj_omap_set_val_by_key(dpp, "part4", bl, false);
 	ASSERT_EQ(ret, 0);
 }
 
@@ -665,17 +664,13 @@ TEST_F(DBStoreBaseTest, ObjectOmapGetValsByKeys) {
     std::set<std::string> keys;
     std::map<std::string, bufferlist> vals;
 
-    DBStore::raw_obj raw_obj(db, params.op.bucket.info.bucket.name,
-                    params.op.obj.state.obj.key.name,
-                    params.op.obj.state.obj.key.instance,
-                    params.op.obj.state.obj.key.ns,
-                    params.op.obj_data.multipart_part_num,
-                    params.op.obj_data.part_num);
+    DBStore::Object op_target(db, params.op.bucket.info,
+                    params.op.obj.state.obj);
 
     keys.insert("part2");
     keys.insert("part4");
 
-    ret = raw_obj.obj_omap_get_vals_by_keys(dpp, "", keys, &vals);
+    ret = op_target.obj_omap_get_vals_by_keys(dpp, "", keys, &vals);
 	ASSERT_EQ(ret, 0);
     ASSERT_EQ(vals.size(), 2);
 
@@ -691,14 +686,10 @@ TEST_F(DBStoreBaseTest, ObjectOmapGetAll) {
 	int ret = -1;
     std::map<std::string, bufferlist> vals;
 
-    DBStore::raw_obj raw_obj(db, params.op.bucket.info.bucket.name,
-                    params.op.obj.state.obj.key.name,
-                    params.op.obj.state.obj.key.instance,
-                    params.op.obj.state.obj.key.ns,
-                    params.op.obj_data.multipart_part_num,
-                    params.op.obj_data.part_num);
+    DBStore::Object op_target(db, params.op.bucket.info,
+                    params.op.obj.state.obj);
 
-    ret = raw_obj.obj_omap_get_all(dpp, &vals);
+    ret = op_target.obj_omap_get_all(dpp, &vals);
 	ASSERT_EQ(ret, 0);
     ASSERT_EQ(vals.size(), 4);
 
@@ -720,14 +711,10 @@ TEST_F(DBStoreBaseTest, ObjectOmapGetVals) {
     std::map<std::string, bufferlist> vals;
     bool pmore;
 
-    DBStore::raw_obj raw_obj(db, params.op.bucket.info.bucket.name,
-                    params.op.obj.state.obj.key.name,
-                    params.op.obj.state.obj.key.instance,
-                    params.op.obj.state.obj.key.ns,
-                    params.op.obj_data.multipart_part_num,
-                    params.op.obj_data.part_num);
+    DBStore::Object op_target(db, params.op.bucket.info,
+                    params.op.obj.state.obj);
 
-    ret = raw_obj.obj_omap_get_vals(dpp, "part3", 10, &vals, &pmore);
+    ret = op_target.obj_omap_get_vals(dpp, "part3", 10, &vals, &pmore);
 	ASSERT_EQ(ret, 0);
     ASSERT_EQ(vals.size(), 2);
 

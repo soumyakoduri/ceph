@@ -742,15 +742,31 @@ int DBStore::raw_obj::InitializeParamsfromRawObj(const DoutPrefixProvider *dpp, 
   return ret;
 }
 
-int DBStore::raw_obj::obj_omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val,
+int DBStore::Object::InitializeParamsfromObject(const DoutPrefixProvider *dpp, DBOpParams* params) {
+  int ret = 0;
+  string bucket = bucket_info.bucket.name;
+
+  if (!params)
+    return -1;
+
+  params->object_table = store->getObjectTable(bucket);
+  params->objectdata_table = store->getObjectDataTable(bucket);
+  params->op.bucket.info.bucket.name = bucket;
+  params->op.obj.state.obj = obj;
+
+  return ret;
+}
+
+int DBStore::Object::obj_omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val,
                                 bool must_exist) {
 	int ret = 0;
 
     DBOpParams params = {};
-    db->InitializeParams(dpp, "GetObject", &params);
-    InitializeParamsfromRawObj(dpp, &params);
 
-    ret = db->ProcessOp(dpp, "GetObject", &params);
+    store->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromObject(dpp, &params);
+
+    ret = store->ProcessOp(dpp, "GetObject", &params);
 
     if (ret) {
 	  ldpp_dout(dpp, 0) <<"In GetObject failed err:(" <<ret<<")" << dendl;
@@ -759,14 +775,14 @@ int DBStore::raw_obj::obj_omap_set_val_by_key(const DoutPrefixProvider *dpp, con
 
     /* pick one field check if object exists */
     if (params.op.obj.storage_class.empty()) {
-	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist" << dendl;
+	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
       return -1;
     }
 
     params.op.obj.omap[key] = val;
     params.op.query_str = "omap";
 
-    ret = db->ProcessOp(dpp, "UpdateObject", &params);
+    ret = store->ProcessOp(dpp, "UpdateObject", &params);
 
     if (ret) {
 	  ldpp_dout(dpp, 0)<<"In UpdateObject failed err:(" <<ret<<") " << dendl;
@@ -777,7 +793,7 @@ out:
 	return ret;
 }
 
-int DBStore::raw_obj::obj_omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
+int DBStore::Object::obj_omap_get_vals_by_keys(const DoutPrefixProvider *dpp, const std::string& oid,
                                   const std::set<std::string>& keys,
                                   std::map<std::string, bufferlist>* vals) {
 	int ret = 0;
@@ -787,10 +803,10 @@ int DBStore::raw_obj::obj_omap_get_vals_by_keys(const DoutPrefixProvider *dpp, c
     if (!vals)
       return -1;
 
-    db->InitializeParams(dpp, "GetObject", &params);
-    InitializeParamsfromRawObj(dpp, &params);
+    store->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromObject(dpp, &params);
 
-    ret = db->ProcessOp(dpp, "GetObject", &params);
+    ret = store->ProcessOp(dpp, "GetObject", &params);
 
     if (ret) {
 	  ldpp_dout(dpp, 0) <<"In GetObject failed err:(" <<ret<<") " << dendl;
@@ -799,7 +815,7 @@ int DBStore::raw_obj::obj_omap_get_vals_by_keys(const DoutPrefixProvider *dpp, c
 
     /* pick one field check if object exists */
     if (params.op.obj.storage_class.empty()) {
-	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist" << dendl;
+	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
       return -1;
     }
 
@@ -813,7 +829,7 @@ out:
   return ret;
 }
 
-int DBStore::raw_obj::obj_omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m) {
+int DBStore::Object::obj_omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m) {
 	int ret = 0;
     DBOpParams params = {};
     std::map<std::string, bufferlist> omap;
@@ -821,10 +837,10 @@ int DBStore::raw_obj::obj_omap_get_all(const DoutPrefixProvider *dpp, std::map<s
     if (!m)
       return -1;
 
-    db->InitializeParams(dpp, "GetObject", &params);
-    InitializeParamsfromRawObj(dpp, &params);
+    store->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromObject(dpp, &params);
 
-    ret = db->ProcessOp(dpp, "GetObject", &params);
+    ret = store->ProcessOp(dpp, "GetObject", &params);
 
     if (ret) {
 	  ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
@@ -833,7 +849,7 @@ int DBStore::raw_obj::obj_omap_get_all(const DoutPrefixProvider *dpp, std::map<s
 
     /* pick one field check if object exists */
     if (params.op.obj.storage_class.empty()) {
-	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist " << dendl;
+	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
       return -1;
     }
 
@@ -843,7 +859,7 @@ out:
     return ret;
 }
 
-int DBStore::raw_obj::obj_omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker,
+int DBStore::Object::obj_omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker,
                          uint64_t max_count,
                         std::map<std::string, bufferlist> *m, bool* pmore) {
 	int ret = 0;
@@ -855,10 +871,10 @@ int DBStore::raw_obj::obj_omap_get_vals(const DoutPrefixProvider *dpp, const std
     if (!m)
       return -1;
 
-    db->InitializeParams(dpp, "GetObject", &params);
-    InitializeParamsfromRawObj(dpp, &params);
+    store->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromObject(dpp, &params);
 
-    ret = db->ProcessOp(dpp, "GetObject", &params);
+    ret = store->ProcessOp(dpp, "GetObject", &params);
 
     if (ret) {
 	  ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
@@ -867,7 +883,7 @@ int DBStore::raw_obj::obj_omap_get_vals(const DoutPrefixProvider *dpp, const std
 
     /* pick one field check if object exists */
     if (params.op.obj.storage_class.empty()) {
-	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_name << ", Object:"<< obj_name << ") doesn't exist " << dendl;
+	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
       return -1;
     }
 
@@ -911,7 +927,7 @@ int DBStore::raw_obj::read(const DoutPrefixProvider *dpp, int64_t ofs, uint64_t 
 	    return bl.length();
 }
 
-int DBStore::follow_olh(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, RGWObjState *state,
+int DBStore::Object::follow_olh(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, RGWObjState *state,
                const rgw_obj& olh_obj, rgw_obj *target)
 {
   auto iter = state->attrset.find(RGW_ATTR_OLH_INFO);
@@ -938,7 +954,7 @@ int DBStore::follow_olh(const DoutPrefixProvider *dpp, const RGWBucketInfo& buck
   return 0;
 }
 
-int DBStore::get_olh_target_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+int DBStore::Object::get_olh_target_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
                       RGWObjState* olh_state, RGWObjState** target) {
   int ret = 0;
   rgw_obj target_obj;
@@ -958,18 +974,16 @@ int DBStore::get_olh_target_state(const DoutPrefixProvider *dpp, const RGWBucket
   return ret;
 }
 
-int DBStore::get_obj_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+int DBStore::Object::get_obj_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj,
                             bool follow_olh, RGWObjState **state) {
 	int ret = 0;
 
     DBOpParams params = {};
     RGWObjState* s;
-    InitializeParams(dpp, "GetObject", &params);
+    store->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromObject(dpp, &params);
 
-	params.op.bucket.info.bucket.name = bucket_info.bucket.name;
-    params.op.obj.state.obj = obj;
-
-    ret = ProcessOp(dpp, "GetObject", &params);
+    ret = store->ProcessOp(dpp, "GetObject", &params);
 
 	if (ret) {
 		ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
@@ -999,7 +1013,7 @@ out:
 
 int DBStore::Object::get_state(const DoutPrefixProvider *dpp, RGWObjState **pstate, bool follow_olh)
 {
-  return store->get_obj_state(dpp, bucket_info, obj, follow_olh, pstate);
+  return get_obj_state(dpp, bucket_info, obj, follow_olh, pstate);
 }
 
 int DBStore::Object::get_manifest(const DoutPrefixProvider *dpp, RGWObjManifest **pmanifest)
@@ -1050,7 +1064,7 @@ int DBStore::Object::Read::prepare(const DoutPrefixProvider *dpp)
   const RGWBucketInfo& bucket_info = source->get_bucket_info();
 
   state.obj = astate->obj;
-  store->obj_to_raw_head(dpp, bucket_info.placement_rule, state.obj, &state.head_obj);
+  source->obj_to_raw_head(dpp, bucket_info.placement_rule, state.obj, &state.head_obj);
 
   state.cur_pool = state.head_obj.pool;
 
@@ -1121,11 +1135,11 @@ int DBStore::Object::Read::prepare(const DoutPrefixProvider *dpp)
   return 0;
 }
 
-bool DBStore::obj_to_raw_head(const DoutPrefixProvider *dpp, const rgw_placement_rule& placement_rule, const rgw_obj& obj, rgw_raw_obj *raw_obj)
+bool DBStore::Object::obj_to_raw_head(const DoutPrefixProvider *dpp, const rgw_placement_rule& placement_rule, const rgw_obj& obj, rgw_raw_obj *raw_obj)
 {
 
-  raw_obj->oid = to_oid(obj.bucket.name, obj.key.name, obj.key.instance, 0, 0);
-  raw_obj->pool.name = getObjectTable(obj.bucket.name);
+  raw_obj->oid = store->to_oid(obj.bucket.name, obj.key.name, obj.key.instance, 0, 0);
+  raw_obj->pool.name = store->getObjectTable(obj.bucket.name);
 
   return true;
 }
@@ -1222,7 +1236,7 @@ int DBStore::Object::Read::read(int64_t ofs, int64_t end, bufferlist& bl, const 
   return bl.length();
 }
 
-/* XXX: Should ideally make this aync operation. But its synchronous now */
+/* XXX: Should ideally make this async operation. But its synchronous now */
 int DBStore::Object::Stat::stat_async(const DoutPrefixProvider *dpp)
 {
   rgw_obj& obj = source->get_obj();
@@ -1272,6 +1286,7 @@ int DBStore::Object::Delete::delete_obj(const DoutPrefixProvider *dpp) {
   del_params.op.obj.state.obj = astate->obj ;
   del_params.op.bucket.info = bucket_info;
 
+  /* As it is cascade delete, it will delete the objectdata table entries also */
   ret = store->ProcessOp(dpp, "RemoveObject", &del_params);
   if (ret) {
     ldpp_dout(dpp, 0) << "In RemoveObject failed err:(" <<ret<<")" << dendl;
