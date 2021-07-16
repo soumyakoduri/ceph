@@ -785,7 +785,7 @@ namespace rgw::sal {
 
   int DBObject::DBWriteOp::write_meta(const DoutPrefixProvider* dpp, uint64_t size, uint64_t accounted_size, optional_yield y)
   {
-    //int ret = parent_op.write_meta(dpp, size, accounted_size, *params.attrs, y);
+    int ret = parent_op.write_meta(dpp, size, accounted_size, *params.attrs);
     params.canceled = parent_op.meta.canceled;
 
     return 0;

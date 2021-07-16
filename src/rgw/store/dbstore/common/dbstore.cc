@@ -1354,6 +1354,240 @@ int DBStore::Object::iterate_obj(const DoutPrefixProvider *dpp,
   return 0;
 }
 
+int DBStore::Object::Write::_do_write_meta(const DoutPrefixProvider *dpp,
+                                           uint64_t size, uint64_t accounted_size,
+                                           map<string, bufferlist>& attrs,
+                                           bool assume_noent, bool modify_tail)
+{
+  DBStore *store = target->get_store();
+
+  RGWObjState *state;
+  map<string, bufferlist> *attrset;
+  DBOpParams params = {};
+
+  /* XXX: handle assume_noent */
+    store->InitializeParams(dpp, "GetObject", &params);
+    InitializeParamsfromObject(dpp, &params);
+
+    ret = store->ProcessOp(dpp, "GetObject", &params);
+
+    if (ret) {
+	  ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+    if (!params.op.obj.storage_class.empty()) {
+	  ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") exists" << dendl;
+
+      if (assume_noent) {
+        goto out;
+      }
+    }
+
+  state = params.obj.state;
+
+  rgw_obj& obj = target->get_obj();
+
+/*  if (obj.get_oid().empty()) {
+    ldpp_dout(dpp, 0) << "ERROR: " << __func__ << "(): cannot write object with empty name" << dendl;
+    return -EIO;
+  }*/
+
+  bool is_olh = state->is_olh;
+
+  bool reset_obj = (meta.flags & PUT_OBJ_CREATE) != 0;
+
+  const string *ptag = meta.ptag;
+
+  if (real_clock::is_zero(meta.set_mtime)) {
+    meta.set_mtime = real_clock::now();
+  }
+
+  attrset = &state->attrset;
+  if (target->bucket_info.obj_lock_enabled() && target->bucket_info.obj_lock.has_rule() && meta.flags == PUT_OBJ_CREATE) {
+    auto iter = attrs.find(RGW_ATTR_OBJECT_RETENTION);
+    if (iter == attrs.end()) {
+      real_time lock_until_date = target->bucket_info.obj_lock.get_lock_until_date(meta.set_mtime);
+      string mode = target->bucket_info.obj_lock.get_mode();
+      RGWObjectRetention obj_retention(mode, lock_until_date);
+      bufferlist bl;
+      obj_retention.encode(bl);
+      *attrset[RGW_ATTR_OBJECT_RETENTION] = bl;
+    }
+  }
+
+  if (state->is_olh) {
+    *attrset[RGW_ATTR_OLH_ID_TAG] = state->olh_tag;
+  }
+
+  struct timespec mtime_ts = real_clock::to_timespec(meta.set_mtime);
+  state->mtime = mtime_ts;
+
+  if (meta.data) {
+    /* if we want to overwrite the data, we also want to overwrite the
+       xattrs, so just remove the object */
+    params.obj.head_data = *meta.data;
+  }
+
+  string etag;
+  string content_type;
+  bufferlist acl_bl;
+  string storage_class;
+
+  map<string, bufferlist>::iterator iter;
+  if (meta.rmattrs) {
+    for (iter = meta.rmattrs->begin(); iter != meta.rmattrs->end(); ++iter) {
+      const string& name = iter->first;
+      *attrset.erase(name.c_str());
+    }
+  }
+
+  if (meta.manifest) {
+    storage_class = meta.manifest->get_tail_placement().placement_rule.storage_class;
+
+    /* remove existing manifest attr */
+    iter = attrs.find(RGW_ATTR_MANIFEST);
+    if (iter != attrs.end())
+      attrs.erase(iter);
+
+    bufferlist bl;
+    encode(*meta.manifest, bl);
+    *attrset[RGW_ATTR_MANIFEST] = bl;
+  }
+
+  for (iter = attrs.begin(); iter != attrs.end(); ++iter) {
+    const string& name = iter->first;
+    bufferlist& bl = iter->second;
+
+    if (!bl.length())
+      continue;
+
+    *attrset[name.c_str()] = bl;
+
+    if (name.compare(RGW_ATTR_ETAG) == 0) {
+      etag = rgw_bl_str(bl);
+    } else if (name.compare(RGW_ATTR_CONTENT_TYPE) == 0) {
+      content_type = rgw_bl_str(bl);
+    } else if (name.compare(RGW_ATTR_ACL) == 0) {
+      acl_bl = bl;
+    }
+  }
+
+  /*if (attrs.find(RGW_ATTR_SOURCE_ZONE) == attrs.end()) {
+    bufferlist bl;
+    encode(store->svc.zone->get_zone_short_id(), bl);
+    op.setxattr(RGW_ATTR_SOURCE_ZONE, bl);
+  }*/
+
+/*  if (!storage_class.empty()) {
+    bufferlist bl;
+    bl.append(storage_class);
+    op.setxattr(RGW_ATTR_STORAGE_CLASS, bl);
+  }*/
+  *attrset[RGW_ATTR_STORAGE_CLASS] = "STANDARD";
+
+  uint64_t epoch;
+  int64_t poolid;
+  bool orig_exists;
+  uint64_t orig_size;
+  
+  if (!reset_obj) {    //Multipart upload, it has immutable head. 
+    orig_exists = false;
+    orig_size = 0;
+  } else {
+    orig_exists = state->exists;
+    orig_size = state->accounted_size;
+  }
+
+  /* XXX: handle versioning */
+  if (meta.mtime) {
+    *meta.mtime = meta.set_mtime;
+  }
+
+  /* note that index_op was using state so we couldn't invalidate it earlier */
+  state = NULL;
+
+  /*if (versioned_op && meta.olh_epoch) {
+    r = store->set_olh(dpp, target->get_ctx(), target->get_bucket_info(), obj, false, NULL, *meta.olh_epoch, real_time(), false, y, meta.zones_trace);
+    if (r < 0) {
+      return r;
+    }
+  }*/
+
+  /* XXX: handle multipart */
+    ret = store->ProcessOp(dpp, "PutObject", &params);
+
+    if (ret) {
+	  ldpp_dout(dpp, 0)<<"In PutObject failed err:(" <<ret<<")" << dendl;
+      goto out;
+    }
+
+    /* pick one field check if object exists */
+  return 0;
+
+out:
+  if (ret < 0) {
+    ldpp_dout(dpp, 0) << "ERROR: do_write_meta returned ret=" << ret << dendl;
+  }
+
+  meta.canceled = true;
+
+  /* we lost in a race. There are a few options:
+   * - existing object was rewritten (ECANCELED)
+   * - non existing object was created (EEXIST)
+   * - object was removed (ENOENT)
+   * should treat it as a success
+   */
+  if (meta.if_match == NULL && meta.if_nomatch == NULL) {
+    if (r == -ECANCELED || r == -ENOENT || r == -EEXIST) {
+      r = 0;
+    }
+  } else {
+    if (meta.if_match != NULL) {
+      // only overwrite existing object
+      if (strcmp(meta.if_match, "*") == 0) {
+        if (r == -ENOENT) {
+          r = -ERR_PRECONDITION_FAILED;
+        } else if (r == -ECANCELED) {
+          r = 0;
+        }
+      }
+    }
+
+    if (meta.if_nomatch != NULL) {
+      // only create a new object
+      if (strcmp(meta.if_nomatch, "*") == 0) {
+        if (r == -EEXIST) {
+          r = -ERR_PRECONDITION_FAILED;
+        } else if (r == -ENOENT) {
+          r = 0;
+        }
+      }
+    }
+  }
+  return r;
+}
+
+int DBStore::Object::Write::write_meta(const DoutPrefixProvider *dpp, uint64_t size, uint64_t accounted_size,
+                                           map<string, bufferlist>& attrs)
+{
+  RGWBucketInfo& bucket_info = target->get_bucket_info();
+
+  bool assume_noent = (meta.if_match == NULL && meta.if_nomatch == NULL);
+  int r;
+  if (assume_noent) {
+    r = _do_write_meta(dpp, size, accounted_size, attrs, assume_noent, meta.modify_tail);
+    if (r == -EEXIST) {
+      assume_noent = false;
+    }
+  }
+  if (!assume_noent) {
+    r = _do_write_meta(dpp, size, accounted_size, attrs, assume_noent, meta.modify_tail);
+  }
+  return r;
+}
+
 /* XXX: Should ideally make this async operation. But its synchronous now */
 int DBStore::Object::Stat::stat_async(const DoutPrefixProvider *dpp)
 {
