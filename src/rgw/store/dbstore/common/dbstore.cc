@@ -922,9 +922,9 @@ int DBStore::raw_obj::read(const DoutPrefixProvider *dpp, int64_t ofs, uint64_t 
 
     bufferlist& read_bl = params.op.obj_data.data;
 
-        unsigned copy_len = std::min((uint64_t)read_bl.length() - ofs, len);
-        read_bl.begin(ofs).copy(copy_len, bl);
-	    return bl.length();
+    unsigned copy_len = std::min((uint64_t)read_bl.length() - ofs, len);
+    read_bl.begin(ofs).copy(copy_len, bl);
+    return bl.length();
 }
 
 int DBStore::Object::follow_olh(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, RGWObjState *state,
@@ -1170,17 +1170,20 @@ int DBStore::Object::Read::read(int64_t ofs, int64_t end, bufferlist& bl, const 
 {
   DBStore *store = source->get_store();
 
-  rgw_raw_obj read_obj;
   uint64_t read_ofs = ofs;
   uint64_t len, read_len;
-  bool reading_from_head = true;
 
   bufferlist read_bl;
+  uint64_t max_chunk_size = store->get_max_chunk_size();
 
   RGWObjState *astate;
   int r = source->get_state(dpp, &astate, true);
   if (r < 0)
     return r;
+
+  if (!astate->exists) {
+    return -ENOENT;
+  }
 
   if (astate->size == 0) {
     end = 0;
@@ -1193,47 +1196,162 @@ int DBStore::Object::Read::read(int64_t ofs, int64_t end, bufferlist& bl, const 
   else
     len = end - ofs + 1;
 
-  if (astate->manifest && astate->manifest->has_tail()) {
-    /* now get the relevant object part */
-    RGWObjManifest::obj_iterator iter = astate->manifest->obj_find(dpp, ofs);
 
-    uint64_t stripe_ofs = iter.get_stripe_ofs();
-    read_obj = iter.get_location().get_raw_obj(store->store);
-    len = std::min(len, iter.get_stripe_size() - (ofs - stripe_ofs));
-    read_ofs = iter.location_ofs() + (ofs - stripe_ofs);
-    reading_from_head = (read_obj == state.head_obj);
-  } else {
-    read_obj = state.head_obj;
+  if (len > max_chunk_size) {
+    len = max_chunk_size;
   }
 
-  read_len = len;
+  int head_data_size = astate->data.length();
+  bool reading_from_head = (ofs < head_data_size);
 
   if (reading_from_head) {
-    if (astate && astate->prefetch_data) {
+    if (astate) { // && astate->prefetch_data)?
       if (!ofs && astate->data.length() >= len) {
         bl = astate->data;
         return bl.length();
       }
 
       if (ofs < astate->data.length()) {
-        unsigned copy_len = std::min((uint64_t)astate->data.length() - ofs, len);
+        unsigned copy_len = std::min((uint64_t)head_data_size - ofs, len);
         astate->data.begin(ofs).copy(copy_len, bl);
         return bl.length();
       }
     }
   }
 
-  ldpp_dout(dpp, 20) << "rados->read obj-ofs=" << ofs << " read_ofs=" << read_ofs << " read_len=" << read_len << dendl;
+  /* tail object */
+  int part_num = (ofs / max_chunk_size);
+  /* XXX: Handle multipart_num */
+  raw_obj read_obj(store, source->get_bucket_info().bucket.name, astate->obj.key.name, 
+          astate->obj.key.instance, astate->obj.key.ns, 0, part_num);
+
+  read_len = len;
+
+  ldpp_dout(dpp, 20) << "dbstore->read obj-ofs=" << ofs << " read_ofs=" << read_ofs << " read_len=" << read_len << dendl;
 
   // read from non head object
-  raw_obj db_obj(store, read_obj.oid);
-  r = db_obj.read(dpp, read_ofs, read_len, bl);
+  r = read_obj.read(dpp, read_ofs, read_len, bl);
 
   if (r < 0) {
     return r;
   }
 
   return bl.length();
+}
+
+static int _get_obj_iterate_cb(const DoutPrefixProvider *dpp,
+                               const DBStore::raw_obj& read_obj, off_t obj_ofs,
+                               off_t len, bool is_head_obj,
+                               RGWObjState *astate, void *arg)
+{
+  struct db_get_obj_data* d = static_cast<struct db_get_obj_data*>(arg);
+  return d->store->get_obj_iterate_cb(dpp, read_obj, obj_ofs, len,
+                                      is_head_obj, astate, arg);
+}
+
+int DBStore::get_obj_iterate_cb(const DoutPrefixProvider *dpp,
+                                 const raw_obj& read_obj, off_t obj_ofs,
+                                 off_t len, bool is_head_obj,
+                                 RGWObjState *astate, void *arg)
+{
+  struct db_get_obj_data* d = static_cast<struct db_get_obj_data*>(arg);
+  bufferlist bl;
+  int r = 0;
+
+  if (is_head_obj) {
+    /* only when reading from the head object do we need to do the atomic test */
+/*    int r = append_atomic_test(dpp, astate, op); // is it needed for dbstore?
+    if (r < 0)
+      return r;*/
+
+      bl = astate->data;
+  } else {
+    // read from non head object
+    raw_obj robj = read_obj;
+    r = robj.read(dpp, obj_ofs, len, bl);
+
+    if (r < 0) {
+      return r;
+    }
+  }
+  unsigned chunk_len = std::min((uint64_t)bl.length() - obj_ofs, (uint64_t)len);
+
+  r = d->client_cb->handle_data(bl, obj_ofs, chunk_len);
+  if (r < 0)
+    return r;
+
+  ldpp_dout(dpp, 20) << "dbstore->get_obj_iterate_cb  obj-ofs=" << obj_ofs << " len=" << len <<  " chunk_len = " << chunk_len << dendl;
+
+  len -= chunk_len;
+  d->offset += chunk_len;
+  obj_ofs += chunk_len;
+
+  return chunk_len;
+}
+
+int DBStore::Object::Read::iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_t end, RGWGetDataCB *cb)
+{
+  DBStore *store = source->get_store();
+  const uint64_t chunk_size = store->get_max_chunk_size();
+
+  db_get_obj_data data(store, cb, ofs);
+
+  int r = source->iterate_obj(dpp, source->get_bucket_info(), state.obj,
+                             ofs, end, chunk_size, _get_obj_iterate_cb, &data);
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << "iterate_obj() failed with " << r << dendl;
+    return r;
+  }
+
+  return 0; // data.drain();
+}
+
+int DBStore::Object::iterate_obj(const DoutPrefixProvider *dpp,
+                          const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+                          off_t ofs, off_t end, uint64_t max_chunk_size,
+                          iterate_obj_cb cb, void *arg)
+{
+  DBStore *store = get_store();
+  uint64_t len;
+  RGWObjState *astate = NULL;
+
+  int r = get_state(dpp, &astate, true);
+  if (r < 0) {
+    return r;
+  }
+
+  if (!astate->exists) {
+    return -ENOENT;
+  }
+
+  if (end < 0)
+    len = 0;
+  else
+    len = end - ofs + 1;
+
+  /* XXX: Will it really help to store all parts info in astate like manifest in Rados? */
+  int part_num = 0;
+  int head_data_size = astate->data.length();
+
+  while (ofs <= end && (uint64_t)ofs < astate->size) {
+    part_num = (ofs / max_chunk_size);
+    uint64_t read_len = std::min(len, max_chunk_size);
+
+    /* XXX: Handle multipart_num */
+    raw_obj read_obj(store, get_bucket_info().bucket.name, astate->obj.key.name, 
+            astate->obj.key.instance, astate->obj.key.ns, 0, part_num);
+    bool reading_from_head = (ofs < head_data_size);
+
+    r = cb(dpp, read_obj, ofs, read_len, reading_from_head, astate, arg);
+	if (r < 0) {
+	  return r;
+    }
+    /* r refers to chunk_len (no. of bytes) handled in cb */
+	len -= r;
+    ofs += r;
+  }
+
+  return 0;
 }
 
 /* XXX: Should ideally make this async operation. But its synchronous now */
@@ -1280,11 +1398,9 @@ int DBStore::Object::Delete::delete_obj(const DoutPrefixProvider *dpp) {
 
   /* XXX: check params conditions */
   DBOpParams del_params = {};
-  const RGWBucketInfo& bucket_info = target->get_bucket_info();
 
   store->InitializeParams(dpp, "RemoveObject", &del_params);
-  del_params.op.obj.state.obj = astate->obj ;
-  del_params.op.bucket.info = bucket_info;
+  target->InitializeParamsfromObject(dpp, &del_params);
 
   /* As it is cascade delete, it will delete the objectdata table entries also */
   ret = store->ProcessOp(dpp, "RemoveObject", &del_params);

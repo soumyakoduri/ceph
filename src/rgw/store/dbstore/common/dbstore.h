@@ -507,7 +507,7 @@ class DBOp {
        *  - part: a collection of stripes that make a contiguous part of an
        object. A regular object will only have one part (although might have
        many stripes), a multipart object might have many parts. Each part
-       has a fixed stripe size (ObjStripeSize), although the last stripe of a
+       has a fixed stripe size (ObjChunkSize), although the last stripe of a
        part might be smaller than that.
        */
       "CREATE TABLE IF NOT EXISTS '{}' ( \
@@ -1059,7 +1059,7 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
       const DoutPrefix dp;
       uint64_t max_bucket_id = 0;
       // XXX: default ObjStripeSize or ObjChunk size - 4M, make them configurable?
-      int ObjStripeSize = 4 * 1024 * 1204;
+      int ObjChunkSize = 4 * 1024 * 1204;
 
     public:	
       DBStore(string db_name, CephContext *_cct) : db_name(db_name),
@@ -1173,7 +1173,7 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
           const rgw_user* powner_id, map<std::string, bufferlist>* pattrs,
           ceph::real_time* pmtime, RGWObjVersionTracker* pobjv);
 
-      int get_max_stripe_size() { return ObjStripeSize; }
+      int get_max_chunk_size() { return ObjChunkSize; }
 
       // db raw obj string is of format -
       // "<bucketname>_<objname>_<objinstance>_<multipart-partnum>_<partnum>"
@@ -1448,6 +1448,53 @@ WRITE_CLASS_ENCODER(DBOLHInfo)
         int obj_omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m);
         int obj_omap_get_vals(const DoutPrefixProvider *dpp, const std::string& marker, uint64_t count,
             std::map<std::string, bufferlist> *m, bool* pmore);
+        using iterate_obj_cb = int (*)(const DoutPrefixProvider*, const raw_obj&, off_t, off_t,
+                                 bool, RGWObjState*, void*);
+
+        int iterate_obj(const DoutPrefixProvider *dpp,
+                          const RGWBucketInfo& bucket_info, const rgw_obj& obj,
+                          off_t ofs, off_t end, uint64_t max_chunk_size,
+                          iterate_obj_cb cb, void *arg);
       };
+      int get_obj_iterate_cb(const DoutPrefixProvider *dpp,
+                                 const raw_obj& read_obj, off_t obj_ofs,
+                                 off_t len, bool is_head_obj,
+                                 RGWObjState *astate, void *arg);
   };
+
+struct db_get_obj_data {
+  DBStore* store;
+  RGWGetDataCB* client_cb = nullptr;
+  //rgw::Aio* aio;
+  uint64_t offset; // next offset to write to client
+//  rgw::AioResultList completed; // completed read results, sorted by offset
+//  optional_yield yield;
+
+  db_get_obj_data(DBStore* db, RGWGetDataCB* cb, uint64_t offset) :
+                store(db), client_cb(cb), offset(offset) {}
+//  get_obj_data(RGWRados* rgwrados, RGWGetDataCB* cb, rgw::Aio* aio,
+  //             uint64_t offset, optional_yield yield)
+    //           : rgwrados(rgwrados), client_cb(cb), aio(aio), offset(offset), yield(yield) {}
+  ~db_get_obj_data() {}
+
+//  int flush(rgw::AioResultList&& results);
+
+/*  void cancel() {
+    // wait for all completions to drain and ignore the results
+    aio->drain();
+  }
+
+  int drain() {
+    auto c = aio->wait();
+    while (!c.empty()) {
+      int r = flush(std::move(c));
+      if (r < 0) {
+        cancel();
+        return r;
+      }
+      c = aio->wait();
+    }
+    return flush(std::move(c));
+  } */
+};
 #endif

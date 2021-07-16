@@ -1657,6 +1657,13 @@ void set_req_state_err(struct req_state*, int, const string&);
 void set_req_state_err(struct rgw_err&, int, const int);
 void dump(struct req_state*);
 
+class RGWGetDataCB {
+public:
+  virtual int handle_data(bufferlist& bl, off_t bl_ofs, off_t bl_len) = 0;
+  RGWGetDataCB() {}
+  virtual ~RGWGetDataCB() {}
+};
+
 /** Store basic data on bucket */
 struct RGWBucketEnt {
   rgw_bucket bucket;

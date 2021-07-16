@@ -519,13 +519,13 @@ namespace rgw::sal {
    */
   int DBObject::get_max_chunk_size(const DoutPrefixProvider* dpp, rgw_placement_rule placement_rule, uint64_t* max_chunk_size, uint64_t* alignment)
   {
-    return store->getDBStore()->get_max_stripe_size();
+    return store->getDBStore()->get_max_chunk_size();
   }
 
   void DBObject::get_max_aligned_size(uint64_t size, uint64_t alignment,
       uint64_t* max_size)
   {
-    *max_size = store->getDBStore()->get_max_stripe_size();
+    *max_size = store->getDBStore()->get_max_chunk_size();
   }
 
   bool DBObject::placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2)
