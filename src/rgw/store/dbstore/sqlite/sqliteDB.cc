@@ -136,18 +136,21 @@
 
 #define SQL_EXECUTE(dpp, params, stmt, cbk, args...) \
   do{						\
+    ((DBOp*)(this))->mtx.Lock(dpp);     \
     if (!stmt) {				\
       ret = Prepare(dpp, params);		\
     }					\
     \
     if (!stmt) {				\
       ldpp_dout(dpp, 0) <<"No prepared statement "<< dendl;	\
+      ((DBOp*)(this))->mtx.Unlock(dpp);     \
       goto out;			\
     }					\
     \
     ret = Bind(dpp, params);			\
     if (ret) {				\
       ldpp_dout(dpp, 0) <<"Bind parameters failed for stmt(" <<stmt<<") "<< dendl;		\
+      ((DBOp*)(this))->mtx.Unlock(dpp);     \
       goto out;			\
     }					\
     \
@@ -157,8 +160,10 @@
     \
     if (ret) {				\
       ldpp_dout(dpp, 0) <<"Execution failed for stmt(" <<stmt<<")"<< dendl;		\
+      ((DBOp*)(this))->mtx.Unlock(dpp);     \
       goto out;			\
     }					\
+    ((DBOp*)(this))->mtx.Unlock(dpp);     \
   }while(0);
 
 static int list_callback(void *None, int argc, char **argv, char **aname)

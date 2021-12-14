@@ -379,6 +379,28 @@ class ObjectOp {
     virtual int FreeObjectOps(const DoutPrefixProvider *dpp) { return 0; }
 };
 
+class DBOpMutex {
+  private:
+    pthread_mutex_t op_mutex;
+    int LockInit() {
+      return pthread_mutex_init(&op_mutex, NULL); 
+    }
+    int LockDestroy() {
+      return pthread_mutex_destroy(&op_mutex);
+    }
+
+  public:
+    DBOpMutex() { LockInit(); }
+    ~DBOpMutex() { LockDestroy();}
+
+    int Lock(const DoutPrefixProvider *dpp) {
+      return  pthread_mutex_lock(&op_mutex);
+    }
+    int Unlock(const DoutPrefixProvider *dpp) {
+      return pthread_mutex_unlock(&op_mutex);
+    }
+};
+
 class DBOp {
   private:
     const string CreateUserTableQ =
@@ -620,8 +642,9 @@ class DBOp {
     const string ListAllQ = "SELECT  * from '{}'";
 
   public:
-    DBOp() {};
-    virtual ~DBOp() {};
+    DBOp() {}
+    virtual ~DBOp() {}
+    DBOpMutex mtx; // to protect prepared stmt
 
     string CreateTableSchema(string type, DBOpParams *params) {
       if (!type.compare("User"))
@@ -663,10 +686,11 @@ class DBOp {
     }
 
     virtual int Prepare(const DoutPrefixProvider *dpp, DBOpParams *params) { return 0; }
+    virtual int Bind(const DoutPrefixProvider *dpp, DBOpParams *params) { return 0; }
     virtual int Execute(const DoutPrefixProvider *dpp, DBOpParams *params) { return 0; }
 };
 
-class InsertUserOp : public DBOp {
+class InsertUserOp : virtual public DBOp {
   private:
     /* For existing entires, -
      * (1) INSERT or REPLACE - it will delete previous entry and then
@@ -711,7 +735,7 @@ class InsertUserOp : public DBOp {
 
 };
 
-class RemoveUserOp: public DBOp {
+class RemoveUserOp: virtual public DBOp {
   private:
     const string Query =
       "DELETE from '{}' where UserID = {}";
@@ -725,7 +749,7 @@ class RemoveUserOp: public DBOp {
     }
 };
 
-class GetUserOp: public DBOp {
+class GetUserOp: virtual public DBOp {
   private:
     /* If below query columns are updated, make sure to update the indexes
      * in list_user() cbk in sqliteDB.cc */
@@ -786,7 +810,7 @@ class GetUserOp: public DBOp {
     }
 };
 
-class InsertBucketOp: public DBOp {
+class InsertBucketOp: virtual public DBOp {
   private:
     const string Query =
       "INSERT OR REPLACE INTO '{}' \
@@ -822,7 +846,7 @@ class InsertBucketOp: public DBOp {
     }
 };
 
-class UpdateBucketOp: public DBOp {
+class UpdateBucketOp: virtual public DBOp {
   private:
     // Updates Info, Mtime, Version
     const string InfoQuery =
@@ -875,7 +899,7 @@ class UpdateBucketOp: public DBOp {
     }
 };
 
-class RemoveBucketOp: public DBOp {
+class RemoveBucketOp: virtual public DBOp {
   private:
     const string Query =
       "DELETE from '{}' where BucketName = {}";
@@ -889,7 +913,7 @@ class RemoveBucketOp: public DBOp {
     }
 };
 
-class GetBucketOp: public DBOp {
+class GetBucketOp: virtual public DBOp {
   private:
     const string Query = "SELECT  \
                           BucketName, BucketTable.Tenant, Marker, BucketID, Size, SizeRounded, CreationTime, \
@@ -912,7 +936,7 @@ class GetBucketOp: public DBOp {
     }
 };
 
-class ListUserBucketsOp: public DBOp {
+class ListUserBucketsOp: virtual public DBOp {
   private:
     // once we have stats also stored, may have to update this query to join
     // these two tables.
@@ -935,7 +959,7 @@ class ListUserBucketsOp: public DBOp {
     }
 };
 
-class PutObjectOp: public DBOp {
+class PutObjectOp: virtual public DBOp {
   private:
     const string Query =
       "INSERT OR REPLACE INTO '{}' \
@@ -984,7 +1008,7 @@ class PutObjectOp: public DBOp {
     }
 };
 
-class DeleteObjectOp: public DBOp {
+class DeleteObjectOp: virtual public DBOp {
   private:
     const string Query =
       "DELETE from '{}' where BucketName = {} and ObjName = {} and ObjInstance = {}";
@@ -1000,7 +1024,7 @@ class DeleteObjectOp: public DBOp {
     }
 };
 
-class GetObjectOp: public DBOp {
+class GetObjectOp: virtual public DBOp {
   private:
     const string Query =
       "SELECT  \
@@ -1027,7 +1051,7 @@ class GetObjectOp: public DBOp {
     }
 };
 
-class ListBucketObjectsOp: public DBOp {
+class ListBucketObjectsOp: virtual public DBOp {
   private:
     // once we have stats also stored, may have to update this query to join
     // these two tables.
@@ -1056,7 +1080,7 @@ class ListBucketObjectsOp: public DBOp {
     }
 };
 
-class UpdateObjectOp: public DBOp {
+class UpdateObjectOp: virtual public DBOp {
   private:
     // Updates Omap
     const string OmapQuery =
@@ -1144,7 +1168,7 @@ class UpdateObjectOp: public DBOp {
     }
 };
 
-class PutObjectDataOp: public DBOp {
+class PutObjectDataOp: virtual public DBOp {
   private:
     const string Query =
       "INSERT OR REPLACE INTO '{}' \
@@ -1168,7 +1192,7 @@ class PutObjectDataOp: public DBOp {
     }
 };
 
-class UpdateObjectDataOp: public DBOp {
+class UpdateObjectDataOp: virtual public DBOp {
   private:
     const string Query =
       "UPDATE '{}' \
@@ -1189,7 +1213,7 @@ class UpdateObjectDataOp: public DBOp {
           params.op.bucket.bucket_name.c_str());
     }
 };
-class GetObjectDataOp: public DBOp {
+class GetObjectDataOp: virtual public DBOp {
   private:
     const string Query =
       "SELECT  \
@@ -1208,7 +1232,7 @@ class GetObjectDataOp: public DBOp {
     }
 };
 
-class DeleteObjectDataOp: public DBOp {
+class DeleteObjectDataOp: virtual public DBOp {
   private:
     const string Query =
       "DELETE from '{}' where BucketName = {} and ObjName = {} and ObjInstance = {}";
@@ -1225,7 +1249,7 @@ class DeleteObjectDataOp: public DBOp {
     }
 };
 
-class InsertLCEntryOp: public DBOp {
+class InsertLCEntryOp: virtual public DBOp {
   private:
     const string Query =
       "INSERT OR REPLACE INTO '{}' \
@@ -1242,7 +1266,7 @@ class InsertLCEntryOp: public DBOp {
     }
 };
 
-class RemoveLCEntryOp: public DBOp {
+class RemoveLCEntryOp: virtual public DBOp {
   private:
     const string Query =
       "DELETE from '{}' where LCIndex = {} and BucketName = {}";
@@ -1256,7 +1280,7 @@ class RemoveLCEntryOp: public DBOp {
     }
 };
 
-class GetLCEntryOp: public DBOp {
+class GetLCEntryOp: virtual public DBOp {
   private:
     const string Query = "SELECT  \
                           LCIndex, BucketName, StartTime, Status \
@@ -1279,7 +1303,7 @@ class GetLCEntryOp: public DBOp {
     }
 };
 
-class ListLCEntriesOp: public DBOp {
+class ListLCEntriesOp: virtual public DBOp {
   private:
     const string Query = "SELECT  \
                           LCIndex, BucketName, StartTime, Status \
@@ -1295,7 +1319,7 @@ class ListLCEntriesOp: public DBOp {
     }
 };
 
-class InsertLCHeadOp: public DBOp {
+class InsertLCHeadOp: virtual public DBOp {
   private:
     const string Query =
       "INSERT OR REPLACE INTO '{}' \
@@ -1312,7 +1336,7 @@ class InsertLCHeadOp: public DBOp {
     }
 };
 
-class RemoveLCHeadOp: public DBOp {
+class RemoveLCHeadOp: virtual public DBOp {
   private:
     const string Query =
       "DELETE from '{}' where LCIndex = {}";
@@ -1326,7 +1350,7 @@ class RemoveLCHeadOp: public DBOp {
     }
 };
 
-class GetLCHeadOp: public DBOp {
+class GetLCHeadOp: virtual public DBOp {
   private:
     const string Query = "SELECT  \
                           LCIndex, Marker, StartDate \
@@ -1372,12 +1396,6 @@ class DB {
     const string lc_head_table;
     const string lc_entry_table;
     static map<string, class ObjectOp*> objectmap;
-    pthread_mutex_t mutex; // to protect objectmap and other shared
-    // objects if any. This mutex is taken
-    // before processing every fop (i.e, in
-    // ProcessOp()). If required this can be
-    // made further granular by taking separate
-    // locks for objectmap and db operations etc.
 
   protected:
     void *db;
@@ -1387,6 +1405,9 @@ class DB {
     // XXX: default ObjStripeSize or ObjChunk size - 4M, make them configurable?
     uint64_t ObjHeadSize = 1024; /* 1K - default head data size */
     uint64_t ObjChunkSize = (get_blob_limit() - 1000); /* 1000 to accommodate other fields */
+    // Below mutex is to protect objectmap and other shared
+    // objects if any.
+    DBOpMutex mtx;
 
   public:	
     DB(string db_name, CephContext *_cct) : db_name(db_name),
@@ -1448,7 +1469,7 @@ class DB {
     int InitializeParams(const DoutPrefixProvider *dpp, string Op, DBOpParams *params);
     int ProcessOp(const DoutPrefixProvider *dpp, string Op, DBOpParams *params);
     DBOp* getDBOp(const DoutPrefixProvider *dpp, string Op, struct DBOpParams *params);
-    int objectmapInsert(const DoutPrefixProvider *dpp, string bucket, void *ptr);
+    int objectmapInsert(const DoutPrefixProvider *dpp, string bucket, class ObjectOp* ptr);
     int objectmapDelete(const DoutPrefixProvider *dpp, string bucket);
 
     virtual uint64_t get_blob_limit() { return 0; };
