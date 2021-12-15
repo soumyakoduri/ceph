@@ -4,10 +4,16 @@ tasks:
 - rgw: [client.0]
 - s3tests:
     client.0:
-      force-branch: ceph-master
+      force-repo: https://github.com/soumyakoduri/s3-tests.git
+      git_remote: https://github.com/soumyakoduri/
+      force-branch: cloudtransition_boto3
       rgw_server: client.0
+      storage classes: LUKEWARM, FROZEN
 overrides:
   ceph:
     conf:
       client:
         rgw lc debug interval: 10
+        storage classes: LUKEWARM, FROZEN
+  rgw:
+    storage classes: LUKEWARM, FROZEN

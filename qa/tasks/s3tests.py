@@ -356,6 +356,14 @@ def configure(ctx, config):
         if slow_backend:
             s3tests_conf['fixtures']['slow backend'] = slow_backend
 
+        storage_classes = properties.get('storage classes')
+        if storage_classes:
+            s3tests_conf['s3 main']['storage_classes'] = storage_classes
+
+        lc_debug_interval = properties.get('lc_debug_interval')
+        if lc_debug_interval:
+            s3tests_conf['s3 main']['lc_debug_interval'] = lc_debug_interval
+
         (remote,) = ctx.cluster.only(client).remotes.keys()
         remote.run(
             args=[
@@ -421,7 +429,9 @@ def run_tests(ctx, config):
         else:
             args += ['REQUESTS_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt']
         # civetweb > 1.8 && beast parsers are strict on rfc2616
-        attrs = ["!fails_on_rgw", "!lifecycle_expiration", "!fails_strict_rfc2616","!test_of_sts","!webidentity_test"]
+        #attrs = ["!fails_on_rgw","!fails_strict_rfc2616","!test_of_sts","!webidentity_test"]
+        attrs = ["lifecycle"]
+#        attrs = ["!fails_on_rgw","!lifecycle_expiration","!fails_strict_rfc2616","!test_of_sts","!webidentity_test"]
         if client_config.get('calling-format') != 'ordinary':
             attrs += ['!fails_with_subdomain']
        
