@@ -576,14 +576,7 @@ def task(ctx, config):
         else:
             ctx.sts_variable = False
         #This will be the structure of config file when you want to run webidentity_test (sts-test)
-        if ctx.sts_variable and "TOKEN" in os.environ:
-            for client in clients:
-                endpoint = ctx.rgw.role_endpoints.get(client)
-                assert endpoint, 's3tests: no rgw endpoint for {}'.format(client)
-
-                s3tests_conf[client] = ConfigObj(
-                    indent_type='',
-                    infile={
+        infile_str = "
                         'DEFAULT':
                             {
                             'port'      : endpoint.port,
@@ -594,62 +587,34 @@ def task(ctx, config):
                         's3 main'    : {},
                         's3 alt'     : {},
                         's3 tenant'  : {},
+                    "
+
+        if ctx.sts_variable
+            if "TOKEN" in os.environ:
+                infile_str += "
                         'iam'        : {},
                         'webidentity': {},
-                    }
+                    "
+            else ctx.sts_variable:
+                infile_str += "
+                        'iam'        : {},
+                    "
+
+        if 'cloud_rgw_server' in client_config:
+            ctx.cloud_transition = True
+            infile_str += "
+                        's3 cloud'   : {},
+                    "
+
+        for client in clients:
+            endpoint = ctx.rgw.role_endpoints.get(client)
+            assert endpoint, 's3tests: no rgw endpoint for {}'.format(client)
+
+            s3tests_conf[client] = ConfigObj(
+                indent_type='',
+                infile={ infile_str }
                 )
 
-        elif ctx.sts_variable:
-            #This will be the structure of config file when you want to run assume_role_test and get_session_token_test (sts-test)
-            for client in clients:
-                endpoint = ctx.rgw.role_endpoints.get(client)
-                assert endpoint, 's3tests: no rgw endpoint for {}'.format(client)
-
-                s3tests_conf[client] = ConfigObj(
-                    indent_type='',
-                    infile={
-                        'DEFAULT':
-                            {
-                            'port'      : endpoint.port,
-                            'is_secure' : endpoint.cert is not None,
-                            'api_name'  : 'default',
-                            },
-                        'fixtures'   : {},
-                        's3 main'    : {},
-                        's3 alt'     : {},
-                        's3 tenant'  : {},
-                        'iam'        : {},
-                        }
-                    ) 
-
-        else:
-            #This will be the structure of config file when you want to run normal s3-tests
-            for client in clients:
-                endpoint = ctx.rgw.role_endpoints.get(client)
-                assert endpoint, 's3tests: no rgw endpoint for {}'.format(client)
-
-                s3tests_conf[client] = ConfigObj(
-                    indent_type='',
-                    infile={
-                        'DEFAULT':
-                            {
-                            'port'      : endpoint.port,
-                            'is_secure' : endpoint.cert is not None,
-                            'api_name'  : 'default',
-                            },
-                        'fixtures'   : {},
-                        's3 main'    : {},
-                        's3 alt'     : {},
-                        's3 tenant'  : {},
-                        }
-                    )
-
-    with contextutil.nested(
-        lambda: download(ctx=ctx, config=config),
-        lambda: create_users(ctx=ctx, config=dict(
-                clients=clients,
-                s3tests_conf=s3tests_conf,
-                )),
         lambda: configure(ctx=ctx, config=dict(
                 clients=config,
                 s3tests_conf=s3tests_conf,

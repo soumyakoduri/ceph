@@ -1,0 +1,31 @@
+tasks:
+- install:
+- ceph:
+- rgw: [client.0]
+- s3tests:
+    client.0:
+      force-repo: https://github.com/soumyakoduri/s3-tests.git
+      git_remote: https://github.com/soumyakoduri/
+      force-branch: lc_tests
+      extra_attrs: ["cloud_transition"]
+      lc_debug_interval: 10
+
+      rgw_server: client.0
+
+      cloud_rgw_server: client.1
+      cloud_storage_class: CLOUDTIER
+#      storage_class: LUKEWARM 
+#      cloud_target_storage_class: CLOUDFROZEN
+
+overrides:
+  ceph:
+    conf:
+      client:
+        debug rgw: 20
+        rgw lc debug interval: 10
+  rgw:
+    client.0:
+      storage classes: LUKEWARM
+
+    client.1: # cloud endpoint
+      storage classes: FROZEN # storage class at cloud endpoint to transition objects to
