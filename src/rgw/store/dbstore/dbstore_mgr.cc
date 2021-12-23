@@ -3,6 +3,10 @@
 
 #include "dbstore_mgr.h"
 
+std::atomic<uint64_t> DBStoreManager::max_conn(MAX_QUEUE_DEFAULT); 
+std::atomic<uint64_t> DBStoreManager::total_conn(0); 
+DBStoreQueue DBStoreManager::DBStoreConns(DBStoreManager::max_conn);
+
 /* Given a tenant, find and return the DBStore handle.
  * If not found and 'create' set to true, create one
  * and return
@@ -59,18 +63,18 @@ DB *DBStoreManager::createDB(string tenant) {
 
   /* XXX: Do we need lock to protect this map?
   */
-  ret = DBStoreHandles.insert(pair<string, DB*>(tenant, dbs));
+  //ret = DBStoreHandles.insert(pair<string, DB*>(tenant, dbs));
 
   /*
    * Its safe to check for already existing entry (just
    * incase other thread raced and created the entry)
    */
-  if (ret.second == false) {
-    /* Entry already created by another thread */
+ /* if (ret.second == false) {
+    // Entry already created by another thread 
     delete dbs;
 
     dbs = ret.first->second;
-  }
+  }*/
 
   return dbs;
 }

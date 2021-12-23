@@ -583,6 +583,7 @@ void *SQLiteDB::openDB(const DoutPrefixProvider *dpp)
   }
 
   exec(dpp, "PRAGMA foreign_keys=ON", NULL);
+  exec(dpp, "PRAGMA journal_mode=WAL", NULL);
 
 out:
   return db;
@@ -650,13 +651,16 @@ int SQLiteDB::exec(const DoutPrefixProvider *dpp, const char *schema,
   if (!db)
     goto out;
 
-  ret = sqlite3_exec((sqlite3*)db, schema, callback, 0, &errmsg);
-  if (ret != SQLITE_OK) {
-    ldpp_dout(dpp, 0) <<"sqlite exec failed for schema("<<schema \
-      <<"); Errmsg - "<<errmsg <<  dendl;
-    sqlite3_free(errmsg);
-    goto out;
-  }
+  do {
+    ret = sqlite3_exec((sqlite3*)db, schema, callback, 0, &errmsg);
+    if (ret != SQLITE_OK && ret != SQLITE_BUSY) {
+      ldpp_dout(dpp, 0) <<"sqlite exec failed for schema("<<schema \
+        <<"); Errmsg - "<<errmsg <<  dendl;
+      sqlite3_free(errmsg);
+      goto out;
+    }
+  } while(ret == SQLITE_BUSY);
+
   ret = 0;
   ldpp_dout(dpp, 10) <<"sqlite exec successfully processed for schema(" \
     <<schema<<")" <<  dendl;

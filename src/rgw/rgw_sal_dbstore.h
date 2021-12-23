@@ -23,6 +23,7 @@
 
 #include "store/dbstore/common/dbstore.h"
 #include "store/dbstore/dbstore_mgr.h"
+#include <boost/lockfree/queue.hpp>
 
 namespace rgw { namespace sal {
 
@@ -803,7 +804,9 @@ public:
       DBStoreManager *getDBStoreManager(void) { return dbsm; }
 
       void setDB(DB * st) { db = st; }
-      DB *getDB(void) { return db; }
+      void setDefaultDB(DB * st) { db = st; }
+      std::shared_ptr<DB> getDB(void) { return dbsm->getDB(); }
+      DB *getDefaultDB(void) { return db; }
 
       DB *getDB(string tenant) { return dbsm->getDB(tenant, false); }
   };
