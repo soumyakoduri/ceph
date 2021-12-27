@@ -21,9 +21,21 @@
     ret = 0;					\
   } while(0);
 
+#define MAX_RETRIES 200000
+
+#define EXECUTE_STMT(rc, stmt) \
+  do {                          \
+    int retries = 0;                  \
+    do {                        \
+      rc = stmt;                  \
+      retries++;                    \
+      sleep(0.5);                     \
+    } while ((rc == SQLITE_BUSY) && (retries < MAX_RETRIES));    \
+  } while(0);
+
 #define SQL_BIND_INDEX(dpp, stmt, index, str, sdb)	\
   do {						\
-    index = sqlite3_bind_parameter_index(stmt, str);     \
+    EXECUTE_STMT(index, sqlite3_bind_parameter_index(stmt, str));    \
     \
     if (index <=0)  {				     \
       ldpp_dout(dpp, 0) <<"failed to fetch bind parameter"\
@@ -39,9 +51,12 @@
   }while(0);
 
 #define SQL_BIND_TEXT(dpp, stmt, index, str, sdb)			\
-  do {								\
-    rc = sqlite3_bind_text(stmt, index, str, -1, SQLITE_TRANSIENT); 	\
-    \
+  do {		\
+    if (strcmp(str, "null") == 0) {          \
+      EXECUTE_STMT(rc, sqlite3_bind_text(stmt, index, "", -1, SQLITE_TRANSIENT));    \
+    } else {                                                       \
+      EXECUTE_STMT(rc, sqlite3_bind_text(stmt, index, str, -1, SQLITE_TRANSIENT));    \
+    }  \
     if (rc != SQLITE_OK) {					      	\
       ldpp_dout(dpp, 0)<<"sqlite bind text failed for index("     	\
       <<index<<"), str("<<str<<") in stmt("   	\
@@ -54,7 +69,7 @@
 
 #define SQL_BIND_INT(dpp, stmt, index, num, sdb)			\
   do {								\
-    rc = sqlite3_bind_int(stmt, index, num);		\
+    EXECUTE_STMT(rc, sqlite3_bind_int(stmt, index, num));    \
     \
     if (rc != SQLITE_OK) {					\
       ldpp_dout(dpp, 0)<<"sqlite bind int failed for index("     	\
@@ -68,7 +83,7 @@
 
 #define SQL_BIND_BLOB(dpp, stmt, index, blob, size, sdb)		\
   do {								\
-    rc = sqlite3_bind_blob(stmt, index, blob, size, SQLITE_TRANSIENT);  \
+    EXECUTE_STMT(rc, sqlite3_bind_blob(stmt, index, blob, size, SQLITE_TRANSIENT));    \
     \
     if (rc != SQLITE_OK) {					\
       ldpp_dout(dpp, 0)<<"sqlite bind blob failed for index("     	\
@@ -569,11 +584,13 @@ void *SQLiteDB::openDB(const DoutPrefixProvider *dpp)
     goto out;
   }
 
-  rc = sqlite3_open_v2(dbname.c_str(), (sqlite3**)&db,
-      SQLITE_OPEN_READWRITE |
-      SQLITE_OPEN_CREATE |
-      SQLITE_OPEN_FULLMUTEX,
-      NULL);
+//  do {
+    rc = sqlite3_open_v2(dbname.c_str(), (sqlite3**)&db,
+        SQLITE_OPEN_READWRITE |
+        SQLITE_OPEN_CREATE |
+        SQLITE_OPEN_FULLMUTEX,
+        NULL);
+  //} while(rc == SQLITE_BUSY);
 
   if (rc) {
     ldpp_dout(dpp, 0) <<"Cant open "<<dbname<<"; Errmsg - "\
@@ -607,7 +624,10 @@ int SQLiteDB::Reset(const DoutPrefixProvider *dpp, sqlite3_stmt *stmt)
     return -1;
   }
   sqlite3_clear_bindings(stmt);
-  ret = sqlite3_reset(stmt);
+
+  do {
+    ret = sqlite3_reset(stmt);
+  } while(ret == SQLITE_BUSY);
 
   return ret;
 }
@@ -622,7 +642,7 @@ int SQLiteDB::Step(const DoutPrefixProvider *dpp, DBOpInfo &op, sqlite3_stmt *st
   }
 
 again:
-  ret = sqlite3_step(stmt);
+  EXECUTE_STMT(ret, sqlite3_step(stmt));
 
   if ((ret != SQLITE_DONE) && (ret != SQLITE_ROW)) {
     ldpp_dout(dpp, 0)<<"sqlite step failed for stmt("<<stmt \
@@ -651,15 +671,13 @@ int SQLiteDB::exec(const DoutPrefixProvider *dpp, const char *schema,
   if (!db)
     goto out;
 
-  do {
-    ret = sqlite3_exec((sqlite3*)db, schema, callback, 0, &errmsg);
-    if (ret != SQLITE_OK && ret != SQLITE_BUSY) {
-      ldpp_dout(dpp, 0) <<"sqlite exec failed for schema("<<schema \
-        <<"); Errmsg - "<<errmsg <<  dendl;
-      sqlite3_free(errmsg);
-      goto out;
-    }
-  } while(ret == SQLITE_BUSY);
+  EXECUTE_STMT(ret, sqlite3_exec((sqlite3*)db, schema, callback, 0, &errmsg));
+  if (ret != SQLITE_OK) {
+    ldpp_dout(dpp, 0) <<"sqlite exec failed for schema("<<schema \
+       <<"); Errmsg - "<<errmsg <<  dendl;
+    sqlite3_free(errmsg);
+    goto out;
+  }
 
   ret = 0;
   ldpp_dout(dpp, 10) <<"sqlite exec successfully processed for schema(" \

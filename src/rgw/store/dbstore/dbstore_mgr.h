@@ -66,11 +66,11 @@ public:
   DB* getDefaultDB () { return default_db; };
   std::shared_ptr<DB> getDB() {
     DB* db;
-    std::string tenant = default_tenant + "_" + to_string(max_conn);
+//    std::string tenant = default_tenant + "_" + to_string(max_conn);
     if (DBStoreManager::DBStoreConns.empty()) {
       db = createDB(default_tenant);
       total_conn++;
-      ldout(cct, 0) << "In getDB() tenant(" << tenant << "), total count is :"<< total_conn << " , newly created db:" << db << dendl;
+      ldout(cct, 0) << "In getDB() tenant(" << default_tenant << "), total count is :"<< total_conn << " , newly created db:" << db << dendl;
     } else {
       DBStoreManager::DBStoreConns.pop(std::ref(db));
     //  ldout(cct, 0) << "In getDB() tenant(" << tenant << "), outstanding count is :"<< total_conn << " ,db:" << db << dendl;
