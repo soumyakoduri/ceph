@@ -21,7 +21,7 @@
     ret = 0;					\
   } while(0);
 
-#define MAX_RETRIES 200000
+#define MAX_RETRIES 200
 
 #define EXECUTE_STMT(rc, stmt) \
   do {                          \

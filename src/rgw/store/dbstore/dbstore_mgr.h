@@ -32,7 +32,8 @@ private:
   DB *default_db = NULL;
   CephContext *cct;
   static DBStoreQueue DBStoreConns;
-  std::mutex mutex;
+  static std::mutex db_mutex;
+  static std::condition_variable db_cond;
 
   // used in the dtor for dbstore conn cleanup
   static std::atomic<uint64_t> max_conn; // XXX: make it configurable
@@ -44,6 +45,15 @@ public:
   DBStoreManager(CephContext *_cct): DBStoreHandles() {
     cct = _cct;
 	default_db = createDB(default_tenant);
+
+    for(uint32_t i = 0; i < DBStoreManager::max_conn; i++)  {
+      DB* db = createDB(default_tenant);
+
+      if (db) {
+        DBStoreManager::DBStoreConns.push(db);
+        DBStoreManager::total_conn++;
+      }
+    }
   };
   DBStoreManager(string logfile, int loglevel): DBStoreHandles() {
     /* No ceph context. Create one with log args provided */
@@ -66,17 +76,25 @@ public:
   DB* getDefaultDB () { return default_db; };
   std::shared_ptr<DB> getDB() {
     DB* db;
-//    std::string tenant = default_tenant + "_" + to_string(max_conn);
-    if (DBStoreManager::DBStoreConns.empty()) {
-      db = createDB(default_tenant);
-      total_conn++;
-      ldout(cct, 0) << "In getDB() tenant(" << default_tenant << "), total count is :"<< total_conn << " , newly created db:" << db << dendl;
-    } else {
+    {
+      std::unique_lock<std::mutex> guard(DBStoreManager::db_mutex);
+      DBStoreManager::db_cond.wait(guard, [&](){return (DBStoreManager::total_conn > 0);});
+
+      ceph_assert(!DBStoreManager::DBStoreConns.empty());
+
       DBStoreManager::DBStoreConns.pop(std::ref(db));
-    //  ldout(cct, 0) << "In getDB() tenant(" << tenant << "), outstanding count is :"<< total_conn << " ,db:" << db << dendl;
+      DBStoreManager::total_conn--; 
+      ldout(cct, 0) << "In getDB() tenant(" << default_tenant << "), total count is :"<< total_conn << " , newly created db:" << db << dendl;
+
     } 
 
-    std::shared_ptr<DB> sh(db, [](DB* p){ DBStoreManager::DBStoreConns.push(p); });
+    std::shared_ptr<DB> sh(db,
+         [](DB* p){
+           std::lock_guard<std::mutex> guard(DBStoreManager::db_mutex);
+           DBStoreManager::DBStoreConns.push(p);
+           DBStoreManager::total_conn++;
+           DBStoreManager::db_cond.notify_all();
+         });
     return sh;
   }
   DB* getDB (string tenant, bool create);
