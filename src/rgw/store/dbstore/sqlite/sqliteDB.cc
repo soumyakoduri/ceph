@@ -29,17 +29,16 @@
     do {                        \
       rc = stmt;                  \
       retries++;                    \
-      if (retries > 1) {  \
-        std::this_thread::sleep_for(std::chrono::milliseconds(100)); \
-      }   \
+      sleep(0.5);   \
     } while ((rc == SQLITE_BUSY) && (retries < MAX_RETRIES));    \
     if (retries > 1) {  \
         ldpp_dout(dpp, 20)<<"No. of retries = " << retries << dendl; \
     } \
   } while(0);
 
-    //ldpp_dout(dpp, 20)<<"No. of retries = " << retries << " for stmt ("<<stmt	
-    //<<")" << dendl; 
+      //if (retries > 1) {  \
+      //  std::this_thread::sleep_for(std::chrono::milliseconds(50)); \
+     // }   
 #define SQL_BIND_INDEX(dpp, stmt, index, str, sdb)	\
   do {						\
     EXECUTE_STMT(dpp, index, sqlite3_bind_parameter_index(stmt, str));    \
@@ -621,6 +620,54 @@ int SQLiteDB::closeDB(const DoutPrefixProvider *dpp)
   db = NULL;
 
   return 0;
+}
+
+int SQLiteDB::beginTransaction(const DoutPrefixProvider *dpp) {
+  int ret = -1;
+
+  ret = exec(dpp, BeginQ.c_str(), NULL);
+  if (ret)
+    ldpp_dout(dpp, 0)<<"BeginTransaction failed" << dendl;
+
+  ldpp_dout(dpp, 20)<<"BeginTransaction suceeded" << dendl;
+
+  return ret;
+}
+
+int SQLiteDB::rollbackTransaction(const DoutPrefixProvider *dpp) {
+  int ret = -1;
+
+  ret = exec(dpp, RollbackQ.c_str(), NULL);
+  if (ret)
+    ldpp_dout(dpp, 0)<<"RollbackTransaction failed" << dendl;
+
+  ldpp_dout(dpp, 20)<<"RollbackTransaction suceeded" << dendl;
+
+  return ret;
+}
+
+int SQLiteDB::endTransaction(const DoutPrefixProvider *dpp) {
+  int ret = -1;
+
+  ret = exec(dpp, EndQ.c_str(), NULL);
+  if (ret)
+    ldpp_dout(dpp, 0)<<"EndTransaction failed" << dendl;
+
+  ldpp_dout(dpp, 20)<<"EndTransaction suceeded" << dendl;
+
+  return ret;
+}
+
+int SQLiteDB::commitTransaction(const DoutPrefixProvider *dpp) {
+  int ret = -1;
+
+  ret = exec(dpp, CommitQ.c_str(), NULL);
+  if (ret)
+    ldpp_dout(dpp, 0)<<"CommitTransaction failed" << dendl;
+
+  ldpp_dout(dpp, 20)<<"CommitTransaction suceeded" << dendl;
+
+  return ret;
 }
 
 int SQLiteDB::Reset(const DoutPrefixProvider *dpp, sqlite3_stmt *stmt)

@@ -619,6 +619,13 @@ class DBOp {
     const string DropQ = "DROP TABLE IF EXISTS '{}'";
     const string ListAllQ = "SELECT  * from '{}'";
 
+ protected:
+    /* transaction schema */
+    const string BeginQ = "BEGIN TRANSACTION";
+    const string CommitQ = "COMMIT";
+    const string EndQ = "END TRANSACTION";
+    const string RollbackQ = "ROLLBACK";
+
   public:
     DBOp() {};
     virtual ~DBOp() {};
@@ -1459,6 +1466,11 @@ class DB {
     virtual int FreeDBOps(const DoutPrefixProvider *dpp) { return 0; }
     virtual int InitPrepareParams(const DoutPrefixProvider *dpp, DBOpPrepareParams &params) = 0;
     virtual int createLCTables(const DoutPrefixProvider *dpp) = 0;
+
+    virtual int beginTransaction(const DoutPrefixProvider *dpp) { return 0; }
+    virtual int endTransaction(const DoutPrefixProvider *dpp) { return 0; }
+    virtual int commitTransaction(const DoutPrefixProvider *dpp) { return 0; }
+    virtual int rollbackTransaction(const DoutPrefixProvider *dpp) { return 0; }
 
     virtual int ListAllBuckets(const DoutPrefixProvider *dpp, DBOpParams *params) = 0;
     virtual int ListAllUsers(const DoutPrefixProvider *dpp, DBOpParams *params) = 0;

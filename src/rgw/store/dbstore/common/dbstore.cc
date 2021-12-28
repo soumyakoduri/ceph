@@ -522,12 +522,18 @@ int DB::create_bucket(const DoutPrefixProvider *dpp,
   /* Check if the bucket already exists and return the old info, caller will have a use for it */
   RGWBucketInfo orig_info;
   orig_info.bucket.name = bucket.name;
+
+  int r = beginTransaction(dpp);
+  if (r < 0)
+    return r;
+
   ret = get_bucket_info(dpp, string("name"), "", orig_info, nullptr, nullptr, nullptr);
 
   if (!ret && !orig_info.owner.id.empty() && exclusive) {
     /* already exists. Return the old info */
 
     info = std::move(orig_info);
+    (void)endTransaction(dpp);
     return ret;
   }
 
@@ -577,6 +583,11 @@ int DB::create_bucket(const DoutPrefixProvider *dpp,
   }
 
 out:
+  if (ret < 0) {
+    (void)rollbackTransaction(dpp);
+  } else {
+    (void)commitTransaction(dpp);
+  }
   return ret;
 }
 
@@ -1375,14 +1386,22 @@ int DB::Object::Read::read(int64_t ofs, int64_t end, bufferlist& bl, const DoutP
   bufferlist read_bl;
   uint64_t max_chunk_size = store->get_max_chunk_size();
 
-  RGWObjState base_state;
-  RGWObjState *astate = &base_state;
-  int r = source->get_state(dpp, &astate, true);
+  // begin transaction to avoid object modification while reading
+  // chunks
+  int r = store->beginTransaction(dpp);
   if (r < 0)
     return r;
 
+  {
+  RGWObjState base_state;
+  RGWObjState *astate = &base_state;
+  r = source->get_state(dpp, &astate, true);
+  if (r < 0)
+    goto out;
+
   if (!astate->exists) {
-    return -ENOENT;
+    r = -ENOENT;
+    goto out;
   }
 
   if (astate->size == 0) {
@@ -1408,13 +1427,13 @@ int DB::Object::Read::read(int64_t ofs, int64_t end, bufferlist& bl, const DoutP
     if (astate) { // && astate->prefetch_data)?
       if (!ofs && astate->data.length() >= len) {
         bl = astate->data;
-        return bl.length();
+        goto out;
       }
 
       if (ofs < astate->data.length()) {
         unsigned copy_len = std::min((uint64_t)head_data_size - ofs, len);
         astate->data.begin(ofs).copy(copy_len, bl);
-        return bl.length();
+        goto out;
       }
     }
   }
@@ -1433,8 +1452,16 @@ int DB::Object::Read::read(int64_t ofs, int64_t end, bufferlist& bl, const DoutP
   r = read_obj.read(dpp, read_ofs, read_len, bl);
 
   if (r < 0) {
-    return r;
+    goto out;
   }
+
+  }
+out:
+  // end transaction
+  (void)store->endTransaction(dpp);
+
+  if (r < 0)
+    return r;
 
   return bl.length();
 }
@@ -1495,12 +1522,23 @@ int DB::Object::Read::iterate(const DoutPrefixProvider *dpp, int64_t ofs, int64_
 
   db_get_obj_data data(store, cb, ofs);
 
-  int r = source->iterate_obj(dpp, source->get_bucket_info(), state.obj,
+  // begin transaction to avoid object modification while reading chunks
+  int r = store->beginTransaction(dpp);
+  if (r < 0)
+    return r;
+
+  r = source->iterate_obj(dpp, source->get_bucket_info(), state.obj,
       ofs, end, chunk_size, _get_obj_iterate_cb, &data);
   if (r < 0) {
     ldpp_dout(dpp, 0) << "iterate_obj() failed with " << r << dendl;
-    return r;
+    goto out;
   }
+
+out:
+  // end transaction
+  (void)store->endTransaction(dpp);
+  if (r < 0)
+    return r;
 
   return 0;
 }
@@ -1562,6 +1600,10 @@ int DB::Object::Write::prepare(const DoutPrefixProvider* dpp)
   int ret = -1;
 
   /* XXX: handle assume_noent */
+  int r = store->beginTransaction(dpp);
+  if (r < 0)
+    return r;
+
   store->InitializeParams(dpp, "GetObject", &params);
   target->InitializeParamsfromObject(dpp, &params);
 
@@ -1590,6 +1632,10 @@ int DB::Object::Write::prepare(const DoutPrefixProvider* dpp)
   ret = 0;
 
 out:
+
+  if (ret < 0) {
+    (void)store->rollbackTransaction(dpp);
+  }
   return ret;
 }
 
@@ -1601,16 +1647,19 @@ int DB::Object::Write::write_data(const DoutPrefixProvider* dpp,
   /* XXX: Split into parts each of max_chunk_size. But later make tail
    * object chunk size limit to sqlite blob limit */
   int part_num = 0;
+  int r = 0;
 
   uint64_t max_chunk_size = store->get_max_chunk_size();
 
   /* tail_obj ofs should be greater than max_head_size */
   if (mp_part_str == "0.0")  { // ensure not multipart meta object
     if (ofs < store->get_max_head_size()) {
-      return -1;
+      r = -1;
+      goto out;
     }
   }
   
+  {
   uint64_t end = data.length();
   uint64_t write_ofs = 0;
   /* as we are writing max_chunk_size at a time in sal_dbstore DBAtomicWriter::process(),
@@ -1628,17 +1677,22 @@ int DB::Object::Write::write_data(const DoutPrefixProvider* dpp,
     ldpp_dout(dpp, 20) << "dbstore->write obj-ofs=" << ofs << " write_len=" << len << dendl;
 
     // write into non head object
-    int r = write_obj.write(dpp, ofs, write_ofs, len, data); 
+    r = write_obj.write(dpp, ofs, write_ofs, len, data); 
     if (r < 0) {
-      return r;
+      goto out;
     }
     /* r refers to chunk_len (no. of bytes) handled in raw_obj::write */
     len -= r;
     ofs += r;
     write_ofs += r;
   }
+  }
 
-  return 0;
+out:
+  if (r < 0) {
+    (void)store->rollbackTransaction(dpp);
+  }
+  return r;
 }
 
 /* Write metadata & head object data */
@@ -1776,9 +1830,15 @@ out:
 int DB::Object::Write::write_meta(const DoutPrefixProvider *dpp, uint64_t size, uint64_t accounted_size,
     map<string, bufferlist>& attrs)
 {
+  DB *store = target->get_store();
   bool assume_noent = false;
   /* handle assume_noent */
   int r = _do_write_meta(dpp, size, accounted_size, attrs, assume_noent, meta.modify_tail);
+  if (r < 0) {
+    (void)store->rollbackTransaction(dpp);
+  } else {
+    (void)store->commitTransaction(dpp);
+  }
   return r;
 }
 
@@ -1808,20 +1868,25 @@ int DB::Object::Delete::delete_obj(const DoutPrefixProvider *dpp) {
   DB *store = target->get_store();
   RGWObjState base_state;
   RGWObjState *astate = &base_state;
+  DBOpParams del_params = {};
 
-  int r = target->get_state(dpp, &astate, true);
+  // begin transaction
+  int r = store->beginTransaction(dpp);
   if (r < 0)
     return r;
 
+  ret = target->get_state(dpp, &astate, true);
+  if (ret < 0)
+    goto out;
+
   if (!astate->exists) {
+    (void)store->endTransaction(dpp);
     return -ENOENT;
   }
 
   /* XXX: handle versioned objects. Create delete marker */
 
   /* XXX: check params conditions */
-  DBOpParams del_params = {};
-
   store->InitializeParams(dpp, "DeleteObject", &del_params);
   target->InitializeParamsfromObject(dpp, &del_params);
 
@@ -1832,7 +1897,17 @@ int DB::Object::Delete::delete_obj(const DoutPrefixProvider *dpp) {
     goto out;
   }
 
+  // commit transaction - same as end
+  r = store->commitTransaction(dpp);
+  if (r < 0)
+    return r;
+
 out:
+  if (ret < 0) {
+    // rollback transaction
+    (void)store->rollbackTransaction(dpp);
+  }
+
   return ret;
 }
 
