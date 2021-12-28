@@ -84,9 +84,9 @@ public:
 
       DBStoreManager::DBStoreConns.pop(std::ref(db));
       DBStoreManager::total_conn--; 
-      ldout(cct, 0) << "In getDB() tenant(" << default_tenant << "), total count is :"<< total_conn << " , newly created db:" << db << dendl;
-
     } 
+      ldout(cct, 0) << "In getDB() tenant(" << default_tenant << "), total count is :"<< DBStoreManager::total_conn << " , newly created db:" << db << dendl;
+
 
     std::shared_ptr<DB> sh(db,
          [](DB* p){
