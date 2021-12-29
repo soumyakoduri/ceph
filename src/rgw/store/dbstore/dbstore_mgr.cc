@@ -5,7 +5,7 @@
 
 std::atomic<uint64_t> DBStoreManager::max_conn(MAX_QUEUE_DEFAULT); 
 std::atomic<uint64_t> DBStoreManager::total_conn(0); 
-DBStoreQueue DBStoreManager::DBStoreConns(DBStoreManager::max_conn);
+DBStoreQueue DBStoreManager::db_connections(DBStoreManager::max_conn);
 std::mutex DBStoreManager::db_mutex;
 std::condition_variable DBStoreManager::db_cond;
 

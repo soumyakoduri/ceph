@@ -31,13 +31,15 @@ private:
   map<string, DB*> DBStoreHandles;
   DB *default_db = NULL;
   CephContext *cct;
-  static DBStoreQueue DBStoreConns;
-  static std::mutex db_mutex;
-  static std::condition_variable db_cond;
 
   // used in the dtor for dbstore conn cleanup
   static std::atomic<uint64_t> max_conn; // XXX: make it configurable
   static std::atomic<uint64_t> total_conn; // total connections created so far
+
+  static DBStoreQueue db_connections;
+  static std::mutex db_mutex;
+  static std::condition_variable db_cond;
+
   static void delete_conn(const DB* db) {
     delete db;
   }
@@ -50,7 +52,7 @@ public:
       DB* db = createDB(default_tenant);
 
       if (db) {
-        DBStoreManager::DBStoreConns.push(db);
+        DBStoreManager::db_connections.push(db);
         DBStoreManager::total_conn++;
       }
     }
@@ -63,10 +65,19 @@ public:
     cct->_log->set_log_file(logfile);
     cct->_log->reopen_log_file();
     cct->_conf->subsys.set_log_level(dout_subsys, loglevel);
+
+    for(uint32_t i = 0; i < DBStoreManager::max_conn; i++)  {
+      DB* db = createDB(default_tenant);
+
+      if (db) {
+        DBStoreManager::db_connections.push(db);
+        DBStoreManager::total_conn++;
+      }
+    }
   };
   ~DBStoreManager() {
      destroyAllHandles();
-     DBStoreManager::DBStoreConns.consume_all(delete_conn);};
+     DBStoreManager::db_connections.consume_all(delete_conn);};
 
   /* XXX: TBD based on testing
    * 1)  Lock to protect DBStoreHandles map.
@@ -80,9 +91,9 @@ public:
       std::unique_lock<std::mutex> guard(DBStoreManager::db_mutex);
       DBStoreManager::db_cond.wait(guard, [&](){return (DBStoreManager::total_conn > 0);});
 
-      ceph_assert(!DBStoreManager::DBStoreConns.empty());
+      ceph_assert(!DBStoreManager::db_connections.empty());
 
-      DBStoreManager::DBStoreConns.pop(std::ref(db));
+      DBStoreManager::db_connections.pop(std::ref(db));
       DBStoreManager::total_conn--; 
     } 
       ldout(cct, 0) << "In getDB() tenant(" << default_tenant << "), total count is :"<< DBStoreManager::total_conn << " , newly created db:" << db << dendl;
@@ -91,7 +102,7 @@ public:
     std::shared_ptr<DB> sh(db,
          [](DB* p){
            std::lock_guard<std::mutex> guard(DBStoreManager::db_mutex);
-           DBStoreManager::DBStoreConns.push(p);
+           DBStoreManager::db_connections.push(p);
            DBStoreManager::total_conn++;
            DBStoreManager::db_cond.notify_all();
          });
