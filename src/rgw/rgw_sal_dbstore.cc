@@ -443,7 +443,7 @@ namespace rgw::sal {
 
     results.objs.clear();
 
-    DB::Bucket target(store->getDB(), get_info());
+    DB::Bucket target(store->getDB().get(), get_info());
     DB::Bucket::List list_op(&target);
 
     list_op.params.prefix = params.prefix;
@@ -558,7 +558,7 @@ namespace rgw::sal {
   int DBObject::get_obj_state(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, RGWObjState **state, optional_yield y, bool follow_olh)
   {
     *state = &(this->state);
-    DB::Object op_target(store->getDB(), get_bucket()->get_info(), get_obj());
+    DB::Object op_target(store->getDB().get(), get_bucket()->get_info(), get_obj());
     return op_target.get_obj_state(dpp, get_bucket()->get_info(), get_obj(), follow_olh, state);
   }
 
@@ -575,14 +575,14 @@ namespace rgw::sal {
   int DBObject::set_obj_attrs(const DoutPrefixProvider* dpp, RGWObjectCtx* rctx, Attrs* setattrs, Attrs* delattrs, optional_yield y, rgw_obj* target_obj)
   {
     Attrs empty;
-    DB::Object op_target(store->getDB(),
+    DB::Object op_target(store->getDB().get(),
         get_bucket()->get_info(), target_obj ? *target_obj : get_obj());
     return op_target.set_attrs(dpp, setattrs ? *setattrs : empty, delattrs);
   }
 
   int DBObject::get_obj_attrs(RGWObjectCtx* rctx, optional_yield y, const DoutPrefixProvider* dpp, rgw_obj* target_obj)
   {
-    DB::Object op_target(store->getDB(), get_bucket()->get_info(), get_obj());
+    DB::Object op_target(store->getDB().get(), get_bucket()->get_info(), get_obj());
     DB::Object::Read read_op(&op_target);
 
     return read_attrs(dpp, read_op, y, target_obj);
@@ -646,7 +646,7 @@ namespace rgw::sal {
       std::map<std::string, bufferlist> *m,
       bool* pmore, optional_yield y)
   {
-    DB::Object op_target(store->getDB(),
+    DB::Object op_target(store->getDB().get(),
         get_bucket()->get_info(), get_obj());
     return op_target.obj_omap_get_vals(dpp, marker, count, m, pmore);
   }
@@ -654,7 +654,7 @@ namespace rgw::sal {
   int DBObject::omap_get_all(const DoutPrefixProvider *dpp, std::map<std::string, bufferlist> *m,
       optional_yield y)
   {
-    DB::Object op_target(store->getDB(),
+    DB::Object op_target(store->getDB().get(),
         get_bucket()->get_info(), get_obj());
     return op_target.obj_omap_get_all(dpp, m);
   }
@@ -663,7 +663,7 @@ namespace rgw::sal {
       const std::set<std::string>& keys,
       Attrs* vals)
   {
-    DB::Object op_target(store->getDB(),
+    DB::Object op_target(store->getDB().get(),
         get_bucket()->get_info(), get_obj());
     return op_target.obj_omap_get_vals_by_keys(dpp, oid, keys, vals);
   }
@@ -671,7 +671,7 @@ namespace rgw::sal {
   int DBObject::omap_set_val_by_key(const DoutPrefixProvider *dpp, const std::string& key, bufferlist& val,
       bool must_exist, optional_yield y)
   {
-    DB::Object op_target(store->getDB(),
+    DB::Object op_target(store->getDB().get(),
         get_bucket()->get_info(), get_obj());
     return op_target.obj_omap_set_val_by_key(dpp, key, val, must_exist);
   }
@@ -711,7 +711,7 @@ namespace rgw::sal {
   DBObject::DBReadOp::DBReadOp(DBObject *_source, RGWObjectCtx *_rctx) :
     source(_source),
     rctx(_rctx),
-    op_target(_source->store->getDB(),
+    op_target(_source->store->getDB().get(),
         _source->get_bucket()->get_info(),
         _source->get_obj()),
     parent_op(&op_target)
@@ -761,7 +761,7 @@ namespace rgw::sal {
   DBObject::DBDeleteOp::DBDeleteOp(DBObject *_source, RGWObjectCtx *_rctx) :
     source(_source),
     rctx(_rctx),
-    op_target(_source->store->getDB(),
+    op_target(_source->store->getDB().get(),
         _source->get_bucket()->get_info(),
         _source->get_obj()),
     parent_op(&op_target)
@@ -796,7 +796,7 @@ namespace rgw::sal {
 
   int DBObject::delete_object(const DoutPrefixProvider* dpp, RGWObjectCtx* obj_ctx, optional_yield y, bool prevent_versioning)
   {
-    DB::Object del_target(store->getDB(), bucket->get_info(), *obj_ctx, get_obj());
+    DB::Object del_target(store->getDB().get(), bucket->get_info(), *obj_ctx, get_obj());
     DB::Object::Delete del_op(&del_target);
 
     del_op.params.bucket_owner = bucket->get_info().owner;
@@ -908,7 +908,7 @@ namespace rgw::sal {
     mp_obj.init(oid, upload_id);
     obj = get_meta_obj();
 
-    DB::Object op_target(store->getDB(), obj->get_bucket()->get_info(),
+    DB::Object op_target(store->getDB().get(), obj->get_bucket()->get_info(),
 			       obj->get_obj());
     DB::Object::Write obj_op(&op_target);
 
@@ -943,7 +943,7 @@ namespace rgw::sal {
     parts.clear();
     int ret;
 
-    DB::Object op_target(store->getDB(),
+    DB::Object op_target(store->getDB().get(),
         obj->get_bucket()->get_info(), obj->get_obj());
     ret = op_target.get_mp_parts_list(dpp, parts_map);
     if (ret < 0) {
@@ -1086,7 +1086,7 @@ namespace rgw::sal {
      * from 'head_obj.name + "." + upload_id' to head_obj.name) */
 
     /* Original head object */
-    DB::Object op_target(store->getDB(),
+    DB::Object op_target(store->getDB().get(),
 			     target_obj->get_bucket()->get_info(),
 			     target_obj->get_obj());
     DB::Object::Write obj_op(&op_target);
@@ -1094,7 +1094,7 @@ namespace rgw::sal {
 
     /* Meta object */
     std::unique_ptr<rgw::sal::Object> meta_obj = get_meta_obj();
-    DB::Object meta_op_target(store->getDB(),
+    DB::Object meta_op_target(store->getDB().get(),
 			     meta_obj->get_bucket()->get_info(),
 			     meta_obj->get_obj());
     DB::Object::Write mp_op(&meta_op_target);
@@ -1216,7 +1216,7 @@ namespace rgw::sal {
                 oid(head_obj->get_name() + "." + upload_id +
                     "." + std::to_string(part_num)),
                 meta_obj(((DBMultipartUpload*)upload)->get_meta_obj()),
-                op_target(_store->getDB(), meta_obj->get_bucket()->get_info(), meta_obj->get_obj()),
+                op_target(_store->getDB().get(), meta_obj->get_bucket()->get_info(), meta_obj->get_obj()),
                 parent_op(&op_target), part_num(_part_num),
                 part_num_str(_part_num_str) { parent_op.prepare(NULL);}
 
@@ -1337,7 +1337,7 @@ namespace rgw::sal {
     info.modified = real_clock::now();
     //info.manifest = manifest;
 
-    DB::Object op_target(store->getDB(),
+    DB::Object op_target(store->getDB().get(),
         meta_obj->get_bucket()->get_info(), meta_obj->get_obj());
     ret = op_target.add_mp_part(dpp, info);
     if (ret < 0) {
@@ -1362,7 +1362,7 @@ namespace rgw::sal {
                 olh_epoch(_olh_epoch),
                 unique_tag(_unique_tag),
                 obj(_store, _head_obj->get_key(), _head_obj->get_bucket()),
-                op_target(_store->getDB(), obj.get_bucket()->get_info(), obj.get_obj()),
+                op_target(_store->getDB().get(), obj.get_bucket()->get_info(), obj.get_obj()),
                 parent_op(&op_target) {}
 
   int DBAtomicWriter::prepare(optional_yield y)
@@ -1898,14 +1898,14 @@ extern "C" {
         delete store; store = nullptr;
       }
 
-      DB *db = dbsm->getDB();
+      DB *db = dbsm->getDefaultDB();
       if (!db) {
         delete dbsm;
         delete store; store = nullptr;
       }
 
       store->setDBStoreManager(dbsm);
-      store->setDB(db);
+      store->setDefaultDB(db);
       db->set_store((rgw::sal::Store*)store);
       db->set_context(cct);
     }
