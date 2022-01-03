@@ -86,6 +86,7 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
     }
 
     /* XXX: temporary - create testid user */
+    {
     rgw_user testid_user("", "testid", "");
     std::unique_ptr<rgw::sal::User> user = store->get_user(testid_user);
     user->get_info().display_name = "M. Tester";
@@ -97,6 +98,49 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
     if (r < 0) {
       ldpp_dout(dpp, 0) << "ERROR: failed inserting testid user in dbstore error r=" << r << dendl;
     }
+    }
+    /* Creating s3-test users. */
+    {
+    rgw_user s3_user("", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "");
+    std::unique_ptr<rgw::sal::User> user = store->get_user(s3_user);
+    user->get_info().display_name = "youruseridhere";
+    user->get_info().user_email = "s3@example.com";
+    RGWAccessKey k2("ABCDEFGHIJKLMNOPQRST", "abcdefghijklmnopqrstuvwxyzabcdefghijklmn");
+    user->get_info().access_keys["ABCDEFGHIJKLMNOPQRST"] = k2;
+
+    int r = user->store_user(dpp, null_yield, true);
+    if (r < 0) {
+      ldpp_dout(dpp, 0) << "ERROR: failed inserting s3-user1 in dbstore error r=" << r << dendl;
+    }
+    }
+
+    {
+    rgw_user s3_user("", "56789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234", "");
+    std::unique_ptr<rgw::sal::User> user = store->get_user(s3_user);
+    user->get_info().display_name = "john.doe";
+    user->get_info().user_email = "john.doe@example.com";
+    RGWAccessKey k2("NOPQRSTUVWXYZABCDEFG", "nopqrstuvwxyzabcdefghijklmnabcdefghijklm");
+    user->get_info().access_keys["NOPQRSTUVWXYZABCDEFG"] = k2;
+
+    int r = user->store_user(dpp, null_yield, true);
+    if (r < 0) {
+      ldpp_dout(dpp, 0) << "ERROR: failed inserting s3-user2 in dbstore error r=" << r << dendl;
+    }
+    }
+    {
+    rgw_user s3_user("", "9876543210abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "");
+    std::unique_ptr<rgw::sal::User> user = store->get_user(s3_user);
+    user->get_info().display_name = "tenanteduser";
+    user->get_info().user_email = "tenanteduser@example.com";
+    RGWAccessKey k2("HIJKLMNOPQRSTUVWXYZA", "opqrstuvwxyzabcdefghijklmnopqrstuvwxyzab");
+    user->get_info().access_keys["HIJKLMNOPQRSTUVWXYZA"] = k2;
+
+    int r = user->store_user(dpp, null_yield, true);
+    if (r < 0) {
+      ldpp_dout(dpp, 0) << "ERROR: failed inserting s3-user3 in dbstore error r=" << r << dendl;
+    }
+    } 
+
     return store;
 #endif
   }
