@@ -49,7 +49,7 @@ struct DBOpBucketInfo {
 
 struct DBOpObjectInfo {
   RGWAccessControlPolicy acls;
-  RGWObjState state;
+  RGWObjState state = {};
 
   /* Below are taken from rgw_bucket_dir_entry */
   RGWObjCategory category;
@@ -63,6 +63,9 @@ struct DBOpObjectInfo {
   std::string tag;
   uint16_t flags;
   uint64_t versioned_epoch;
+  std::list<std::string> versions; /* Queue to store various versions of the objects so
+                               * far created in the head_object.
+                               */
 
   /* from state.manifest (RGWObjManifest) */
   std::map<uint64_t, RGWObjManifestPart> objs;
@@ -284,6 +287,7 @@ struct DBOpObjectPrepareInfo {
   static constexpr const char* new_obj_name = ":new_obj_name";
   static constexpr const char* new_obj_instance = ":new_obj_instance";
   static constexpr const char* new_obj_ns  = ":new_obj_ns";
+  static constexpr const char* versions = ":versions";
 };
 
 struct DBOpObjectDataPrepareInfo {
@@ -560,6 +564,7 @@ class DBOp {
       IsMultipart     BOOL,   \
       MPPartsList    BLOB,   \
       HeadData  BLOB,   \
+      VERSIONS BLOB,    \
       PRIMARY KEY (ObjName, ObjInstance, BucketName), \
       FOREIGN KEY (BucketName) \
       REFERENCES '{}' (BucketName) ON DELETE CASCADE ON UPDATE CASCADE \n);";
@@ -988,9 +993,10 @@ class PutObjectOp: virtual public DBOp {
        ObjVersion, ObjVersionTag, ObjAttrs, HeadSize, MaxHeadSize, \
        ObjID, TailInstance, HeadPlacementRuleName, HeadPlacementRuleStorageClass, \
        TailPlacementRuleName, TailPlacementStorageClass, \
-       ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, MPPartsList, HeadData )     \
+       ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, MPPartsList, \
+       HeadData, Versions)     \
       VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
-          {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+          {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
           {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})";
 
   public:
@@ -1021,7 +1027,8 @@ class PutObjectOp: virtual public DBOp {
           params.op.obj.tail_placement_storage_class,
           params.op.obj.manifest_part_objs,
           params.op.obj.manifest_part_rules, params.op.obj.omap,
-          params.op.obj.is_multipart, params.op.obj.mp_parts, params.op.obj.head_data);
+          params.op.obj.is_multipart, params.op.obj.mp_parts,
+          params.op.obj.head_data, params.op.obj.versions);
     }
 };
 
@@ -1053,7 +1060,8 @@ class GetObjectOp: virtual public DBOp {
       ObjVersion, ObjVersionTag, ObjAttrs, HeadSize, MaxHeadSize, \
       ObjID, TailInstance, HeadPlacementRuleName, HeadPlacementRuleStorageClass, \
       TailPlacementRuleName, TailPlacementStorageClass, \
-      ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, MPPartsList, HeadData from '{}' \
+      ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, MPPartsList, \
+      HeadData, Versions from '{}' \
       where BucketName = {} and ObjName = {} and ObjInstance = {}";
 
   public:
@@ -1082,7 +1090,8 @@ class ListBucketObjectsOp: virtual public DBOp {
       ObjVersion, ObjVersionTag, ObjAttrs, HeadSize, MaxHeadSize, \
       ObjID, TailInstance, HeadPlacementRuleName, HeadPlacementRuleStorageClass, \
       TailPlacementRuleName, TailPlacementStorageClass, \
-      ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, MPPartsList, HeadData from '{}' \
+      ManifestPartObjs, ManifestPartRules, Omap, IsMultipart, MPPartsList, \
+      HeadData, Versions from '{}' \
       where BucketName = {} and ObjName > {} ORDER BY ObjName ASC LIMIT {}";
   public:
     virtual ~ListBucketObjectsOp() {}
@@ -1122,7 +1131,7 @@ class UpdateObjectOp: virtual public DBOp {
        HeadPlacementRuleName = {}, HeadPlacementRuleStorageClass = {}, \
        TailPlacementRuleName = {}, TailPlacementStorageClass = {}, \
        ManifestPartObjs = {}, ManifestPartRules = {}, Omap = {}, \
-       IsMultipart = {}, MPPartsList = {}, HeadData = {} \
+       IsMultipart = {}, MPPartsList = {}, HeadData = {}, Versions = {} \
        WHERE ObjName = {} and ObjInstance = {} and BucketName = {}";
 
   public:
@@ -1177,7 +1186,8 @@ class UpdateObjectOp: virtual public DBOp {
           params.op.obj.tail_placement_storage_class,
           params.op.obj.manifest_part_objs,
           params.op.obj.manifest_part_rules, params.op.obj.omap,
-          params.op.obj.is_multipart, params.op.obj.mp_parts, params.op.obj.head_data,
+          params.op.obj.is_multipart, params.op.obj.mp_parts,
+          params.op.obj.head_data, params.op.obj.versions,
           params.op.obj.obj_name, params.op.obj.obj_instance,
           params.op.bucket.bucket_name);
       }
@@ -1231,6 +1241,7 @@ class UpdateObjectDataOp: virtual public DBOp {
           params.op.obj.obj_id);
     }
 };
+
 class GetObjectDataOp: virtual public DBOp {
   private:
     static constexpr std::string_view Query =
@@ -1835,6 +1846,7 @@ class DB {
 
         explicit Write(DB::Object *_target) : target(_target) {}
 
+        int set_olh(const DoutPrefixProvider *dpp, const DBOpParams* params);
         void set_mp_part_str(std::string _mp_part_str) { mp_part_str = _mp_part_str;}
         int prepare(const DoutPrefixProvider* dpp);
         int write_data(const DoutPrefixProvider* dpp,
@@ -1879,10 +1891,12 @@ class DB {
         explicit Delete(DB::Object *_target) : target(_target) {}
 
         int delete_obj(const DoutPrefixProvider *dpp);
+        int delete_olh(const DoutPrefixProvider *dpp, DBOpParams& del_params);
       };
 
       /* XXX: the parameters may be subject to change. All we need is bucket name
        * & obj name,instance - keys */
+      int get_object_impl(const DoutPrefixProvider *dpp, DBOpParams& params);
       int get_obj_state(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info,
                         const rgw_obj& obj,
                         bool follow_olh, RGWObjState **state);

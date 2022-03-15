@@ -329,7 +329,8 @@ enum GetObject {
   Omap,
   IsMultipart,
   MPPartsList,
-  HeadData
+  HeadData,
+  Versions
 };
 
 enum GetObjectData {
@@ -519,6 +520,7 @@ static int list_object(const DoutPrefixProvider *dpp, DBOpInfo &op, sqlite3_stmt
   SQL_DECODE_BLOB_PARAM(dpp, stmt, MPPartsList, op.obj.mp_parts, sdb);
   SQL_DECODE_BLOB_PARAM(dpp, stmt, HeadData, op.obj.head_data, sdb);
   op.obj.state.data = op.obj.head_data;
+  SQL_DECODE_BLOB_PARAM(dpp, stmt, Versions, op.obj.versions, sdb);
 
   rgw_bucket_dir_entry dent;
   dent.key.name = op.obj.state.obj.key.name;
@@ -1952,6 +1954,8 @@ int SQLPutObject::Bind(const DoutPrefixProvider *dpp, struct DBOpParams *params)
   SQL_BIND_INDEX(dpp, stmt, index, p_params.op.obj.head_data, sdb);
   SQL_ENCODE_BLOB_PARAM(dpp, stmt, index, params->op.obj.head_data, sdb);
 
+  SQL_BIND_INDEX(dpp, stmt, index, p_params.op.obj.versions, sdb);
+  SQL_ENCODE_BLOB_PARAM(dpp, stmt, index, params->op.obj.versions, sdb);
 
 out:
   return rc;
@@ -2265,6 +2269,9 @@ int SQLUpdateObject::Bind(const DoutPrefixProvider *dpp, struct DBOpParams *para
 
     SQL_BIND_INDEX(dpp, *stmt, index, p_params.op.obj.head_data, sdb);
     SQL_ENCODE_BLOB_PARAM(dpp, *stmt, index, params->op.obj.head_data, sdb);
+
+    SQL_BIND_INDEX(dpp, *stmt, index, p_params.op.obj.versions, sdb);
+    SQL_ENCODE_BLOB_PARAM(dpp, *stmt, index, params->op.obj.versions, sdb);
   }
 
 out:

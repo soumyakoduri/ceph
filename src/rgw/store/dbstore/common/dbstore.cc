@@ -805,6 +805,27 @@ int DB::Object::InitializeParamsfromObject(const DoutPrefixProvider *dpp,
   return ret;
 }
 
+int DB::Object::get_object_impl(const DoutPrefixProvider *dpp,
+                                DBOpParams& params) {
+  int ret = 0;
+
+  if (params.op.obj.state.obj.key.name.empty()) {
+    /* Initialize */
+    store->InitializeParams(dpp, &params);
+    InitializeParamsfromObject(dpp, &params);
+  }
+
+  ret = store->ProcessOp(dpp, "GetObject", &params);
+
+  /* pick one field check if object exists */
+  if (!ret && !params.op.obj.state.exists) {
+    ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
+    ret = -ENOENT;
+  }
+
+  return ret;
+}
+
 int DB::Object::obj_omap_set_val_by_key(const DoutPrefixProvider *dpp,
                                         const std::string& key, bufferlist& val,
                                         bool must_exist) {
@@ -812,20 +833,11 @@ int DB::Object::obj_omap_set_val_by_key(const DoutPrefixProvider *dpp,
 
   DBOpParams params = {};
 
-  store->InitializeParams(dpp, &params);
-  InitializeParamsfromObject(dpp, &params);
-
-  ret = store->ProcessOp(dpp, "GetObject", &params);
+  ret = get_object_impl(dpp, params);
 
   if (ret) {
-    ldpp_dout(dpp, 0) <<"In GetObject failed err:(" <<ret<<")" << dendl;
+    ldpp_dout(dpp, 0) <<"get_object_impl failed err:(" <<ret<<")" << dendl;
     goto out;
-  }
-
-  /* pick one field check if object exists */
-  if (!params.op.obj.state.exists) {
-    ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
-    return -1;
   }
 
   params.op.obj.omap[key] = val;
@@ -855,20 +867,11 @@ int DB::Object::obj_omap_get_vals_by_keys(const DoutPrefixProvider *dpp,
   if (!vals)
     return -1;
 
-  store->InitializeParams(dpp, &params);
-  InitializeParamsfromObject(dpp, &params);
-
-  ret = store->ProcessOp(dpp, "GetObject", &params);
+  ret = get_object_impl(dpp, params);
 
   if (ret) {
-    ldpp_dout(dpp, 0) <<"In GetObject failed err:(" <<ret<<") " << dendl;
+    ldpp_dout(dpp, 0) <<"get_object_impl failed err:(" <<ret<<")" << dendl;
     goto out;
-  }
-
-  /* pick one field check if object exists */
-  if (!params.op.obj.state.exists) {
-    ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
-    return -1;
   }
 
   omap = params.op.obj.omap;
@@ -887,20 +890,11 @@ int DB::Object::add_mp_part(const DoutPrefixProvider *dpp,
 
   DBOpParams params = {};
 
-  store->InitializeParams(dpp, &params);
-  InitializeParamsfromObject(dpp, &params);
-
-  ret = store->ProcessOp(dpp, "GetObject", &params);
+  ret = get_object_impl(dpp, params);
 
   if (ret) {
-    ldpp_dout(dpp, 0) <<"In GetObject failed err:(" <<ret<<")" << dendl;
+    ldpp_dout(dpp, 0) <<"get_object_impl failed err:(" <<ret<<")" << dendl;
     goto out;
-  }
-
-  /* pick one field check if object exists */
-  if (!params.op.obj.state.exists) {
-    ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
-    return -1;
   }
 
   params.op.obj.mp_parts.push_back(info);
@@ -925,20 +919,11 @@ int DB::Object::get_mp_parts_list(const DoutPrefixProvider *dpp,
   DBOpParams params = {};
   std::map<std::string, bufferlist> omap;
 
-  store->InitializeParams(dpp, &params);
-  InitializeParamsfromObject(dpp, &params);
-
-  ret = store->ProcessOp(dpp, "GetObject", &params);
+  ret = get_object_impl(dpp, params);
 
   if (ret) {
-    ldpp_dout(dpp, 0) <<"In GetObject failed err:(" <<ret<<") " << dendl;
+    ldpp_dout(dpp, 0) <<"get_object_impl failed err:(" <<ret<<")" << dendl;
     goto out;
-  }
-
-  /* pick one field check if object exists */
-  if (!params.op.obj.state.exists) {
-    ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
-    return -1;
   }
 
   info = params.op.obj.mp_parts;
@@ -969,20 +954,11 @@ int DB::Object::obj_omap_get_all(const DoutPrefixProvider *dpp,
   if (!m)
     return -1;
 
-  store->InitializeParams(dpp, &params);
-  InitializeParamsfromObject(dpp, &params);
-
-  ret = store->ProcessOp(dpp, "GetObject", &params);
+  ret = get_object_impl(dpp, params);
 
   if (ret) {
-    ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
+    ldpp_dout(dpp, 0) <<"get_object_impl failed err:(" <<ret<<")" << dendl;
     goto out;
-  }
-
-  /* pick one field check if object exists */
-  if (!params.op.obj.state.exists) {
-    ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
-    return -1;
   }
 
   (*m) = params.op.obj.omap;
@@ -1005,20 +981,11 @@ int DB::Object::obj_omap_get_vals(const DoutPrefixProvider *dpp,
   if (!m)
     return -1;
 
-  store->InitializeParams(dpp, &params);
-  InitializeParamsfromObject(dpp, &params);
-
-  ret = store->ProcessOp(dpp, "GetObject", &params);
+  ret = get_object_impl(dpp, params);
 
   if (ret) {
-    ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
+    ldpp_dout(dpp, 0) <<"get_object_impl failed err:(" <<ret<<")" << dendl;
     goto out;
-  }
-
-  /* pick one field check if object exists */
-  if (!params.op.obj.state.exists) {
-    ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
-    return -1;
   }
 
   omap = params.op.obj.omap;
@@ -1050,20 +1017,11 @@ int DB::Object::set_attrs(const DoutPrefixProvider *dpp,
   rgw::sal::Attrs *attrs;
   map<string, bufferlist>::iterator iter;
 
-  store->InitializeParams(dpp, &params);
-  InitializeParamsfromObject(dpp, &params);
-
-  ret = store->ProcessOp(dpp, "GetObject", &params);
+  ret = get_object_impl(dpp, params);
 
   if (ret) {
-    ldpp_dout(dpp, 0) <<"In GetObject failed err:(" <<ret<<")" << dendl;
+    ldpp_dout(dpp, 0) <<"get_object_impl failed err:(" <<ret<<")" << dendl;
     goto out;
-  }
-
-  /* pick one field check if object exists */
-  if (!params.op.obj.state.exists) {
-    ldpp_dout(dpp, 0)<<"Object(bucket:" << bucket_info.bucket.name << ", Object:"<< obj.key.name << ") doesn't exist" << dendl;
-    return -1;
   }
 
   /* For now lets keep it simple..rmattrs & setattrs ..
@@ -1208,18 +1166,28 @@ int DB::Object::get_obj_state(const DoutPrefixProvider *dpp,
 
   DBOpParams params = {};
   RGWObjState* s;
-  store->InitializeParams(dpp, &params);
-  InitializeParamsfromObject(dpp, &params);
-
-  ret = store->ProcessOp(dpp, "GetObject", &params);
+  ret = get_object_impl(dpp, params);
 
   if (ret) {
-    ldpp_dout(dpp, 0)<<"In GetObject failed err:(" <<ret<<")" << dendl;
+    ldpp_dout(dpp, 0) <<"get_object_impl failed err:(" <<ret<<")" << dendl;
     goto out;
   }
 
-  if (!params.op.obj.state.exists) {
-    return -ENOENT;
+  if (follow_olh && params.op.obj.state.obj.key.instance.empty()) { // instance empty means current head object
+    /* fetch current version obj details */
+    if (params.op.obj.state.is_olh) {
+      /* versioned object. Read the latest versionID head object */
+      params.op.obj.state.obj.key.instance = params.op.obj.obj_id; //rgw_bl_str(params.op.obj.state.olh_tag);
+      /* Or read from versions list?? */
+      /** Check if this is sufficient? */
+    
+      ret = get_object_impl(dpp, params);
+
+      if (ret) {
+        ldpp_dout(dpp, 0) <<"get_object_impl failed err:(" <<ret<<")" << dendl;
+        goto out;
+      }
+    }
   }
 
   s = &params.op.obj.state;
@@ -1227,15 +1195,6 @@ int DB::Object::get_obj_state(const DoutPrefixProvider *dpp,
   s->shadow_obj = params.op.obj.obj_id;
 
   **state = *s;
-
-  if (follow_olh && params.op.obj.state.obj.key.instance.empty()) {
-    /* fetch current version obj details */
-    ret = get_olh_target_state(dpp, bucket_info, obj, s, state);
-
-    if (ret < 0) {
-      ldpp_dout(dpp, 0)<<"get_olh_target_state failed err:(" <<ret<<")" << dendl;
-    }
-  }
 
 out:
   return ret;
@@ -1288,7 +1247,6 @@ int DB::Object::Read::prepare(const DoutPrefixProvider *dpp)
   RGWObjState base_state;
   RGWObjState *astate = &base_state;
 
-  /* XXX Read obj_id too */
   int r = source->get_state(dpp, &astate, true);
   if (r < 0)
     return r;
@@ -1563,11 +1521,16 @@ int DB::Object::Write::prepare(const DoutPrefixProvider* dpp)
 
   obj_state.obj = target->obj;
  
-  if (target->obj_id.empty()) { 
-    // generate obj_id
-    char buf[33];
-    gen_rand_alphanumeric(store->ctx(), buf, sizeof(buf) - 1);
-    target->obj_id = target->obj.key.name + "." + buf;
+  if (target->obj_id.empty()) {
+    if (!target->obj.key.instance.empty() && (target->obj.key.instance != "null")) {
+      /* versioned object. Set obj_id same as versionID */
+      target->obj_id = target->obj.key.instance;
+    } else {
+      // generate obj_id
+      char buf[33];
+      gen_rand_alphanumeric(store->ctx(), buf, sizeof(buf) - 1);
+      target->obj_id = buf;
+    }
   }
 
   ret = 0;
@@ -1622,6 +1585,96 @@ int DB::Object::Write::write_data(const DoutPrefixProvider* dpp,
   return 0;
 }
 
+/*
+ * If versioned, 
+ * - check if the old version of the object already exists
+ *   if exists,
+ *     set the version-id/instance to "null" if instance was empty
+ *     mark it as NON_CURRENT
+ *
+ * - create another/actual head object with
+ *  - instance set to NULL and 
+ *  - is_olh = true
+ *  - olh_tag same as versionid/instance/objId
+ *  - push the versionID in versions list - this list is used when deleting
+ *  the object followed by deleting delete marker.
+ *
+ * XXX: call this function under a lock or sqlite transaction to prevent
+ * parallel object uploads marking both the versions as FLAG_CURRENT;
+ */
+int DB::Object::Write::set_olh(const DoutPrefixProvider *dpp,
+                               const DBOpParams* params) {
+
+  DB *store = target->get_store();
+  int ret = -1;
+  DBOpParams head_params = {};
+
+  store->InitializeParams(dpp, &head_params);
+  target->InitializeParamsfromObject(dpp, &head_params);
+
+  head_params.op.obj.state.obj.key.instance.clear();
+
+  /* Check & fetch head object if already exists */
+  ret = target->get_object_impl(dpp, head_params);
+  
+  if (ret && ret != -ENOENT) {
+    ldpp_dout(dpp, 0)<<"In GetObject of Head object failed err:(" <<ret<<")" << dendl;
+    goto out;
+  }
+
+// XXX BEGIN needed?
+#ifdef NEEDED
+  if (ret != -ENOENT) {
+    /* previous version exists. Check if really needed as now we are storing
+     * versionIDs in head_object versions list */
+    DBOpParams ver_params = {};
+
+    if (head_params.op.obj.state.is_olh && !rgw_bl_str(head_params.op.obj.state.olh_tag).empty()) {
+      store->InitializeParams(dpp, &ver_params);
+      target->InitializeParamsfromObject(dpp, &ver_params);
+      ver_params.op.obj.state.obj.key.instance = rgw_bl_str(head_params.op.obj.state.olh_tag);
+
+      ret = target->get_object_impl(dpp, ver_params);
+
+      if (ret) { // do nothing as its best effort? 
+        goto head_obj;
+      } 
+    } else {
+      ver_params = head_params;
+      ver_params.op.obj.state.obj.key.instance = "null";
+    }
+
+    ver_params.op.obj.flags &= ~(rgw_bucket_dir_entry::FLAG_CURRENT);
+    ver_params.op.obj.flags |= rgw_bucket_dir_entry::FLAG_VER;
+
+    ret = store->ProcessOp(dpp, "PutObject", &ver_params);
+
+    if (ret) { // do nothing as its best effort? 
+      ldpp_dout(dpp, 0)<<"PutObject of Old versioned Head object failed err:(" <<ret<<")" << dendl;
+    }
+  }
+head_obj:
+// XXX END needed?
+#endif
+
+    // XXX: Update size & other mandatory params
+    head_params.op.obj.state.is_olh = true;
+  //  head_params.op.obj.state.olh_tag.append(params->op.obj.obj_id);
+    head_params.op.obj.obj_id = params->op.obj.obj_id;
+    head_params.op.obj.versions.push_front(params->op.obj.obj_id);
+
+    head_params.op.obj.state.exists = true;
+    ret = store->ProcessOp(dpp, "PutObject", &head_params);
+
+    if (ret) {
+      ldpp_dout(dpp, 0)<<"PutObject of head_object failed err:(" <<ret<<")" << dendl;
+      goto out;
+    }
+
+out:
+    return ret;
+}
+
 /* Write metadata & head object data */
 int DB::Object::Write::_do_write_meta(const DoutPrefixProvider *dpp,
     uint64_t size, uint64_t accounted_size,
@@ -1662,10 +1715,6 @@ int DB::Object::Write::_do_write_meta(const DoutPrefixProvider *dpp,
       obj_retention.encode(bl);
       (*attrset)[RGW_ATTR_OBJECT_RETENTION] = bl;
     }
-  }
-
-  if (state->is_olh) {
-    (*attrset)[RGW_ATTR_OLH_ID_TAG] = state->olh_tag;
   }
 
   state->mtime = meta.set_mtime;
@@ -1727,13 +1776,25 @@ int DB::Object::Write::_do_write_meta(const DoutPrefixProvider *dpp,
   params.op.obj.state.accounted_size = accounted_size;
   params.op.obj.owner = target->get_bucket_info().owner.id;
 
-  /* XXX: handle versioning */
   if (meta.mtime) {
     *meta.mtime = meta.set_mtime;
   }
 
   params.op.query_str = "meta";
   params.op.obj.obj_id = target->obj_id;
+  // XXX: Check if FLAG_CURRENT is necessary? To avoid races it is not being
+  // set now. While listing we will sort the list by mtime and determine the current/
+  // latest version. Alternatively we can read head_obj and its olh_tag or
+  // version.front()?
+//  params.op.obj.flags |= rgw_bucket_dir_entry::FLAG_CURRENT;
+
+  /* To handle versioning */
+  bool is_versioned = !target->obj.key.instance.empty() && (target->obj.key.instance != "null");
+
+  if (is_versioned) {
+    params.op.obj.flags |= rgw_bucket_dir_entry::FLAG_VER;
+  }
+
   ret = store->ProcessOp(dpp, "PutObject", &params);
 
   if (ret) {
@@ -1741,7 +1802,15 @@ int DB::Object::Write::_do_write_meta(const DoutPrefixProvider *dpp,
     goto out;
   }
 
-  /* pick one field check if object exists */
+  if (is_versioned) {
+    ret = set_olh(dpp, &params);
+    if (ret) {
+      /* XXX: Delete above created versioned object? */
+      ldpp_dout(dpp, 0)<<"In set_olh failed err:(" <<ret<<")" << dendl;
+      goto out;
+    }
+  }
+
   return 0;
 
 out:
@@ -1766,25 +1835,159 @@ int DB::Object::Write::write_meta(const DoutPrefixProvider *dpp, uint64_t size, 
 int DB::Object::Delete::delete_obj(const DoutPrefixProvider *dpp) {
   int ret = 0;
   DB *store = target->get_store();
-  RGWObjState base_state;
-  RGWObjState *astate = &base_state;
-
-  int r = target->get_state(dpp, &astate, true);
-  if (r < 0)
-    return r;
-
-  if (!astate->exists) {
-    return -ENOENT;
-  }
-
-  /* XXX: handle versioned objects. Create delete marker */
-
-  /* XXX: check params conditions */
   DBOpParams del_params = {};
 
-  store->InitializeParams(dpp, &del_params);
-  target->InitializeParamsfromObject(dpp, &del_params);
+  ret = target->get_object_impl(dpp, del_params);
 
+  if (ret < 0 && ret != -ENOENT) {
+    ldpp_dout(dpp, 0)<<"GetObject during delete failed err:(" <<ret<<")" << dendl;
+    return ret;
+  }
+
+  if (ret == -ENOENT) {
+      /* pass it as success */
+      return 0;
+  }
+
+  /* XXX: check params conditions */
+  if (!del_params.op.obj.state.is_olh &&
+     !(del_params.op.obj.flags & 
+     (rgw_bucket_dir_entry::FLAG_DELETE_MARKER | rgw_bucket_dir_entry::FLAG_VER))) {
+    /* Non versioned objects. Simple delete */
+    ret = store->ProcessOp(dpp, "DeleteObject", &del_params);
+    if (ret) {
+      ldpp_dout(dpp, 0) << "In DeleteObject failed err:(" <<ret<<")" << dendl;
+      return ret;
+    }
+  /* Now that tail objects are associated with objectID, they are not deleted
+   * as part of this DeleteObj operation. Such tail objects (with no head object
+   * in *.object.table are cleaned up later by GC thread.
+   *
+   * To avoid races between writes/reads & GC delete, mtime is maintained for each
+   * tail object. This mtime is updated when tail object is written and also when
+   * its corresponding head object is deleted (like here in this case).
+   */
+  DBOpParams update_params = del_params;
+//  update_params.op.obj.obj_id = astate->shadow_obj; // objectID is copied here in get_state()
+  update_params.op.obj.state.mtime = real_clock::now();
+  ret = store->ProcessOp(dpp, "UpdateObjectData", &update_params);
+
+  if (ret) {
+    ldpp_dout(dpp, 0) << "Updating tail objects mtime failed err:(" <<ret<<")" << dendl;
+    return ret;
+  }
+
+  }
+
+  /* versioned objects */
+  ret = delete_olh(dpp, del_params);
+
+  return ret;
+}
+
+/*
+ * if head of the versioned object,
+ *     - create a delete marker with 
+ *              - new version/instanceID (if bucket versioned)
+ *              - null versionID (if versioning suspended)
+ *     - delete head object
+ * If delete_marker
+ *      - restore head object (if bucket versioned)
+ *      - just delete it
+ * if normal versioned object
+ *      - delete it &
+ *      - delete its objID entry from head_obj versions list
+ *      - if its last version delete the head object
+ */
+int DB::Object::Delete::delete_olh(const DoutPrefixProvider *dpp,
+                                   DBOpParams& del_params) {
+
+  DB *store = target->get_store();
+  bool versioning_enabled = (params.versioning_status & BUCKET_VERSIONED); 
+  int ret = -1;
+  DBOpParams head_params = {};
+  std::string version_id;
+
+  /* if delete_marker & versioning is enabled, restore head_obj */
+  if (del_params.op.obj.flags & rgw_bucket_dir_entry::FLAG_DELETE_MARKER &&
+        versioning_enabled) {
+    DBOpParams head_params = del_params;
+
+    head_params.op.obj.flags &= (~rgw_bucket_dir_entry::FLAG_DELETE_MARKER);
+    head_params.op.obj.state.obj.key.instance.clear();
+    head_params.op.obj.state.is_olh = true;
+
+    // XXX: Check if del_params.op.obj.flags is still valid
+    ret = store->ProcessOp(dpp, "PutObject", head_params);
+
+     if (ret) {
+      ldpp_dout(dpp, 0) << "delete_olh: failed to restore head_obj from delete marker - err:(" <<ret<<")" << dendl;
+      return ret;
+     }
+
+     goto delete_obj;
+  }
+
+  if (del_params.op.obj.state.is_olh) {
+     // create delete marker
+     DBOpParams *dm_params = &del_params;
+
+     if (!versioning_enabled) {
+       dm_params->op.obj.state.obj.key.instance = "null";
+     } else {
+       store->gen_rand_obj_instance_name(&dm_params->op.obj.state.obj.key);
+     }
+
+     dm_params->op.obj.flags |= (rgw_bucket_dir_entry::FLAG_DELETE_MARKER);
+     dm_params->op.obj.state.is_olh = false;
+
+     ret = store->ProcessOp(dpp, "PutObject", dm_params);
+
+     if (ret) {
+      ldpp_dout(dpp, 0) << "delete_olh: failed to create delete marker - err:(" <<ret<<")" << dendl;
+      return ret;
+     }
+
+     dm_params->op.obj.state.obj.key.instance.clear();
+     goto delete_obj;
+  }
+
+  /* regular versioned object  (non-head) */
+  store->InitializeParams(dpp, &head_params);
+  target->InitializeParamsfromObject(dpp, &head_params);
+
+  head_params.op.obj.state.obj.key.instance.clear();
+
+  // fetch head_obj
+  ret = target->get_object_impl(dpp, head_params);
+  if (ret == -ENOENT) {
+    ldpp_dout(dpp, 0) << "delete_olh: head_obj not present - err:(" <<ret<<")" << dendl;
+    goto delete_obj; 
+  }
+
+  version_id = head_params.op.obj.state.obj.key.instance;
+  {
+  auto& versions = head_params.op.obj.versions;
+
+  auto it = std::find(versions.begin(), versions.end(), version_id);
+  head_params.op.obj.versions.erase(it);
+  }
+
+  if (head_params.op.obj.versions.empty()) {
+    //delete the head object
+    ret = store->ProcessOp(dpp, "DeleteObject", &head_params);
+  } else {
+//    head_params.op.obj.state.olh_tag = head_params.op.obj.versions.front();
+    head_params.op.query_str = "meta";
+    ret = store->ProcessOp(dpp, "UpdateObject", &head_params);
+
+    if (ret) {
+      ldpp_dout(dpp, 0) << "delete_olh: failed to update head_obj - err:(" <<ret<<")" << dendl;
+    }
+  }
+
+delete_obj:
+  /* XXX: check params conditions */
   ret = store->ProcessOp(dpp, "DeleteObject", &del_params);
   if (ret) {
     ldpp_dout(dpp, 0) << "In DeleteObject failed err:(" <<ret<<")" << dendl;
@@ -1800,7 +2003,7 @@ int DB::Object::Delete::delete_obj(const DoutPrefixProvider *dpp) {
    * its corresponding head object is deleted (like here in this case).
    */
   DBOpParams update_params = del_params;
-  update_params.op.obj.obj_id = astate->shadow_obj; // objectID is copied here in get_state()
+  //update_params.op.obj.obj_id = astate->shadow_obj; // objectID is copied here in get_state()
   update_params.op.obj.state.mtime = real_clock::now();
   ret = store->ProcessOp(dpp, "UpdateObjectData", &update_params);
 
