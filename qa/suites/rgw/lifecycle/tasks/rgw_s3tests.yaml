@@ -5,6 +5,8 @@ tasks:
 - s3tests:
     client.0:
       force-branch: ceph-quincy
+      force-repo: https://github.com/soumyakoduri/s3-tests.git
+      git_remote: https://github.com/soumyakoduri/
       rgw_server: client.0
       storage classes: LUKEWARM, FROZEN
       extra_attrs: ["lifecycle"]
