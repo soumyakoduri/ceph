@@ -913,9 +913,9 @@ int SQLiteDB::DeleteObjectTable(const DoutPrefixProvider *dpp, DBOpParams *param
 
   ret = exec(dpp, schema.c_str(), NULL);
   if (ret)
-    ldpp_dout(dpp, 0)<<"DeleteObjectTable failed " << dendl;
+    ldpp_dout(dpp, 0)<<"DeleteObjectTable failed for bucket " << params->op.bucket.info.bucket.name << dendl;
 
-  ldpp_dout(dpp, 20)<<"DeleteObjectTable suceeded " << dendl;
+  ldpp_dout(dpp, 20)<<"DeleteObjectTable suceeded for bucket " << params->op.bucket.info.bucket.name << dendl;
 
   return ret;
 }
@@ -1014,7 +1014,7 @@ int SQLiteDB::ListAllBuckets(const DoutPrefixProvider *dpp, DBOpParams *params)
 int SQLiteDB::ListAllObjects(const DoutPrefixProvider *dpp, DBOpParams *params)
 {
   int ret = -1;
-  string schema;
+  std::string schema;
   map<string, class ObjectOp*>::iterator iter;
   map<string, class ObjectOp*> objectmap;
   string bucket;
@@ -1431,7 +1431,7 @@ int SQLInsertBucket::Execute(const DoutPrefixProvider *dpp, struct DBOpParams *p
 
   SQL_EXECUTE(dpp, params, stmt, NULL);
 
-  /* Once Bucket is inserted created corresponding object(&data) tables
+  /* Once Bucket is inserted create corresponding object(&data) tables
    */
   InitPrepareParams(dpp, p_params, params);
 
@@ -1630,10 +1630,19 @@ out:
 int SQLRemoveBucket::Execute(const DoutPrefixProvider *dpp, struct DBOpParams *params)
 {
   int ret = -1;
+  struct DBOpPrepareParams p_params = PrepareParams;
 
-  objectmapDelete(dpp, params->op.bucket.info.bucket.name);
+  ldpp_dout(dpp, 20)<<"Removing bucket: " << params->op.bucket.info.bucket.name << dendl;
+  /* Delete corresponding object(&data) tables and their entry in objectmap
+   * before removing the bucket entry.
+   */
+  InitPrepareParams(dpp, p_params, params);
+
+  (void)DeleteObjectTable(dpp, params);
+  (void)DeleteObjectDataTable(dpp, params);
 
   SQL_EXECUTE(dpp, params, stmt, NULL);
+
 out:
   return ret;
 }

@@ -482,7 +482,7 @@ class DBOp {
       Mtime   BLOB,   \
       PRIMARY KEY (BucketName) \
       FOREIGN KEY (OwnerID) \
-      REFERENCES '{}' (UserID) ON DELETE CASCADE ON UPDATE CASCADE \n);";
+      REFERENCES '{}' (UserID) \n);"; 
 
     static constexpr std::string_view CreateObjectTableQ =
       /* Corresponds to rgw::sal::Object
