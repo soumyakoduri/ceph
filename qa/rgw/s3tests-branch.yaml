@@ -4,4 +4,4 @@ overrides:
     # git_remote: https://github.com/ceph/
     force-repo: https://github.com/soumyakoduri/s3-tests.git
     git_remote: https://github.com/soumyakoduri/
-    force-branch: dbstore_test
+    force-branch: dbstore_test_master
