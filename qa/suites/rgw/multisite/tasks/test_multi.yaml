@@ -15,3 +15,4 @@ tasks:
 - rgw-multisite-tests:
     config:
       reconfigure_delay: 60
+    args: [tests.py, '-a sync_policy']
