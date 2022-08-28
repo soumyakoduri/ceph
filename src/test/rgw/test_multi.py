@@ -27,6 +27,7 @@ from rgw_multi.zone_az import AZoneConfig as AZoneConfig
 from rgw_multi.tests import *
 from rgw_multi.tests_es import *
 from rgw_multi.tests_ps import *
+from rgw_multi.tests_sync_policy import *
 from rgw_multi.tests_az import *
 
 mstart_path = os.getenv('MSTART_PATH')
