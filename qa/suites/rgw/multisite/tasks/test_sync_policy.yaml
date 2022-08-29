@@ -9,7 +9,7 @@ tasks:
     c1.client.2:
       port: 8002
 overrides:
-- rgw-multisite:
+  rgw-multisite:
     realm:
       name: test-realm
       is default: true
@@ -28,7 +28,7 @@ overrides:
             endpoints: [c1.client.1]
           - name: c3
             endpoints: [c1.client.2]
-- rgw-multisite-tests:
+  rgw-multisite-tests:
     config:
       reconfigure_delay: 60
     args: [tests_sync_policy.py]
