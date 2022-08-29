@@ -8,6 +8,7 @@ tasks:
       port: 8001
     c1.client.2:
       port: 8002
+overrides:
 - rgw-multisite:
     realm:
       name: test-realm
