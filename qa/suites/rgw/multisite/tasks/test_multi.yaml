@@ -7,13 +7,15 @@ tasks:
       port: 8000
     c1.client.1:
       port: 8001
+    c1.client.2:
+      port: 8002
     c2.client.0:
       port: 8000
     c2.client.1:
       port: 8001
+    c2.client.2:
+      port: 8002
 - rgw-multisite:
 - rgw-multisite-tests:
     config:
       reconfigure_delay: 60
-    args:
-    - tests.py -a sync_policy

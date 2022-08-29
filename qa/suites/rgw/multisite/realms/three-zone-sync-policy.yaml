@@ -16,8 +16,8 @@ overrides:
             endpoints: [c1.client.0]
           - name: test-zone2
             is_default: true
-            endpoints: [c2.client.0]
-          - name: test-zone3
             endpoints: [c1.client.1]
+          - name: test-zone3
+            endpoints: [c1.client.2]
   rgw-multisite-tests:
-    args: tests_sync_policy.py
+    args: [tests_sync_policy.py]
