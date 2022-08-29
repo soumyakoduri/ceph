@@ -16,6 +16,8 @@ overrides:
             endpoints: [c1.client.0]
           - name: a2
             endpoints: [c1.client.1]
+          - name: a3
+            endpoints: [c1.client.2]
       - name: b
         is_default: true
         endpoints: [c2.client.0]

@@ -8,28 +8,9 @@ tasks:
       port: 8001
     c1.client.2:
       port: 8002
-overrides:
-  rgw-multisite:
-    realm:
-      name: test-realm
-      is default: true
-    zonegroups:
-      - name: c
-        is_master: true
-        is_default: true
-        endpoints: [c1.client.0]
-        enabled_features: ['resharding']
-        zones:
-          - name: c1
-            is_master: true
-            is_default: true
-            endpoints: [c1.client.0]
-          - name: c2
-            endpoints: [c1.client.1]
-          - name: c3
-            endpoints: [c1.client.2]
-  rgw-multisite-tests:
+- rgw-multisite:
+- rgw-multisite-tests:
     config:
       reconfigure_delay: 60
-    args: [tests_sync_policy.py]
+    args: tests_sync_policy.py
 ## Also test across zonegroups?
