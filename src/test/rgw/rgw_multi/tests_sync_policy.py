@@ -315,7 +315,12 @@ def test_sync_flow_symmetrical_zonegroup_all():
     bucket = get_bucket(zcA, bucketB.name)
     check_object_exists(bucket, objnames[1], content)
 
+    remove_sync_group_pipe(c1, "sync-group", "sync-pipe")
+    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1")
     remove_sync_policy_group(c1, "sync-group")
+    get_sync_policy(c1)
+
+    zonegroup.period.update(zoneA, commit=True)
     return
 
 @attr('sync_policy')
@@ -384,7 +389,12 @@ def test_sync_flow_symmetrical_zonegroup_select():
     bucket = get_bucket(zcC, bucketB.name)
     check_objects_not_exist(bucket, objnamesB)
 
+#    remove_sync_group_pipe(c1, "sync-group", "sync-pipe")
+#    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow")
     remove_sync_policy_group(c1, "sync-group")
+    get_sync_policy(c1)
+
+    zonegroup.period.update(zoneA, commit=True)
     return
 
 @attr('sync_policy')
@@ -503,6 +513,9 @@ def test_sync_flow_directional_zonegroup_select():
 
     remove_sync_policy_group(c1, "sync-bucket", bucketA.name)
     remove_sync_policy_group(c1, "sync-group")
+    get_sync_policy(c1)
+
+    zonegroup.period.update(zoneA, commit=True)
     return
 
 @attr('sync_policy')
