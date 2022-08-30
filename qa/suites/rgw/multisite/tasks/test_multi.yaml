@@ -1,7 +1,7 @@
 tasks:
 - install:
 - ceph: {cluster: c1}
-- ceph: {cluster: c2}
+#- ceph: {cluster: c2}
 - rgw:
     c1.client.0:
       port: 8000
@@ -9,12 +9,12 @@ tasks:
       port: 8001
     c1.client.2:
       port: 8002
-    c2.client.0:
-      port: 8000
-    c2.client.1:
-      port: 8001
-    c2.client.2:
-      port: 8002
+#    c2.client.0:
+#      port: 8000
+#    c2.client.1:
+#      port: 8001
+#    c2.client.2:
+#      port: 8002
 - rgw-multisite:
 - rgw-multisite-tests:
     config:
