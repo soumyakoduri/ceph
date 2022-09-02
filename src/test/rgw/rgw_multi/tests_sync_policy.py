@@ -389,8 +389,8 @@ def test_sync_flow_symmetrical_zonegroup_select():
     bucket = get_bucket(zcC, bucketB.name)
     check_objects_not_exist(bucket, objnamesB)
 
-#    remove_sync_group_pipe(c1, "sync-group", "sync-pipe")
-#    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow")
+    remove_sync_group_pipe(c1, "sync-group", "sync-pipe")
+    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow")
     remove_sync_policy_group(c1, "sync-group")
     get_sync_policy(c1)
 
@@ -511,7 +511,10 @@ def test_sync_flow_directional_zonegroup_select():
     bucket = get_bucket(zcA, bucketA.name)
     check_objects_not_exist(bucket, objnamesD)
 
+    remove_sync_group_pipe(c1, "sync-bucket", "sync-pipe")
+    remove_sync_group_flow_symmetrical(c1, "sync-bucket", "sync-flowA")
     remove_sync_policy_group(c1, "sync-bucket", bucketA.name)
+    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1")
     remove_sync_policy_group(c1, "sync-group")
     get_sync_policy(c1)
 
@@ -593,6 +596,8 @@ def test_sync_single_bucket():
     """
     # reconfigure group pipe
     remove_sync_group_pipe(c1, "sync-group", "sync-pipe")
+    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1")
+    remove_sync_group_pipe(c1, "sync-group", "sync-pipe")
     create_sync_group_pipe(c1, "sync-group", "sync-pipe", zones, zones)
 
     # change state to allowed
@@ -627,6 +632,8 @@ def test_sync_single_bucket():
     bucket = get_bucket(zcB, bucketB.name)
     check_object_not_exists(bucket, objnames[2])
 
+    remove_sync_group_pipe(c1, "sync-bucket", "sync-pipe")
+    remove_sync_group_flow_symmetrical(c1, "sync-bucket", "sync-flowA")
     remove_sync_policy_group(c1, "sync-bucket", bucketA.name)
     remove_sync_policy_group(c1, "sync-group")
     return
@@ -741,6 +748,8 @@ def test_sync_different_buckets():
     bucket = get_bucket(zcB, bucketB.name)
     check_objects_exist(bucket, objnamesC, content)
 
+    remove_sync_group_pipe(c1, "sync-bucket", "sync-pipeA")
+    remove_sync_group_flow_symmetrical(c1, "sync-bucket", "sync-flowA")
     remove_sync_policy_group(c1, "sync-bucket", bucketA.name)
     zonegroup_meta_checkpoint(zonegroup)
     get_sync_policy(c1, bucketA.name)
@@ -777,7 +786,11 @@ def test_sync_different_buckets():
     check_objects_not_exist(bucket, objnamesD)
     check_objects_exist(bucket, objnamesE, content)
 
+    remove_sync_group_pipe(c1, "sync-bucket", "sync-pipeA")
+    remove_sync_group_flow_symmetrical(c1, "sync-bucket", "sync-flowA")
     remove_sync_policy_group(c1, "sync-bucket", bucketA.name)
+    remove_sync_group_pipe(c1, "sync-group", "sync-pipe")
+    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1")
     remove_sync_policy_group(c1, "sync-group")
     return
 
@@ -899,7 +912,11 @@ def test_sync_multiple_buckets_to_single():
     check_objects_exist(bucket, objnamesD, content)
     check_objects_exist(bucket, objnamesD, content)
 
+    for source_bucket in source_buckets:
+        remove_sync_group_pipe(c1, "sync-bucket", "sync-pipe-%s" % source_bucket)
+    remove_sync_group_flow_symmetrical(c1, "sync-bucket", "sync-flowA")
     remove_sync_policy_group(c1, "sync-bucket", bucketA.name)
+    remove_sync_group_flow_directional(c1, "sync-group", "sync-flow1", zoneA.name, zoneB.name)
     remove_sync_policy_group(c1, "sync-group")
     return
 
@@ -973,7 +990,8 @@ def test_sync_single_bucket_to_multiple():
     """
         Method (b): configure at bucket level
     """
-    remove_sync_group_pipe(c1, "sync-group", "sync-pipe")
+    for dest_bucket in dest_buckets:
+        remove_sync_group_pipe(c1, "sync-group", "sync-pipe-%s" % dest_bucket)
     create_sync_group_pipe(c1, "sync-group", "sync-pipe", '*', '*')
 
     # change state to allowed
@@ -1011,6 +1029,10 @@ def test_sync_single_bucket_to_multiple():
     bucket = get_bucket(zcB, bucketB.name)
     check_objects_exist(bucket, objnamesB, content)
 
+    for dest_bucket in dest_buckets:
+        remove_sync_group_pipe(c1, "sync-bucket", "sync-pipe-%s" % dest_bucket)
+    remove_sync_group_flow_symmetrical(c1, "sync-bucket", "sync-flowA")
     remove_sync_policy_group(c1, "sync-bucket", bucketA.name)
+    remove_sync_group_flow_symmetrical(c1, "sync-group", "sync-flow1")
     remove_sync_policy_group(c1, "sync-group")
     return
