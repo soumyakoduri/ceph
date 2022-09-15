@@ -937,6 +937,7 @@ int RGWHTTPStreamRWRequest::complete_request(optional_yield y,
                                              map<string, string> *pheaders)
 {
   int ret = wait(y);
+      ldpp_dout(this, 0) << "XXXXXXXXXXXXXXXXXXX in RGWHTTPStreamRWRequest::complete_request ret = " << ret << dendl;
   if (ret < 0) {
     return ret;
   }
@@ -1017,12 +1018,15 @@ int RGWHTTPStreamRWRequest::receive_data(void *ptr, size_t len, bool *pause)
 {
   size_t orig_len = len;
 
+      ldpp_dout(this, 0) << "XXXXXXXXXXXXXXX RGWHTTPStreamRWRequest::receive_data len (" << len << ") " << dendl;
   if (cb) {
     in_data.append((const char *)ptr, len);
 
     size_t orig_in_data_len = in_data.length();
 
+      ldpp_dout(this, 0) << "XXXXXXXXXXXXXXX RGWHTTPStreamRWRequest::receive_data calling cb " << dendl;
     int ret = cb->handle_data(in_data, pause);
+      ldpp_dout(this, 0) << "XXXXXXXXXXXXXXX RGWHTTPStreamRWRequest::receive_data after cb ret=" << ret << dendl;
     if (ret < 0)
       return ret;
     if (ret == 0) {

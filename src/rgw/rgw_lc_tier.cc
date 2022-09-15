@@ -1240,13 +1240,15 @@ static int cloud_tier_create_bucket(RGWLCCloudTierCtx& tier_ctx) {
   ldpp_dout(tier_ctx.dpp, 30) << "Cloud_tier_ctx: creating bucket:" << tier_ctx.target_bucket_name << dendl;
   bufferlist bl;
   string resource = tier_ctx.target_bucket_name;
+  param_vec_t headers;
+
 
   ret = tier_ctx.conn.send_resource(tier_ctx.dpp, "PUT", resource, nullptr, nullptr,
                                     out_bl, &bl, nullptr, null_yield);
 
   if (ret < 0 ) {
     ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to create target bucket: " << tier_ctx.target_bucket_name << ", ret:" << ret << dendl;
-    return ret;
+    //return ret;
   }
   if (out_bl.length() > 0) {
     RGWXMLDecoder::XMLParser parser;
@@ -1270,12 +1272,12 @@ static int cloud_tier_create_bucket(RGWLCCloudTierCtx& tier_ctx) {
     }
 
     if (result.code != "BucketAlreadyOwnedByYou") {
-      ldpp_dout(tier_ctx.dpp, 0) << "ERROR: Creating target bucket failed with error: " << result.code << dendl;
+      ldpp_dout(tier_ctx.dpp, 0) << "ERROR: YYYYYYYYYYYYYYYYYYYYYYY Creating target bucket failed with error: " << result.code << dendl;
       return -EIO;
     }
   }
 
-  return 0;
+  return ret;
 }
 
 int rgw_cloud_tier_transfer_object(RGWLCCloudTierCtx& tier_ctx) {

@@ -279,6 +279,7 @@ public:
   explicit RGWStreamIntoBufferlist(bufferlist& _bl) : bl(_bl) {}
   int handle_data(bufferlist& inbl, bool *pause) override {
     bl.claim_append(inbl);
+//      ldpp_dout(this, 0) << "XXXXXXXXXXXXXXX In RGWStreamIntoBufferlist::handle_data len (" << bl.length() << ") " << dendl;
     return inbl.length();
   }
 };

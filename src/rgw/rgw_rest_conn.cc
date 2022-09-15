@@ -366,30 +366,67 @@ int RGWRESTConn::send_resource(const DoutPrefixProvider *dpp, const std::string&
   if (ret < 0)
     return ret;
 
-  param_vec_t params;
+  param_vec_t params, hdrs;
 
   if (extra_params) {
     params = make_param_list(extra_params);
   }
 
+  struct httpResult {
+    string code;
+
+    void decode_xml(XMLObj *obj) {
+      RGWXMLDecoder::decode_xml("Code", code, obj);
+    }
+  } result;
+
   populate_params(params, nullptr, self_zone_group);
 
   RGWStreamIntoBufferlist cb(bl);
-
-  RGWRESTStreamSendRequest req(cct, method, url, &cb, NULL, &params, api_name, host_style);
 
   std::map<std::string, std::string> headers;
   if (extra_headers) {
     headers.insert(extra_headers->begin(), extra_headers->end());
   }
 
+  RGWRESTStreamSendRequest req(cct, method, url, &cb, &hdrs, &params, api_name, host_style);
+
   ret = req.send_request(dpp, &key, headers, resource, mgr, send_data);
   if (ret < 0) {
-    ldpp_dout(dpp, 5) << __func__ << ": send_request() resource=" << resource << " returned ret=" << ret << dendl;
+    ldpp_dout(dpp, 5) << __func__ << ": XXXXXXXXXXXXX send_request() resource=" << resource << " returned ret=" << ret << dendl;
     return ret;
   }
+    ldpp_dout(dpp, 5) << __func__ << ": XXXXXXXXXXXXX send_request() resource=" << resource << " returned ret=" << ret << dendl;
 
-  return req.complete_request(y);
+  ret = req.complete_request(y);
+ /* if (ret < 0) {
+    ldpp_dout(dpp, 5) << __func__ << ": complete_request() resource=" << resource << " returned ret=" << ret << dendl;
+  }*/
+    ldpp_dout(dpp, 5) << __func__ << ": XXXXXXXXXXXXXX complete_request() resource=" << resource << " returned ret=" << ret << dendl;
+          RGWXMLDecoder::XMLParser parser;
+          if (!parser.init()) {
+            ldpp_dout(dpp, 0) << "ERROR: XXXXXXXXXXXXXX failed to initialize xml parser for parsing send_resource response from server" << dendl;
+            return ret;
+          }
+
+          if (!parser.parse(bl.c_str(), bl.length(), 1)) {
+            string str(bl.c_str(), bl.length());
+            ldpp_dout(dpp, 5) << "ERROR: XXXXXXXXXXXXXX send_response failed to parse xml: " << str << dendl;
+            return ret;
+          }
+
+          try {
+            RGWXMLDecoder::decode_xml("Error", result, &parser, true);
+          } catch (RGWXMLDecoder::err& err) {
+            string str(bl.c_str(), bl.length());
+            ldpp_dout(dpp, 5) << "ERROR: XXXXXXXXXXXX unexpected xml: " << str << dendl;
+            return ret;
+          }
+
+            ldpp_dout(dpp, 5) << "ERROR: XXXXXXXXXXXX result code: " << result.code << dendl;
+
+
+  return ret;
 }
 
 RGWRESTReadResource::RGWRESTReadResource(RGWRESTConn *_conn,
