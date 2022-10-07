@@ -12,6 +12,8 @@ using namespace std;
 using DB = rgw::store::DB;
 
 vector<const char*> args;
+#define dout_subsys ceph_subsys_rgw
+const DoutPrefixProvider* dp;
 
 namespace gtest {
   class Environment* env;
@@ -37,6 +39,22 @@ namespace gtest {
           ret = db->Initialize(logfile, loglevel);
           ASSERT_GE(ret, 0);
         }
+
+      StoreManager::Config cfg;
+      cfg.store_name = "dbstore";
+  //    DoutPrefix d(cct->get(), dout_subsys, "d4n test: ");
+//       dp = &d;
+      
+      store = StoreManager::get_storage(db->get_def_dpp(), db->get_def_dpp()->get_cct(),
+              cfg,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false); 
+    
+      ASSERT_NE(store, nullptr);
       }
 
       void TearDown() override {
@@ -53,6 +71,7 @@ namespace gtest {
       string logfile = "rgw_dbstore_tests.log";
       int loglevel = 30;
       boost::intrusive_ptr<CephContext> cct;
+      rgw::sal::Store* store;
   };
 }
 
@@ -85,6 +104,10 @@ namespace {
       string data = "Hello World";
       DBOpParams GlobalParams = {};
       const DoutPrefixProvider *dpp;
+//      const DoutPrefixProvider *dp;
+          unique_ptr<rgw::sal::User> testUser;
+          rgw::sal::Store* store = nullptr;
+
 
       DBStoreTest() {}
       void SetUp() {
@@ -108,6 +131,21 @@ namespace {
          */
         ret = db->InitializeParams(dpp, &GlobalParams);
         ASSERT_EQ(ret, 0);
+
+      store = gtest::env->store;
+
+      rgw_user u("test_tenant", "test_user", "ns");
+      testUser = store->get_user(u);
+      
+      testUser->get_info().user_id = u;
+      //user->get_info().user_email = "tester@seagate.com"; // Change for testing later? -Sam
+      //RGWAccessKey k1("0555b35654ad1656d804", "h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q==");
+      //testUser->get_info().access_keys["0555b35654ad1656d804"] = k1;
+
+      int ret = testUser->store_user(dpp, null_yield, true);
+
+      ASSERT_NE(testUser, nullptr);
+            ASSERT_EQ(ret, 0);
       }
 
       void TearDown() {

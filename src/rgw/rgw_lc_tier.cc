@@ -1245,8 +1245,8 @@ static int cloud_tier_create_bucket(RGWLCCloudTierCtx& tier_ctx) {
                                     out_bl, &bl, nullptr, null_yield);
 
   if (ret < 0 ) {
+    // parse the result and retrieve error code below
     ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to create target bucket: " << tier_ctx.target_bucket_name << ", ret:" << ret << dendl;
-    return ret;
   }
   if (out_bl.length() > 0) {
     RGWXMLDecoder::XMLParser parser;
@@ -1275,7 +1275,7 @@ static int cloud_tier_create_bucket(RGWLCCloudTierCtx& tier_ctx) {
     }
   }
 
-  return 0;
+  return ret;
 }
 
 int rgw_cloud_tier_transfer_object(RGWLCCloudTierCtx& tier_ctx) {
