@@ -51,7 +51,7 @@ tasks:
       rgw_server: client.0
       storage classes: LUKEWARM, FROZEN
       extra_attrs: ["cloud_transition"]
-      lc_debug_interval: 10
+      lc_debug_interval: 1
       lifecycle_tests: True
       cloudtier_tests: True
     #client.2:
