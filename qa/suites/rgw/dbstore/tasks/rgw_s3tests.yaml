@@ -12,4 +12,5 @@ tasks:
     client.0:
       dbstore_tests: True
       rgw_server: client.0
+      lc_debug_interval: 1
       extra_attrs: ["not fails_on_dbstore"]

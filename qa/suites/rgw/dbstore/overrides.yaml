@@ -8,5 +8,6 @@ overrides:
         rgw crypt require ssl: false
         rgw config store: dbstore
         rgw backend store: dbstore
+        rgw lc debug interval: 1
   rgw:
     frontend: beast
