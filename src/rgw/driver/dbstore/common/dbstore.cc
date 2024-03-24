@@ -1992,15 +1992,17 @@ int DB::get_entry(const std::string& oid, const std::string& marker,
     goto out;
   }
 
+  rgw::sal::Lifecycle::LCEntry* e;
   if (!params.op.lc_entry.entry.get_start_time() == 0) { //ensure entry found
-    rgw::sal::Lifecycle::LCEntry* e;
     e = new rgw::sal::StoreLifecycle::StoreLCEntry(params.op.lc_entry.entry);
-    if (!e) {
-      ret = -ENOMEM;
-      goto out;
-    }
-    entry->reset(e);
+  } else {
+    e = new rgw::sal::StoreLifecycle::StoreLCEntry();
   }
+  if (!e) {
+    ret = -ENOMEM;
+    goto out;
+  }
+  entry->reset(e);
 
 out:
   return ret;
@@ -2026,15 +2028,17 @@ int DB::get_next_entry(const std::string& oid, const std::string& marker,
     goto out;
   }
 
+  rgw::sal::Lifecycle::LCEntry* e;
   if (!params.op.lc_entry.entry.get_start_time() == 0) { //ensure entry found
-    rgw::sal::Lifecycle::LCEntry* e;
     e = new rgw::sal::StoreLifecycle::StoreLCEntry(params.op.lc_entry.entry);
-    if (!e) {
-      ret = -ENOMEM;
-      goto out;
-    }
-    entry->reset(e);
+  } else {
+    e = new rgw::sal::StoreLifecycle::StoreLCEntry();
   }
+  if (!e) {
+    ret = -ENOMEM;
+    goto out;
+  }
+  entry->reset(e);
 
 out:
   return ret;
