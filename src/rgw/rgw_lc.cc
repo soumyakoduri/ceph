@@ -600,6 +600,32 @@ static int remove_expired_obj(const DoutPrefixProvider* dpp,
   del_op->params.bucket_owner.id = bucket_info.owner;
   del_op->params.unmod_since = meta.mtime;
 
+      ret = oc.bucket->load_bucket(dpp, null_yield);
+      if (ret < 0) {
+        ldpp_dout(dpp, 1)
+            << "ERROR: STEP 1 failed to reload bucket: '" << oc.bucket->get_name()
+            << "  with error ret= " << ret
+            << dendl;
+        return ret;
+      }
+
+      ret = oc.bucket->load_bucket(dpp, null_yield);
+      if (ret < 0) {
+        ldpp_dout(dpp, 1)
+            << "ERROR: STEP 2 failed to reload bucket: '" << oc.bucket->get_name()
+            << "  with error ret= " << ret
+            << dendl;
+        return ret;
+      }
+
+      ret = oc.bucket->load_bucket(dpp, null_yield);
+      if (ret < 0) {
+        ldpp_dout(dpp, 1)
+            << "ERROR: STEP 3 failed to reload bucket: '" << oc.bucket->get_name()
+            << "  with error ret= " << ret
+            << dendl;
+        return ret;
+      }
   // notification supported only for RADOS driver for now
   notify = driver->get_notification(
       dpp, obj.get(), nullptr, event_types, oc.bucket, lc_id,
@@ -614,6 +640,15 @@ static int remove_expired_obj(const DoutPrefixProvider* dpp,
     return ret;
   }
 
+
+      ret = oc.bucket->load_bucket(dpp, null_yield);
+      if (ret < 0) {
+        ldpp_dout(dpp, 1)
+            << "ERROR: STEP 4 failed to reload bucket: '" << oc.bucket->get_name()
+            << "  with error ret= " << ret
+            << dendl;
+        return ret;
+      }
   uint32_t flags = (!remove_indeed || !zonegroup_lc_check(dpp, oc.driver->get_zone()))
                    ? rgw::sal::FLAG_LOG_OP : 0;
   ret =  del_op->delete_obj(dpp, null_yield, flags);
@@ -631,6 +666,15 @@ static int remove_expired_obj(const DoutPrefixProvider* dpp,
     }
   }
 
+
+      ret = oc.bucket->load_bucket(dpp, null_yield);
+      if (ret < 0) {
+        ldpp_dout(dpp, 1)
+            << "ERROR: STEP 5 failed to reload bucket: '" << oc.bucket->get_name()
+            << "  with error ret= " << ret
+            << dendl;
+        return ret;
+      }
   return ret;
 
 } /* remove_expired_obj */

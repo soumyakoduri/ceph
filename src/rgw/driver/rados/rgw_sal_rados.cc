@@ -525,6 +525,7 @@ int RadosBucket::load_bucket(const DoutPrefixProvider* dpp, optional_yield y)
 
   RGWSI_MetaBackend_CtxParams bectx_params = RGWSI_MetaBackend_CtxParams_SObj();
   RGWObjVersionTracker ep_ot;
+//  ep_ot.read_version.ver= 12345;
   if (info.bucket.bucket_id.empty()) {
     ret = store->ctl()->bucket->read_bucket_info(info.bucket, &info, y, dpp,
 				      RGWBucketCtl::BucketInstance::GetParams()
