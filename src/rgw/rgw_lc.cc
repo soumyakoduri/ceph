@@ -2710,8 +2710,6 @@ int RGWLC::set_bucket_config(rgw::sal::Bucket* bucket,
     }
   }
 
-  rgw_bucket& b = bucket->get_key();
-
 
   ret = guard_lc_modify(this, driver, sal_lc.get(), b, cookie,
 			[&](rgw::sal::Lifecycle* sal_lc, const string& oid,
