@@ -2692,6 +2692,7 @@ int RGWLC::set_bucket_config(rgw::sal::Bucket* bucket,
                          RGWLifecycleConfiguration *config)
 {
   int ret{0};
+  rgw_bucket& b = bucket->get_key();
   rgw::sal::Attrs attrs = bucket_attrs;
   if (config) {
     /* if no RGWLifecycleconfiguration provided, it means
@@ -2702,6 +2703,8 @@ int RGWLC::set_bucket_config(rgw::sal::Bucket* bucket,
 
     ret =
       bucket->merge_and_store_attrs(this, attrs, null_yield);
+      ldpp_dout(this, 0) << "RGWLC::set_bucket_config() merge_and_store_attrs bucket="
+			 << b.name << " returned err=" << ret << dendl;
     if (ret < 0) {
       return ret;
     }

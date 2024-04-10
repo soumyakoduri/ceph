@@ -20,7 +20,7 @@ int ObjectCache::get(const DoutPrefixProvider *dpp, const string& name, ObjectCa
   }
   auto iter = cache_map.find(name);
   if (iter == cache_map.end()) {
-    ldpp_dout(dpp, 10) << "cache get: name=" << name << " : miss" << dendl;
+    ldpp_dout(dpp, -1) << "XXXXXXXXXX cache get: name=" << name << " : miss" << dendl;
     if (perfcounter) {
       perfcounter->inc(l_rgw_cache_miss);
     }
@@ -29,7 +29,7 @@ int ObjectCache::get(const DoutPrefixProvider *dpp, const string& name, ObjectCa
 
   if (expiry.count() &&
        (ceph::coarse_mono_clock::now() - iter->second.info.time_added) > expiry) {
-    ldpp_dout(dpp, 10) << "cache get: name=" << name << " : expiry miss" << dendl;
+    ldpp_dout(dpp, -1) << "XXXXXXXXXX cache get: name=" << name << " : expiry miss" << dendl;
     rl.unlock();
     wl.lock(); // write lock for expiration
     // check that wasn't already removed by other thread
@@ -49,14 +49,14 @@ int ObjectCache::get(const DoutPrefixProvider *dpp, const string& name, ObjectCa
   ObjectCacheEntry *entry = &iter->second;
 
   if (lru_counter - entry->lru_promotion_ts > lru_window) {
-    ldpp_dout(dpp, 20) << "cache get: touching lru, lru_counter=" << lru_counter
+    ldpp_dout(dpp, -1) << "XXXXXXXXXXX cache get: touching lru, lru_counter=" << lru_counter
                    << " promotion_ts=" << entry->lru_promotion_ts << dendl;
     rl.unlock();
     wl.lock(); // write lock for touch_lru()
     /* need to redo this because entry might have dropped off the cache */
     iter = cache_map.find(name);
     if (iter == cache_map.end()) {
-      ldpp_dout(dpp, 10) << "lost race! cache get: name=" << name << " : miss" << dendl;
+      ldpp_dout(dpp, -1) << "XXXXXXXXXXX lost race! cache get: name=" << name << " : miss" << dendl;
       if(perfcounter) perfcounter->inc(l_rgw_cache_miss);
       return -ENOENT;
     }
@@ -70,18 +70,18 @@ int ObjectCache::get(const DoutPrefixProvider *dpp, const string& name, ObjectCa
 
   ObjectCacheInfo& src = iter->second.info;
   if(src.status == -ENOENT) {
-    ldpp_dout(dpp, 10) << "cache get: name=" << name << " : hit (negative entry)" << dendl;
+    ldpp_dout(dpp, -1) << "XXXXXXXXXXX cache get: name=" << name << " : hit (negative entry)" << dendl;
     if (perfcounter) perfcounter->inc(l_rgw_cache_hit);
     return -ENODATA;
   }
   if ((src.flags & mask) != mask) {
-    ldpp_dout(dpp, 10) << "cache get: name=" << name << " : type miss (requested=0x"
+    ldpp_dout(dpp, -1) << "XXXXXXXXXXX cache get: name=" << name << " : type miss (requested=0x"
                    << std::hex << mask << ", cached=0x" << src.flags
                    << std::dec << ")" << dendl;
     if(perfcounter) perfcounter->inc(l_rgw_cache_miss);
     return -ENOENT;
   }
-  ldpp_dout(dpp, 10) << "cache get: name=" << name << " : hit (requested=0x"
+  ldpp_dout(dpp, -1) << "XXXXXXXXXXX cache get: name=" << name << " : hit (requested=0x"
                  << std::hex << mask << ", cached=0x" << src.flags
                  << std::dec << ")" << dendl;
 
@@ -109,18 +109,18 @@ bool ObjectCache::chain_cache_entry(const DoutPrefixProvider *dpp,
   entries.reserve(cache_info_entries.size());
   /* first verify that all entries are still valid */
   for (auto cache_info : cache_info_entries) {
-    ldpp_dout(dpp, 10) << "chain_cache_entry: cache_locator="
+    ldpp_dout(dpp, -1) << "XXXXXXXXXXXXX chain_cache_entry: cache_locator="
 		   << cache_info->cache_locator << dendl;
     auto iter = cache_map.find(cache_info->cache_locator);
     if (iter == cache_map.end()) {
-      ldpp_dout(dpp, 20) << "chain_cache_entry: couldn't find cache locator" << dendl;
+      ldpp_dout(dpp, -1) << "XXXXXXXXXXXX chain_cache_entry: couldn't find cache locator" << dendl;
       return false;
     }
 
     auto entry = &iter->second;
 
     if (entry->gen != cache_info->gen) {
-      ldpp_dout(dpp, 20) << "chain_cache_entry: entry.gen (" << entry->gen
+      ldpp_dout(dpp, -1) << "XXXXXXXXXX chain_cache_entry: entry.gen (" << entry->gen
 		     << ") != cache_info.gen (" << cache_info->gen << ")"
 		     << dendl;
       return false;
@@ -147,7 +147,7 @@ void ObjectCache::put(const DoutPrefixProvider *dpp, const string& name, ObjectC
     return;
   }
 
-  ldpp_dout(dpp, 10) << "cache put: name=" << name << " info.flags=0x"
+  ldpp_dout(dpp, -1) << "XXXXXXXXXX cache put: name=" << name << " info.flags=0x"
                  << std::hex << info.flags << std::dec << dendl;
 
   auto [iter, inserted] = cache_map.emplace(name, ObjectCacheEntry{});
@@ -193,16 +193,16 @@ void ObjectCache::put(const DoutPrefixProvider *dpp, const string& name, ObjectC
     target.xattrs = info.xattrs;
     map<string, bufferlist>::iterator iter;
     for (iter = target.xattrs.begin(); iter != target.xattrs.end(); ++iter) {
-      ldpp_dout(dpp, 10) << "updating xattr: name=" << iter->first << " bl.length()=" << iter->second.length() << dendl;
+      ldpp_dout(dpp, -1) << "XXXXXXXXXXX updating xattr: name=" << iter->first << " bl.length()=" << iter->second.length() << dendl;
     }
   } else if (info.flags & CACHE_FLAG_MODIFY_XATTRS) {
     map<string, bufferlist>::iterator iter;
     for (iter = info.rm_xattrs.begin(); iter != info.rm_xattrs.end(); ++iter) {
-      ldpp_dout(dpp, 10) << "removing xattr: name=" << iter->first << dendl;
+      ldpp_dout(dpp, -1) << "XXXXXXXXXXXXX removing xattr: name=" << iter->first << dendl;
       target.xattrs.erase(iter->first);
     }
     for (iter = info.xattrs.begin(); iter != info.xattrs.end(); ++iter) {
-      ldpp_dout(dpp, 10) << "appending xattr: name=" << iter->first << " bl.length()=" << iter->second.length() << dendl;
+      ldpp_dout(dpp, -1) << "XXXXXXXXXXX appending xattr: name=" << iter->first << " bl.length()=" << iter->second.length() << dendl;
       target.xattrs[iter->first] = iter->second;
     }
   }
@@ -228,7 +228,7 @@ bool ObjectCache::invalidate_remove(const DoutPrefixProvider *dpp, const string&
   if (iter == cache_map.end())
     return false;
 
-  ldpp_dout(dpp, 10) << "removing " << name << " from cache" << dendl;
+  ldpp_dout(dpp, -1) << "XXXXXXXXXXXX removing " << name << " from cache" << dendl;
   ObjectCacheEntry& entry = iter->second;
 
   for (auto& kv : entry.chained_entries) {
@@ -253,7 +253,7 @@ void ObjectCache::touch_lru(const DoutPrefixProvider *dpp, const string& name, O
       break;
     }
     auto map_iter = cache_map.find(*iter);
-    ldout(cct, 10) << "removing entry: name=" << *iter << " from cache LRU" << dendl;
+    ldout(cct, -1) << "XXXXXXX removing entry: name=" << *iter << " from cache LRU" << dendl;
     if (map_iter != cache_map.end()) {
       ObjectCacheEntry& entry = map_iter->second;
       invalidate_lru(entry);
