@@ -573,6 +573,7 @@ static int remove_expired_obj(const DoutPrefixProvider* dpp,
   int ret;
   auto version_id = obj_key.instance; // deep copy, so not cleared below
   std::unique_ptr<rgw::sal::Notification> notify;
+  static rgw::sal::Attrs test_attrs2;
 
   /* per discussion w/Daniel, Casey,and Eric, we *do need*
    * a new sal object handle, based on the following decision
@@ -591,6 +592,19 @@ static int remove_expired_obj(const DoutPrefixProvider* dpp,
     return ret;
   }
 
+  rgw::sal::Attrs temp_attrs;
+    bufferlist t_bl; // (" TEMP ATTRS ");
+    encode("TEMP ATTRS", t_bl);
+  temp_attrs["ATTR1"] = t_bl;
+  temp_attrs["ATTR2"] = t_bl;
+
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
+
   std::unique_ptr<rgw::sal::Object::DeleteOp> del_op
     = obj->get_delete_op();
   del_op->params.versioning_status
@@ -600,7 +614,9 @@ static int remove_expired_obj(const DoutPrefixProvider* dpp,
   del_op->params.bucket_owner.id = bucket_info.owner;
   del_op->params.unmod_since = meta.mtime;
 
-      ret = oc.bucket->load_bucket(dpp, null_yield);
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
+  /*    ret = oc.bucket->load_bucket(dpp, null_yield);
       if (ret < 0) {
         ldpp_dout(dpp, 1)
             << "ERROR: STEP 1 failed to reload bucket: '" << oc.bucket->get_name()
@@ -648,33 +664,45 @@ static int remove_expired_obj(const DoutPrefixProvider* dpp,
             << "  with error ret= " << ret
             << dendl;
         return ret;
-      }
+      }*/
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
   uint32_t flags = (!remove_indeed || !zonegroup_lc_check(dpp, oc.driver->get_zone()))
                    ? rgw::sal::FLAG_LOG_OP : 0;
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
   ret =  del_op->delete_obj(dpp, null_yield, flags);
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
   if (ret < 0) {
     ldpp_dout(dpp, 1) <<
       fmt::format("ERROR: {} failed, with error: {}", __func__, ret) << dendl;
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
   } else {
     // send request to notification manager
-    int publish_ret = notify->publish_commit(dpp, obj_state->size,
+/*    int publish_ret = notify->publish_commit(dpp, obj_state->size,
 				 ceph::real_clock::now(),
 				 obj_state->attrset[RGW_ATTR_ETAG].to_str(),
 				 version_id);
     if (publish_ret < 0) {
       ldpp_dout(dpp, 5) << "WARNING: notify publish_commit failed, with error: " << publish_ret << dendl;
-    }
+    }*/
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
   }
 
 
-      ret = oc.bucket->load_bucket(dpp, null_yield);
+/*      ret = oc.bucket->load_bucket(dpp, null_yield);
       if (ret < 0) {
         ldpp_dout(dpp, 1)
             << "ERROR: STEP 5 failed to reload bucket: '" << oc.bucket->get_name()
             << "  with error ret= " << ret
             << dendl;
         return ret;
-      }
+      }*/
+  test_attrs2 = temp_attrs;
+  test_attrs2 = temp_attrs;
   return ret;
 
 } /* remove_expired_obj */

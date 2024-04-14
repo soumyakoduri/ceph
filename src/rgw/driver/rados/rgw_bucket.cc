@@ -2851,6 +2851,7 @@ int RGWBucketCtl::read_bucket_instance_info(const rgw_bucket& bucket,
                                             const DoutPrefixProvider *dpp,
                                             const BucketInstance::GetParams& params)
 {
+      ldpp_dout(dpp, -1) << "XXXXXXXX Calling read_bucket_instance_info bucket: " << bucket.get_key() << ", info = " << info << ", pattrs = " << params.attrs << dendl;
   int ret = bmi_handler->call(params.bectx_params, [&](RGWSI_Bucket_BI_Ctx& ctx) {
     return svc.bucket->read_bucket_instance_info(ctx,
                                                  RGWSI_Bucket::get_bi_meta_key(bucket),

@@ -571,6 +571,9 @@ class RGWLC : public DoutPrefixProvider {
   std::atomic<bool> down_flag = { false };
   std::string cookie;
 
+  rgw::sal::Attrs test_attrs;
+
+
 public:
 
   class WorkPool;
