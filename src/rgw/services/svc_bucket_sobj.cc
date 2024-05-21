@@ -543,6 +543,7 @@ int RGWSI_Bucket_SObj::store_bucket_instance_info(RGWSI_Bucket_BI_Ctx& ctx,
                                               orig_info.value_or(nullptr),
                                               y);
     if (r < 0) {
+      ldpp_dout(dpp, 0) << "ERROR: " << __func__ << "(): XXXXXXXXX YYYYYYYYYY svc.bucket_sync->handle_bi_update() of key=" << key << " returned r=" << r << dendl;
       return r;
     }
   } else if (ret == -EEXIST) {

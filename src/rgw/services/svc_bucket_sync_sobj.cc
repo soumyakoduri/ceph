@@ -227,7 +227,7 @@ int RGWSI_Bucket_Sync_SObj::do_get_policy_handler(RGWSI_Bucket_X_Ctx& ctx,
                                                      &cache_info);
   if (r < 0) {
     if (r != -ENOENT) {
-      ldpp_dout(dpp, 0) << "ERROR: svc.bucket->read_bucket_instance_info(key=" << bucket_key << ") returned r=" << r << dendl;
+      ldpp_dout(dpp, -1) << "ERROR: svc.bucket->read_bucket_instance_info(key=" << bucket_key << ") returned r=" << r << dendl;
     }
     return r;
   }
@@ -351,14 +351,14 @@ public:
              const obj_version& info_source_ver) {
       auto& ver = sources[info_source];
 
-      if (ver == info_source_ver) { /* already updated */
+    /*  if (ver == info_source_ver) { //  already updated 
         return false;
-      }
+      } */
 
-      if (info_source_ver.tag == ver.tag &&
+/*      if (info_source_ver.tag == ver.tag &&
           info_source_ver.ver < ver.ver) {
         return false;
-      }
+      }*/
 
       ver = info_source_ver;
 
@@ -374,10 +374,10 @@ public:
 
       auto& ver = iter->second;
 
-      if (info_source_ver.tag == ver.tag &&
-          info_source_ver.ver < ver.ver) {
-        return false;
-      }
+      //if (info_source_ver.tag == ver.tag &&
+        //  info_source_ver.ver < ver.ver) {
+      //  return false;
+     // }
 
       sources.erase(info_source);
       return true;
@@ -537,13 +537,13 @@ int RGWSI_BS_SObj_HintIndexObj::update(const DoutPrefixProvider *dpp,
 
   auto& info_source_ver = info_source.objv_tracker.read_version;
 
-#define MAX_RETRIES 25
+#define MAX_RETRIES 250
 
   for (int i = 0; i < MAX_RETRIES; ++i) {
     if (!has_data) {
       r = read(dpp, y);
       if (r < 0) {
-        ldpp_dout(dpp, 0) << "ERROR: cannot update hint index: failed to read: r=" << r << dendl;
+        ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXX YYYYYYYYY cannot update hint index: failed to read: r=" << r << dendl;
         return r;
       }
     }
@@ -561,17 +561,20 @@ int RGWSI_BS_SObj_HintIndexObj::update(const DoutPrefixProvider *dpp,
 
     r = flush(dpp, y);
     if (r >= 0) {
+      ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXXX success flush hint index: obj=" << obj << " r=" << r << dendl;
       return 0;
     }
 
     if (r != -ECANCELED) {
-      ldpp_dout(dpp, 0) << "ERROR: failed to flush hint index: obj=" << obj << " r=" << r << dendl;
+      ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXX YYYYYYYYYYYYYYY failed to flush hint index: obj=" << obj << " r=" << r << dendl;
       return r;
     }
+      ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXXX YYYYYYYYYYY failed to flush hint ECANCELED index: obj=" << obj << " r=" << r << dendl;
 
     invalidate();
+//    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-  ldpp_dout(dpp, 0) << "ERROR: failed to flush hint index: too many retries (obj=" << obj << "), likely a bug" << dendl;
+  ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXX YYYYYYYYYYYY failed to flush hint index: too many retries (obj=" << obj << "), likely a bug" << dendl;
 
   return -EIO;
 }
@@ -603,7 +606,7 @@ int RGWSI_BS_SObj_HintIndexObj::read(const DoutPrefixProvider *dpp, optional_yie
     .set_objv_tracker(&_ot) /* forcing read of current version */
     .read(dpp, &bl, y);
   if (r < 0 && r != -ENOENT) {
-    ldpp_dout(dpp, 0) << "ERROR: failed reading data (obj=" << obj << "), r=" << r << dendl;
+    ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXX YYYYYYYYYYYY  failed reading data (obj=" << obj << "), r=" << r << dendl;
     return r;
   }
 
@@ -615,7 +618,7 @@ int RGWSI_BS_SObj_HintIndexObj::read(const DoutPrefixProvider *dpp, optional_yie
       decode(info, iter);
       has_data = true;
     } catch (buffer::error& err) {
-      ldpp_dout(dpp, 0) << "ERROR: " << __func__ << "(): failed to decode entries, ignoring" << dendl;
+      ldpp_dout(dpp, -1) << "ERROR: " << __func__ << "(): XXXXXXXXX YYYYYYYYYYY failed to decode entries, ignoring" << dendl;
       info.clear();
     }
   } else {
@@ -643,6 +646,7 @@ int RGWSI_BS_SObj_HintIndexObj::flush(const DoutPrefixProvider *dpp, optional_yi
   }
 
   if (r < 0) {
+    ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXX YYYYYYYYYYY flush returned error r=" << r << dendl;
     return r;
   }
 
@@ -687,7 +691,7 @@ int RGWSI_Bucket_Sync_SObj_HintIndexManager::update_hints(const DoutPrefixProvid
                          &removed_dests,
                          y);
     if (r < 0) {
-      ldpp_dout(dpp, 0) << "ERROR: failed to update targets index for bucket=" << bucket_info.bucket << " r=" << r << dendl;
+      ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXXX YYYYYYYYYYYY failed to update targets index for bucket=" << bucket_info.bucket << " r=" << r << dendl;
       return r;
     }
 
@@ -701,7 +705,7 @@ int RGWSI_Bucket_Sync_SObj_HintIndexManager::update_hints(const DoutPrefixProvid
                                static_cast<C2 *>(nullptr),
                                y);
       if (r < 0) {
-        ldpp_dout(dpp, 0) << "ERROR: failed to update targets index for bucket=" << dest_bucket << " r=" << r << dendl;
+        ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXXX YYYYYYYYYYY failed to update targets index for bucket=" << dest_bucket << " r=" << r << dendl;
         return r;
       }
     }
@@ -715,7 +719,7 @@ int RGWSI_Bucket_Sync_SObj_HintIndexManager::update_hints(const DoutPrefixProvid
                                &self_entity,
                                y);
       if (r < 0) {
-        ldpp_dout(dpp, 0) << "ERROR: failed to update targets index for bucket=" << dest_bucket << " r=" << r << dendl;
+        ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXXXX YYYYYYYYYYYYYY failed to update targets index for bucket=" << dest_bucket << " r=" << r << dendl;
         return r;
       }
     }
@@ -732,7 +736,7 @@ int RGWSI_Bucket_Sync_SObj_HintIndexManager::update_hints(const DoutPrefixProvid
                          &removed_sources,
                          y);
     if (r < 0) {
-      ldpp_dout(dpp, 0) << "ERROR: failed to update targets index for bucket=" << bucket_info.bucket << " r=" << r << dendl;
+      ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXXXXX  YYYYYYYYYYYYY failed to update targets index for bucket=" << bucket_info.bucket << " r=" << r << dendl;
       return r;
     }
 
@@ -746,7 +750,7 @@ int RGWSI_Bucket_Sync_SObj_HintIndexManager::update_hints(const DoutPrefixProvid
                                static_cast<C2 *>(nullptr),
                                y);
       if (r < 0) {
-        ldpp_dout(dpp, 0) << "ERROR: failed to update targets index for bucket=" << source_bucket << " r=" << r << dendl;
+        ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXXX YYYYYYYYYYY failed to update targets index for bucket=" << source_bucket << " r=" << r << dendl;
         return r;
       }
     }
@@ -760,7 +764,7 @@ int RGWSI_Bucket_Sync_SObj_HintIndexManager::update_hints(const DoutPrefixProvid
                                &self_entity,
                                y);
       if (r < 0) {
-        ldpp_dout(dpp, 0) << "ERROR: failed to update targets index for bucket=" << source_bucket << " r=" << r << dendl;
+        ldpp_dout(dpp, -1) << "ERROR: XXXXXXXXXXX YYYYYYYYYYYYY failed to update targets index for bucket=" << source_bucket << " r=" << r << dendl;
         return r;
       }
     }
@@ -831,15 +835,15 @@ int RGWSI_Bucket_Sync_SObj::handle_bi_update(const DoutPrefixProvider *dpp,
   std::vector<rgw_bucket> removed_sources;
   std::vector<rgw_bucket> added_sources;
   bool found = diff_sets(orig_sources, sources, &added_sources, &removed_sources);
-  ldpp_dout(dpp, 20) << __func__ << "(): bucket=" << bucket_info.bucket << ": orig_sources=" << orig_sources << " new_sources=" << sources << dendl;
-  ldpp_dout(dpp, 20) << __func__ << "(): bucket=" << bucket_info.bucket << ":  potential sources added=" << added_sources << " removed=" << removed_sources << dendl;
+  ldpp_dout(dpp, -1) << __func__ << "(): bucket=" << bucket_info.bucket << ": orig_sources=" << orig_sources << " new_sources=" << sources << dendl;
+  ldpp_dout(dpp, -1) << __func__ << "(): bucket=" << bucket_info.bucket << ":  potential sources added=" << added_sources << " removed=" << removed_sources << dendl;
   
   std::vector<rgw_bucket> removed_dests;
   std::vector<rgw_bucket> added_dests;
   found = found || diff_sets(orig_dests, dests, &added_dests, &removed_dests);
 
-  ldpp_dout(dpp, 20) << __func__ << "(): bucket=" << bucket_info.bucket << ": orig_dests=" << orig_dests << " new_dests=" << dests << dendl;
-  ldpp_dout(dpp, 20) << __func__ << "(): bucket=" << bucket_info.bucket << ":  potential dests added=" << added_dests << " removed=" << removed_dests << dendl;
+  ldpp_dout(dpp, -1) << __func__ << "(): bucket=" << bucket_info.bucket << ": orig_dests=" << orig_dests << " new_dests=" << dests << dendl;
+  ldpp_dout(dpp, -1) << __func__ << "(): bucket=" << bucket_info.bucket << ":  potential dests added=" << added_dests << " removed=" << removed_dests << dendl;
 
   if (!found) {
     return 0;
@@ -868,7 +872,7 @@ int RGWSI_Bucket_Sync_SObj::get_bucket_sync_hints(const DoutPrefixProvider *dpp,
                                      hint_index_mgr->get_sources_obj(bucket));
     int r = index.read(dpp, y);
     if (r < 0) {
-      ldpp_dout(dpp, 0) << "ERROR: failed to update sources index for bucket=" << bucket << " r=" << r << dendl;
+      ldpp_dout(dpp, -1) << "XXXXXXXXXXX ERROR: failed to update sources index for bucket=" << bucket << " r=" << r << dendl;
       return r;
     }
 
@@ -886,7 +890,7 @@ int RGWSI_Bucket_Sync_SObj::get_bucket_sync_hints(const DoutPrefixProvider *dpp,
                                      hint_index_mgr->get_dests_obj(bucket));
     int r = index.read(dpp, y);
     if (r < 0) {
-      ldpp_dout(dpp, 0) << "ERROR: failed to read targets index for bucket=" << bucket << " r=" << r << dendl;
+      ldpp_dout(dpp, -1) << "XXXXXXXXX ERROR: failed to read targets index for bucket=" << bucket << " r=" << r << dendl;
       return r;
     }
 
