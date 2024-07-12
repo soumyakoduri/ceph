@@ -5217,7 +5217,37 @@ void RGWRestoreObj::execute(optional_yield y)
     op_ret = -ERR_NO_SUCH_BUCKET;
     return;
   }
-  
+  s->object->set_atomic();
+  int op_ret = s->object->get_obj_attrs(y, this);
+  if (op_ret < 0) {
+    ldpp_dout(this, 1) << "failed to fetch get_obj_attrs op ret = " << op_ret << dendl;
+    return;
+  }
+  rgw::sal::Attrs attrs = s->object->get_attrs();
+  auto attr_iter = attrs.find(RGW_ATTR_MANIFEST);
+  if (attr_iter != attrs.end()) {
+    RGWObjManifest m;
+    decode(m, attr_iter->second);
+    RGWObjTier tier_config;
+    m.get_tier_config(&tier_config);
+    if (m.get_tier_type() == "cloud-s3") {
+      op_ret = handle_cloudtier_obj(s, this, driver, attrs, false, tier_config, y);
+      if (op_ret < 0) {
+        ldpp_dout(this, 4) << "Cannot get cloud tiered object: " << *s->object
+        <<". Failing with " << op_ret << dendl;
+        if (op_ret == -ERR_INVALID_OBJECT_STATE) {
+          s->err.message = "This object was transitioned to cloud-s3";
+        }
+      }
+    } else {
+      ldpp_dout(this, 20) << "not cloud tier object erroring" << dendl;
+      op_ret = -ERR_INVALID_OBJECT_STATE;
+    }
+  } else {
+    ldpp_dout(this, 20) << " manifest not found" << dendl;
+  }
+  ldpp_dout(this, 20) << "completed restore" << dendl;
+
   return;
 }
 
