@@ -5129,6 +5129,7 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
                              RGWBucketInfo& dest_bucket_info,
                              const rgw_obj& dest_obj,
                              rgw_placement_rule& dest_placement,
+                             RGWObjTier& tier_config,
                              real_time& mtime,
                              uint64_t olh_epoch,
                              std::optional<uint64_t> days,
@@ -5141,7 +5142,7 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
   rgw::sal::Attrs attrs;
   const req_context rctx{dpp, y, nullptr};
   int ret = 0;
-
+  bufferlist t, t_tier;
   string tag;
   append_rand_alpha(cct, tag, tag, 32);
   rgw::BlockingAioThrottle aio(cct->_conf->rgw_put_obj_min_window_size);
@@ -5221,10 +5222,19 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
     attrs[RGW_ATTR_RESTORE_TIME] = std::move(bl);
 }
 
+	real_time delete_at = real_time();
   if (days) { //temp copy; do not change mtime and set expiry date
     int expiry_days = days.value();
     constexpr int32_t secs_in_a_day = 24 * 60 * 60;
-    ceph::real_time expiration_date = restore_time + make_timespan(double(expiry_days) * secs_in_a_day);
+    ceph::real_time expiration_date ;
+
+    if (cct->_conf->rgw_lc_debug_interval > 0) {
+      expiration_date = restore_time + make_timespan(double(expiry_days)*cct->_conf->rgw_lc_debug_interval);
+      ldpp_dout(dpp, 20) << "Setting expiration time to lc_debug_interval: " << double(expiry_days)*cct->_conf->rgw_lc_debug_interval << ", days:" << expiry_days << dendl;
+    } else {
+      expiration_date = restore_time + make_timespan(double(expiry_days) * secs_in_a_day);
+    }
+    delete_at = expiration_date;
 
     {
       char buf[32];
@@ -5268,14 +5278,17 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
   }
     //set same old mtime as that of transition
     if (days) {
-    set_mtime = tier_ctx.o.meta.mtime; // DDDDDDDD check if its right
+      set_mtime = mtime;
     } else {
       set_mtime = real_clock::now();
     }
 
+    t.append("cloud-s3");
+    encode(tier_config, t_tier);
+    attrs[RGW_ATTR_CLOUD_TIER_TYPE] = t;
+    attrs[RGW_ATTR_CLOUD_TIER_CONFIG] = t_tier;
   // XXX: handle COMPLETE_RETRY like in fetch_remote_obj
   bool canceled = false;
-	real_time delete_at = real_time(); // XXX: is this neeaded
   rgw_zone_set zone_set{};
   ret = processor.complete(accounted_size, etag, &mtime, set_mtime,
                            attrs, rgw::cksum::no_cksum, delete_at , nullptr, nullptr, nullptr,

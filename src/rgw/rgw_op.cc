@@ -980,7 +980,7 @@ int handle_cloudtier_obj(req_state* s, const DoutPrefixProvider *dpp, rgw::sal::
   ldpp_dout(dpp, 20) << "getting versioning params tier placement handle cloud tier" << op_ret << dendl;
   // TODO : pass proper values for etag, days and fill up necessary fields in ent
   op_ret = s->object->restore_obj_from_cloud(pbucket, tier.get(), target_placement, ent, s->cct,
-                                                mtime, epoch, 1, dpp, y, s->bucket->get_info().flags);
+                                tier_config, mtime, epoch, 1, dpp, y, s->bucket->get_info().flags);
 	if (op_ret < 0) {
     ldpp_dout(dpp, 0) << "object fetching failed" << op_ret << dendl;
 	  return op_ret;
