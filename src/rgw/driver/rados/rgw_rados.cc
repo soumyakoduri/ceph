@@ -5278,6 +5278,15 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
     //set same old mtime as that of transition time
     set_mtime = mtime;
 
+    // set tier-config only for temp restored objects, as
+    // permanent copies will be treated as regular objects
+    {
+      t.append("cloud-s3");
+      encode(tier_config, t_tier);
+      attrs[RGW_ATTR_CLOUD_TIER_TYPE] = t;
+      attrs[RGW_ATTR_CLOUD_TIER_CONFIG] = t_tier;
+    }
+
   } else { // permanent restore
     {
       bufferlist bl;
@@ -5296,13 +5305,6 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
     bufferlist bl;
     bl.append(sc.c_str(), sc.size());
     attrs[RGW_ATTR_STORAGE_CLASS] = std::move(bl);
-  }
-
-  {
-    t.append("cloud-s3");
-    encode(tier_config, t_tier);
-    attrs[RGW_ATTR_CLOUD_TIER_TYPE] = t;
-    attrs[RGW_ATTR_CLOUD_TIER_CONFIG] = t_tier;
   }
 
   // XXX: handle COMPLETE_RETRY like in fetch_remote_obj
