@@ -3237,6 +3237,23 @@ int RGWRados::Object::Write::_do_write_meta(uint64_t size, uint64_t accounted_si
     index_op->set_bilog_flags(RGW_BILOG_FLAG_VERSIONED_OP);
   }
 
+  auto attr_iter = attrs.find(RGW_ATTR_RESTORE_TYPE);
+  if (attr_iter != attrs.end()) {
+    rgw::sal::RGWRestoreType rt;
+    bufferlist bl = attr_iter->second;
+    auto iter = bl.cbegin();
+    decode(rt, iter);
+
+    if (rt == rgw::sal::RGWRestoreType::Temporary) {
+      // temporary restore; set storage-class to cloudtier storage class
+      auto c_iter = attrs.find(RGW_ATTR_CLOUDTIER_STORAGE_CLASS);
+
+      if (c_iter != attrs.end()) {
+        storage_class = rgw_bl_str(c_iter->second);
+      }
+    }
+  }
+
   if (!index_op->is_prepared()) {
     tracepoint(rgw_rados, prepare_enter, req_id.c_str());
     r = index_op->prepare(rctx.dpp, CLS_RGW_OP_ADD, &state->write_tag, rctx.y, log_op);
