@@ -1041,14 +1041,14 @@ int handle_cloudtier_obj(req_state* s, const DoutPrefixProvider *dpp, rgw::sal::
        * object asyncronously.
        */
       if (!restore_op) { //read-through
-        op_ret = -ERR_INVALID_OBJECT_STATE;
-        ldpp_dout(dpp, 5) << "restore is not completed yet, please retry again" << dendl;
+        op_ret = -ERR_REQUEST_TIMEOUT;
+        ldpp_dout(dpp, 5) << "restore is initiated, please check restore status and retry" << dendl;
         s->err.message = "restore is not completed yet";
       }
       return op_ret;
     } else if (restore_status == rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress) {
-      op_ret = -ERR_INVALID_OBJECT_STATE;
-      ldpp_dout(dpp, 5) << "restore is not completed yet, please retry again" << dendl;
+      op_ret = -ERR_REQUEST_TIMEOUT;
+      ldpp_dout(dpp, 5) << "restore is initiated, please check restore status and retry" << dendl;
       s->err.message = "restore is not completed yet";
     } else { // CloudRestored..return success
       return 0;
