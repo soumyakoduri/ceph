@@ -2807,6 +2807,7 @@ int RadosObject::write_cloud_tier(const DoutPrefixProvider* dpp,
   obj_op.meta.user_data = NULL;
   obj_op.meta.zones_trace = NULL;
   obj_op.meta.olh_epoch = olh_epoch;
+  obj_op.meta.set_mtime = head_obj->get_mtime();
 
   RGWObjManifest *pmanifest;
   RGWObjManifest manifest;
