@@ -943,6 +943,17 @@ void handle_replication_status_header(
 /*
  * GET on CloudTiered objects either it will synced to other zones.
  * In all other cases, it will try to fetch the object from remote cloud endpoint.
+ *
+ * @return:
+ * Note - return status may differ based on whether it is RESTORE op or
+ *        READTHROUGH/GET op.
+ *        for e.g, ERR_INVALID_OBJECT_STATE is sent for non cloud-transitioned
+ *        incase of restore op and ERR_REQUEST_TIMEOUT is applicable only for
+ *        read-through etc.
+ *  `<0` :  failed to process; s->err.message & op_ret set accrodingly
+ *  `0`  :  restore request initiated
+ *  `1`  :  restore is already in progress
+ *  `2`  :  already restored
  */
 int handle_cloudtier_obj(req_state* s, const DoutPrefixProvider *dpp, rgw::sal::Driver* driver,
                          rgw::sal::Attrs& attrs, bool sync_cloudtiered, std::optional<uint64_t> days,
@@ -1051,12 +1062,17 @@ int handle_cloudtier_obj(req_state* s, const DoutPrefixProvider *dpp, rgw::sal::
         s->err.message = "restore is still in progress";
       }
       return op_ret;
-    } else if ((!restore_op) && (restore_status == rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress)) {
-      op_ret = -ERR_REQUEST_TIMEOUT;
-      ldpp_dout(dpp, 5) << "restore is still in progress, please check restore status and retry" << dendl;
-      s->err.message = "restore is still in progress";
+    } else if ((restore_status == rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress) {
+      if (!restore_op) {
+        op_ret = -ERR_REQUEST_TIMEOUT;
+        ldpp_dout(dpp, 5) << "restore is still in progress, please check restore status and retry" << dendl;
+        s->err.message = "restore is still in progress";
+        return op_ret;
+      } else {
+        return 1; // for restore-op, corresponds to RESTORE_ALREADY_IN_PROGRESS
+      }
     } else { // CloudRestored..return success
-      return 0;
+      return 2; // corresponds to CLOUD_RESTORED
     }
   } catch (const buffer::end_of_buffer&) {
     //empty manifest; it's not cloud-tiered
