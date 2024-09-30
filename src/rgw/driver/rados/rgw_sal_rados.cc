@@ -2959,6 +2959,7 @@ int RadosObject::RadosReadOp::prepare(optional_yield y, const DoutPrefixProvider
 
   parent_op.conds.mod_ptr = params.mod_ptr;
   parent_op.conds.unmod_ptr = params.unmod_ptr;
+  parent_op.conds.internal_mtime_ptr = params.internal_mtime_ptr;
   parent_op.conds.high_precision_time = params.high_precision_time;
   parent_op.conds.mod_zone_id = params.mod_zone_id;
   parent_op.conds.mod_pg_ver = params.mod_pg_ver;

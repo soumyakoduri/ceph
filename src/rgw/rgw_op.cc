@@ -2349,6 +2349,7 @@ void RGWGetObj::execute(optional_yield y)
 
   read_op->params.mod_ptr = mod_ptr;
   read_op->params.unmod_ptr = unmod_ptr;
+  read_op->params.internal_mtime_ptr = internal_mtime_ptr;
   read_op->params.high_precision_time = s->system_request; /* system request need to use high precision time */
   read_op->params.mod_zone_id = mod_zone_id;
   read_op->params.mod_pg_ver = mod_pg_ver;
@@ -2581,6 +2582,12 @@ int RGWGetObj::init_common()
     if (parse_time(if_unmod, &unmod_time) < 0)
       return -EINVAL;
     unmod_ptr = &unmod_time;
+  }
+
+  if (if_internal_mtime_mod) {
+    if (parse_time(if_internal_mtime_mod, &internal_mtime) < 0)
+      return -EINVAL;
+    internal_mtime_ptr = &internal_mtime;
   }
 
   return 0;
