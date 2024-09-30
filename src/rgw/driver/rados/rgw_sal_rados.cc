@@ -2832,6 +2832,19 @@ int RadosObject::write_cloud_tier(const DoutPrefixProvider* dpp,
   bl.append(tier->get_storage_class());
   attrs[RGW_ATTR_STORAGE_CLASS] = bl;
 
+  ceph::real_time transition_time = real_clock::now();
+  {
+    char buf[32];
+    utime_t ut(transition_time);
+    snprintf(buf, sizeof(buf), "%lld.%09lld",
+          (long long)ut.sec(),
+          (long long)ut.nsec());
+    bufferlist bl;
+    bl.append(buf, 32);
+    encode(transition_time, bl);
+    attrs[RGW_ATTR_TRANSITION_TIME] = attrs[RGW_ATTR_INTERNAL_MTIME] = std::move(bl);
+ }
+
   attrs.erase(RGW_ATTR_ID_TAG);
   attrs.erase(RGW_ATTR_TAIL_TAG);
 

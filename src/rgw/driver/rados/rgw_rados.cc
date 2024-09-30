@@ -5256,7 +5256,7 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
     bufferlist bl;
     bl.append(buf, 32);
     encode(restore_time, bl);
-    attrs[RGW_ATTR_RESTORE_TIME] = std::move(bl);
+    attrs[RGW_ATTR_RESTORE_TIME] = attrs[RGW_ATTR_INTERNAL_MTIME] = std::move(bl);
   }
 
   real_time delete_at = real_time();
@@ -5341,6 +5341,7 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
     return ret;
   }
 
+  attrs.erase(RGW_ATTR_TRANSITION_TIME);
   // XXX: handle olh_epoch for versioned objects like in fetch_remote_obj
   return ret; 
 }
