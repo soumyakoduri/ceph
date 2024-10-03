@@ -5157,7 +5157,6 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
                              const rgw_obj& dest_obj,
                              rgw_placement_rule& dest_placement,
                              RGWObjTier& tier_config,
-                             real_time& mtime,
                              uint64_t olh_epoch,
                              std::optional<uint64_t> days,
                              const DoutPrefixProvider *dpp,
@@ -5167,6 +5166,7 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
   //XXX: read below from attrs .. check transition_obj()
   ACLOwner owner;
   rgw::sal::Attrs attrs;
+  real_time mtime;
   const req_context rctx{dpp, y, nullptr};
   int ret = 0;
   bufferlist t, t_tier;
@@ -5209,6 +5209,19 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
                       return 0;
                     });
 
+  // fetch mtime of the object and other attrs of the object
+  // to check for restore_status
+  RGWRados::Object op_target(this, dest_bucket_info, obj_ctx, dest_obj);
+  RGWRados::Object::Read read_op(&op_target);
+  read_op.params.lastmod = &mtime;
+  read_op.params.attrs = &attrs;
+
+  ret = read_op.prepare(y, dpp);
+  if (ret < 0) {
+    ldpp_dout(dpp, 0) << "Restoring object(" << dest_obj << ") , read_op failed ret=" << ret << dendl;
+    return ret;
+  }
+
   uint64_t accounted_size = 0;
   string etag;
   real_time set_mtime;
@@ -5238,6 +5251,21 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
     ldpp_dout(dpp, -1) << "ERROR: object truncated during fetching, expected "
         << accounted_size << " bytes but received " << cb.get_data_len() << dendl;
     return ret;
+  }
+
+  {
+    if (olh_epoch <= 0) {
+      const auto aiter = attrs.find("x-amz-meta-rgwx-versioned-epoch");
+      if (aiter != std::end(attrs)) {
+	olh_epoch = stoi(rgw_bl_str(aiter->second));
+        attrs.erase(aiter);
+      }
+    }
+    if (olh_epoch > 0) { // needed for only versioned objects
+      bufferlist bl;
+      encode(olh_epoch, bl);
+      attrs[RGW_ATTR_RESTORE_VERSIONED_EPOCH] = std::move(bl);
+    }
   }
 
   {
@@ -5331,6 +5359,9 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
     attrs[RGW_ATTR_STORAGE_CLASS] = std::move(bl);
   }
 
+  for (auto iter: attrs) {
+    ldpp_dout(dpp, 30) << "Restore attrs set: " << iter.first << dendl;
+  }
   // XXX: handle COMPLETE_RETRY like in fetch_remote_obj
   bool canceled = false;
   rgw_zone_set zone_set{};
