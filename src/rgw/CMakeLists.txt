@@ -602,6 +602,50 @@ set_target_properties(rgw PROPERTIES OUTPUT_NAME rgw VERSION 2.0.0
   SOVERSION 2)
 install(TARGETS rgw DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
+# librgw_sal - C bindings for SAL (Storage Abstraction Layer)
+set(librgw_sal_srcs
+  rgw_sal_c.cc)
+add_library(rgw_sal SHARED ${librgw_sal_srcs})
+
+target_compile_definitions(rgw_sal PUBLIC "-DCLS_CLIENT_HIDE_IOCTX")
+target_include_directories(rgw_sal
+  PUBLIC "${CMAKE_SOURCE_DIR}/src/include"
+  PUBLIC "${CMAKE_SOURCE_DIR}/src/rgw"
+  PUBLIC "${CMAKE_SOURCE_DIR}/src/rgw/driver/rados"
+  PRIVATE "${LUA_INCLUDE_DIR}")
+
+target_link_libraries(rgw_sal
+  PRIVATE
+  ${rgw_libs}
+  rgw_schedulers
+  librados
+  cls_rgw_client
+  cls_otp_client
+  cls_lock_client
+  cls_refcount_client
+  cls_log_client
+  cls_timeindex_client
+  cls_version_client
+  cls_user_client
+  global
+  ${LIB_RESOLV}
+  ${CURL_LIBRARIES}
+  ${EXPAT_LIBRARIES}
+  OpenSSL::SSL
+  PUBLIC
+  RapidJSON::RapidJSON
+  dmclock::dmclock)
+
+if(WITH_RADOSGW_DBSTORE)
+  target_link_libraries(rgw_sal PRIVATE dbstore)
+endif()
+
+set_target_properties(rgw_sal PROPERTIES OUTPUT_NAME rgw_sal VERSION 1.0.0
+  SOVERSION 1)
+install(TARGETS rgw_sal DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES ${CMAKE_SOURCE_DIR}/src/include/rgw/rgw_sal_c.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/rgw)
+
 if(WITH_TESTS)
   add_executable(ceph_rgw_jsonparser
     rgw_jsonparser.cc)
