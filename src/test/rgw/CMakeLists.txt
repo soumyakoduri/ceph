@@ -376,6 +376,14 @@ target_include_directories(unittest_rgw_lua
 target_link_libraries(unittest_rgw_lua unit-main ${rgw_libs})
 endif()
 
+# unittest_rgw_sal_c_wrapper
+add_executable(unittest_rgw_sal_c_wrapper test_rgw_sal_c_wrapper.cc)
+add_ceph_unittest(unittest_rgw_sal_c_wrapper)
+target_include_directories(unittest_rgw_sal_c_wrapper
+  SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw"
+  PRIVATE "${CMAKE_SOURCE_DIR}/src/include/rgw")
+target_link_libraries(unittest_rgw_sal_c_wrapper ${rgw_libs})
+
 if(WITH_RADOSGW_RADOS)
 add_executable(radosgw-cr-test rgw_cr_test.cc)
 target_link_libraries(radosgw-cr-test ${rgw_libs} librados
