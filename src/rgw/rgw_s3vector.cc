@@ -5,6 +5,7 @@
 #include "common/ceph_json.h"
 #include "common/Formatter.h"
 #include "common/dout.h"
+#include "common/ceph_context.h"
 #include <arrow/type_fwd.h>
 #include <fmt/format.h>
 #include "lancedb.h"
@@ -56,11 +57,99 @@ namespace rgw::s3vector {
   // utility functions for connection creation and opening table
 
   LanceDBConnection* connect(DoutPrefixProvider* dpp, const std::string& vector_bucket_name) {
-    const auto dbname = fmt::format("/tmp/lancedb/{}", vector_bucket_name);
-    LanceDBConnectBuilder* builder = lancedb_connect(dbname.c_str());
+    CephContext* cct = dpp->get_cct();
+    const auto& conf = cct->_conf;
+
+    const std::string backend = conf.get_val<std::string>("rgw_s3vector_backend");
+    std::string uri;
+    LanceDBConnectBuilder* builder = nullptr;
+
+    if (backend == "s3") {
+      // S3 backend configuration
+      const std::string s3_bucket = conf.get_val<std::string>("rgw_s3vector_s3_bucket");
+      if (s3_bucket.empty()) {
+        ldpp_dout(dpp, 1) << "ERROR: s3vector S3 backend requires rgw_s3vector_s3_bucket to be set" << dendl;
+        return nullptr;
+      }
+
+      uri = fmt::format("s3://{}/{}", s3_bucket, vector_bucket_name);
+      builder = lancedb_connect(uri.c_str());
+      if (!builder) {
+        ldpp_dout(dpp, 1) << "ERROR: s3vector failed to create connection builder for: " << uri << dendl;
+        return nullptr;
+      }
+
+      // Set S3 storage options
+      const std::string s3_endpoint = conf.get_val<std::string>("rgw_s3vector_s3_endpoint");
+      const std::string s3_region = conf.get_val<std::string>("rgw_s3vector_s3_region");
+      const std::string s3_access_key = conf.get_val<std::string>("rgw_s3vector_s3_access_key");
+      const std::string s3_secret_key = conf.get_val<std::string>("rgw_s3vector_s3_secret_key");
+      const bool s3_allow_http = conf.get_val<bool>("rgw_s3vector_s3_allow_http");
+
+      if (!s3_endpoint.empty()) {
+        builder = lancedb_connect_builder_storage_option(builder, "endpoint", s3_endpoint.c_str());
+        if (!builder) {
+          ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 endpoint" << dendl;
+          return nullptr;
+        }
+      }
+
+      if (!s3_region.empty()) {
+        builder = lancedb_connect_builder_storage_option(builder, "aws_region", s3_region.c_str());
+        if (!builder) {
+          ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 region" << dendl;
+          return nullptr;
+        }
+      }
+
+      if (!s3_access_key.empty()) {
+        builder = lancedb_connect_builder_storage_option(builder, "aws_access_key_id", s3_access_key.c_str());
+        if (!builder) {
+          ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 access key" << dendl;
+          return nullptr;
+        }
+      }
+
+      if (!s3_secret_key.empty()) {
+        builder = lancedb_connect_builder_storage_option(builder, "aws_secret_access_key", s3_secret_key.c_str());
+        if (!builder) {
+          ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 secret key" << dendl;
+          return nullptr;
+        }
+      }
+
+      if (s3_allow_http) {
+        builder = lancedb_connect_builder_storage_option(builder, "allow_http", "true");
+        if (!builder) {
+          ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set allow_http option" << dendl;
+          return nullptr;
+        }
+      }
+
+      // Use path-style addressing for S3-compatible services
+      builder = lancedb_connect_builder_storage_option(builder, "aws_s3_addressing_style", "path");
+      if (!builder) {
+        ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 addressing style" << dendl;
+        return nullptr;
+      }
+
+      ldpp_dout(dpp, 10) << "INFO: s3vector connecting to S3 backend: " << uri
+                         << " endpoint=" << s3_endpoint << " region=" << s3_region << dendl;
+    } else {
+      // Local filesystem backend (default)
+      const std::string local_path = conf.get_val<std::string>("rgw_s3vector_local_path");
+      uri = fmt::format("{}/{}", local_path, vector_bucket_name);
+      builder = lancedb_connect(uri.c_str());
+      if (!builder) {
+        ldpp_dout(dpp, 1) << "ERROR: s3vector failed to create connection builder for: " << uri << dendl;
+        return nullptr;
+      }
+      ldpp_dout(dpp, 10) << "INFO: s3vector connecting to local backend: " << uri << dendl;
+    }
+
     LanceDBConnection* conn = lancedb_connect_builder_execute(builder);
     if (!conn) {
-      ldpp_dout(dpp, 1) << "ERROR: s3vector failed to connect to: " << dbname << dendl;
+      ldpp_dout(dpp, 1) << "ERROR: s3vector failed to connect to: " << uri << dendl;
     }
     return conn;
   }
@@ -1472,7 +1561,7 @@ namespace rgw::s3vector {
     std::ostringstream oss;
     const auto keys_size = configuration.keys.size();
     for (size_t i = 0; i < keys_size; ++i) {
-      oss << "key = \"" << configuration.keys[i] << "\"";
+      oss << "`key` = \"" << configuration.keys[i] << "\"";
       if (i < keys_size - 1) {
         oss << " OR ";
       }
