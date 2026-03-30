@@ -65,9 +65,9 @@ using timeout_timer = rgw::basic_timeout_timer<ceph::coarse_mono_clock,
 static constexpr size_t parse_buffer_size = 65536;
 using parse_buffer = boost::beast::flat_static_buffer<parse_buffer_size>;
 
-// use mmap/mprotect to allocate 512k coroutine stacks
-auto make_stack_allocator() {
-  return boost::context::protected_fixedsize_stack{512*1024};
+// use mmap/mprotect to allocate coroutine stacks with guard pages
+auto make_stack_allocator(size_t stack_size) {
+  return boost::context::protected_fixedsize_stack{stack_size};
 }
 
 static constexpr std::chrono::milliseconds BACKOFF_MAX_WAIT(5000);
@@ -467,6 +467,7 @@ class AsioFrontend {
   std::string uri_prefix;
   ceph::timespan request_timeout = std::chrono::milliseconds(REQUEST_TIMEOUT);
   size_t header_limit = 16384;
+  size_t coroutine_stack_size;
 #ifdef WITH_RADOSGW_BEAST_OPENSSL
 #ifdef __cpp_lib_atomic_shared_ptr
   std::atomic<std::shared_ptr<ssl::context>> ssl_context;
@@ -522,6 +523,8 @@ class AsioFrontend {
       pause_mutex(context.get_executor()),
       backoff(context)
   {
+    coroutine_stack_size = ctx()->_conf->rgw_frontend_coroutine_stack_size;
+
     auto sched_t = dmc::get_scheduler_t(ctx());
     switch(sched_t){
     case dmc::scheduler_t::dmclock:
@@ -1192,7 +1195,7 @@ void AsioFrontend::on_accept(Listener& l, tcp::socket stream)
 #else
     const auto ssl_ctx = std::atomic_load_explicit(&ssl_context, std::memory_order_acquire);
 #endif
-    boost::asio::spawn(make_strand(context), std::allocator_arg, make_stack_allocator(),
+    boost::asio::spawn(make_strand(context), std::allocator_arg, make_stack_allocator(coroutine_stack_size),
       [this, s=std::move(stream), ssl_ctx] (boost::asio::yield_context yield) mutable {
         auto conn = boost::intrusive_ptr{new Connection(std::move(s))};
         auto c = connections.add(*conn);
@@ -1227,7 +1230,7 @@ void AsioFrontend::on_accept(Listener& l, tcp::socket stream)
 #else
   {
 #endif // WITH_RADOSGW_BEAST_OPENSSL
-    boost::asio::spawn(make_strand(context), std::allocator_arg, make_stack_allocator(),
+    boost::asio::spawn(make_strand(context), std::allocator_arg, make_stack_allocator(coroutine_stack_size),
       [this, s=std::move(stream)] (boost::asio::yield_context yield) mutable {
         auto conn = boost::intrusive_ptr{new Connection(std::move(s))};
         auto c = connections.add(*conn);

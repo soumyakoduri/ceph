@@ -3712,6 +3712,24 @@ options:
   - rgw
   see_also:
   - rgw_frontends
+- name: rgw_frontend_coroutine_stack_size
+  type: size
+  level: advanced
+  desc: Stack size for beast frontend coroutines.
+  long_desc: The stack size in bytes for coroutines handling HTTP requests in the
+    beast frontend. Increase this value if you encounter stack overflow issues with
+    deeply nested operations. Uses mmap/mprotect for allocation with guard pages.
+  default: 512_K
+  min: 64_K
+  max: 16_M
+  tags:
+  - performance
+  services:
+  - rgw
+  see_also:
+  - rgw_frontends
+  - rgw_max_concurrent_requests
+  with_legacy: true
 - name: rgw_scheduler_type
   type: str
   level: advanced
