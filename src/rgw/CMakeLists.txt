@@ -1,6 +1,18 @@
 find_program(GPERF gperf
   REQUIRED)
 
+# Segmented stack support for coroutines
+option(WITH_RGW_SEGMENTED_STACKS "Enable segmented stacks for RGW coroutines (experimental)" OFF)
+if(WITH_RGW_SEGMENTED_STACKS)
+  find_package(SegmentedStack)
+  if(SEGMENTED_STACK_FOUND)
+    message(STATUS "RGW: Segmented stacks enabled")
+  else()
+    message(WARNING "RGW: Segmented stacks requested but not available, falling back to fixed-size stacks")
+    set(WITH_RGW_SEGMENTED_STACKS OFF)
+  endif()
+endif()
+
 if(WITH_RADOSGW_BACKTRACE_LOGGING)
   add_definitions(-D_BACKTRACE_LOGGING)
 endif(WITH_RADOSGW_BACKTRACE_LOGGING)

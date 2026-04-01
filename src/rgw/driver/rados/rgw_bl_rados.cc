@@ -14,6 +14,9 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/context/protected_fixedsize_stack.hpp>
+#if defined(RGW_USE_SEGMENTED_STACKS) && defined(BOOST_USE_SEGMENTED_STACKS)
+#include <boost/context/segmented_stack.hpp>
+#endif
 #include "common/async/yield_context.h"
 #include "common/async/yield_waiter.h"
 #include "common/ceph_time.h"
@@ -35,10 +38,18 @@ namespace rgw::bucketlogging {
 
 using commit_list_t = std::set<std::string>;
 
-// use mmap/mprotect to allocate 128k coroutine stacks
+// Stack allocator for bucket logging coroutines
+#if defined(RGW_USE_SEGMENTED_STACKS) && defined(BOOST_USE_SEGMENTED_STACKS)
+// Segmented stack allocator - stacks grow dynamically on demand
+auto make_stack_allocator() {
+  return boost::context::segmented_stack{};
+}
+#else
+// use mmap/mprotect to allocate 128k coroutine stacks with guard pages
 auto make_stack_allocator() {
   return boost::context::protected_fixedsize_stack{128*1024};
 }
+#endif
 
 const std::string COMMIT_LIST_OBJECT_NAME = "bucket_logging_global_commit_list";
 static const std::string TEMP_POOL_ATTR = "temp_logging_pool";

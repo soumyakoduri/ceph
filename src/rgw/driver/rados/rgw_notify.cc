@@ -11,6 +11,9 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/context/protected_fixedsize_stack.hpp>
+#if defined(RGW_USE_SEGMENTED_STACKS) && defined(BOOST_USE_SEGMENTED_STACKS)
+#include <boost/context/segmented_stack.hpp>
+#endif
 #include "include/function2.hpp"
 #include "rgw_sal_rados.h"
 #include "rgw_pubsub.h"
@@ -58,10 +61,18 @@ using entries_persistency_tracker = std::unordered_map<std::string, persistency_
 using queues_persistency_tracker = std::unordered_map<std::string, entries_persistency_tracker>;
 using rgw::persistent_topic_counters::CountersManager;
 
-// use mmap/mprotect to allocate 128k coroutine stacks
+// Stack allocator for notification coroutines
+#if defined(RGW_USE_SEGMENTED_STACKS) && defined(BOOST_USE_SEGMENTED_STACKS)
+// Segmented stack allocator - stacks grow dynamically on demand
+auto make_stack_allocator() {
+  return boost::context::segmented_stack{};
+}
+#else
+// use mmap/mprotect to allocate 128k coroutine stacks with guard pages
 auto make_stack_allocator() {
   return boost::context::protected_fixedsize_stack{128*1024};
 }
+#endif
 
 const std::string Q_LIST_OBJECT_NAME = "queues_list_object";
 
