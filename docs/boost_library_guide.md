@@ -20,7 +20,7 @@ This document covers the most commonly used features of the C++ Boost library wi
 12. [Boost.Regex](#12-boostregex)
 13. [Segmented Stacks](#13-segmented-stacks)
 14. [RGW Frontend Segmented Stack Changes](#14-rgw-frontend-segmented-stack-changes)
-15. [Stack Overflow Detection (Stack Guard)](#15-stack-overflow-detection-stack-guard)
+15. [Stack Overflow Protection (Boost Guard Pages)](#15-stack-overflow-protection-boost-guard-pages)
 
 ---
 
@@ -881,73 +881,56 @@ TEST(RGWFrontend, SegmentedStackManyCoroutines) {
 
 ---
 
-## 15. Stack Overflow Detection (Stack Guard)
+## 15. Stack Overflow Protection (Boost Guard Pages)
 
-In addition to segmented stacks, the RGW frontend includes a **Stack Guard** feature that proactively detects stack overflow conditions before they cause memory corruption.
+The RGW frontend relies on Boost's built-in stack overflow protection via `protected_fixedsize_stack`.
 
 ### How It Works
 
-The Stack Guard monitors stack usage by:
-1. Tracking the stack base address and size at coroutine creation
-2. Checking remaining stack space before critical operations
-3. Aborting requests with HTTP 503 if stack is nearly exhausted
+`boost::context::protected_fixedsize_stack` provides hardware-level protection:
+
+1. **Guard Pages**: Stack is allocated with `mmap`, and a guard page is set up using `mprotect`
+2. **Hardware Protection**: If the stack overflows into the guard page, the CPU triggers `SIGSEGV`
+3. **Memory Corruption Prevention**: The guard page prevents writes beyond the stack boundary
 
 ```cpp
-#include "rgw_stack_guard.h"
+#include <boost/context/protected_fixedsize_stack.hpp>
 
-// Create a stack guard at coroutine entry
-rgw::StackGuard guard(stack_size, safety_margin, max_depth);
+// Allocate a 512KB stack with guard page
+auto allocator = boost::context::protected_fixedsize_stack{512 * 1024};
 
-// Check before intensive operations
-auto ec = guard.check_stack();
-if (ec) {
-    // Stack overflow imminent - abort safely
-    return send_503_response();
-}
-
-// Use RAII for depth tracking
-rgw::ScopedStackDepth depth_guard(guard);
-if (auto ec = depth_guard.enter(); ec) {
-    // Max depth exceeded
-    return send_503_response();
-}
+// Use with Boost.Asio spawn
+boost::asio::spawn(io_ctx,
+    std::allocator_arg,
+    allocator,
+    [](boost::asio::yield_context yield) {
+        // Coroutine body - protected by guard page
+    });
 ```
 
-### Configuration Options
+### Behavior on Overflow
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `rgw_frontend_stack_guard_enabled` | bool | true | Enable stack overflow detection |
-| `rgw_frontend_stack_safety_margin` | size | 16KB | Minimum stack space to keep free |
-| `rgw_frontend_max_call_depth` | int | 500 | Maximum recursion depth allowed |
+| Event | Result |
+|-------|--------|
+| Stack grows normally | Works fine |
+| Stack hits guard page | SIGSEGV signal |
+| Process response | Crash (but no memory corruption) |
 
-### Example Configuration
+### Why This Is Sufficient
+
+1. **Memory Safety**: Guard pages prevent corruption of adjacent memory
+2. **Simplicity**: No runtime overhead for software-based checking
+3. **Hardware Support**: Leverages CPU memory protection (MMU)
+4. **Boost Integration**: Already built into the allocator we use
+
+### Configuration
+
+Adjust stack size if needed:
 
 ```ini
 # ceph.conf
 [client.rgw]
-rgw_frontend_stack_guard_enabled = true
-rgw_frontend_stack_safety_margin = 32768   # 32KB safety margin
-rgw_frontend_max_call_depth = 300          # Lower depth limit
 rgw_frontend_coroutine_stack_size = 1048576  # 1MB stack
-```
-
-### Benefits
-
-1. **Prevents Memory Corruption**: Catches stack overflow before it happens
-2. **Graceful Degradation**: Returns HTTP 503 instead of crashing
-3. **Diagnostic Logging**: Logs stack usage percentage for debugging
-4. **Minimal Overhead**: Only a few pointer comparisons per check
-
-### When Stack Guard Triggers
-
-The guard returns an error when:
-- Remaining stack space falls below `safety_margin` bytes
-- Call depth exceeds `max_call_depth` (for recursive operations)
-
-Log message when triggered:
-```
-ERROR: stack overflow imminent before request processing, remaining: 8192 bytes, usage: 98.4%, aborting request
 ```
 
 ---

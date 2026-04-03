@@ -49,7 +49,6 @@
 
 #include "rgw_asio_frontend_timer.h"
 #include "rgw_dmclock_async_scheduler.h"
-#include "rgw_stack_guard.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -270,14 +269,6 @@ std::ostream& operator<<(std::ostream& out, const log_apache_time& a) {
 
 using SharedMutex = ceph::async::SharedMutex<boost::asio::any_io_executor>;
 
-// Stack guard configuration passed to handle_connection
-struct StackGuardConfig {
-  bool enabled = true;
-  size_t stack_size = 512 * 1024;
-  size_t safety_margin = 16 * 1024;
-  size_t max_depth = 500;
-};
-
 template <typename Stream>
 void handle_connection(boost::asio::io_context& context,
                        RGWProcessEnv& env, Stream& stream,
@@ -286,7 +277,6 @@ void handle_connection(boost::asio::io_context& context,
                        SharedMutex& pause_mutex,
                        rgw::dmclock::Scheduler *scheduler,
                        const std::string& uri_prefix,
-                       const StackGuardConfig& stack_config,
                        boost::system::error_code& ec,
                        boost::asio::yield_context yield)
 {
@@ -295,24 +285,8 @@ void handle_connection(boost::asio::io_context& context,
 
   auto cct = env.driver->ctx();
 
-  // Initialize stack guard for overflow detection
-  std::optional<rgw::StackGuard> stack_guard;
-  if (stack_config.enabled) {
-    stack_guard.emplace(stack_config.stack_size,
-                        stack_config.safety_margin,
-                        stack_config.max_depth);
-
-    // Initial stack check at connection start
-    auto stack_ec = stack_guard->check_stack();
-    if (stack_ec) {
-      ldout(cct, 0) << "ERROR: stack overflow imminent at connection start, "
-                    << "remaining: " << stack_guard->remaining_stack()
-                    << " bytes, usage: " << stack_guard->stack_usage_percent()
-                    << "%" << dendl;
-      ec = stack_ec;
-      return;
-    }
-  }
+  // Note: Stack overflow protection is provided by boost::context::protected_fixedsize_stack
+  // which uses mmap/mprotect to create guard pages. If stack overflows, SIGSEGV is triggered.
 
   // read messages from the stream until eof
   for (;;) {
@@ -402,29 +376,6 @@ void handle_connection(boost::asio::io_context& context,
       string user = "-";
       const auto started = ceph::coarse_real_clock::now();
       ceph::coarse_real_clock::duration latency{};
-
-      // Check stack before processing request (most stack-intensive operation)
-      if (stack_guard) {
-        auto stack_ec = stack_guard->check_stack();
-        if (stack_ec) {
-          ldout(cct, 0) << "ERROR: stack overflow imminent before request processing, "
-                        << "remaining: " << stack_guard->remaining_stack()
-                        << " bytes, usage: " << stack_guard->stack_usage_percent()
-                        << "%, aborting request" << dendl;
-          // Send 503 Service Unavailable
-          http::response<http::string_body> response;
-          response.result(http::status::service_unavailable);
-          response.version(message.version() == 10 ? 10 : 11);
-          response.set(http::field::content_type, "text/plain");
-          response.body() = "Service temporarily unavailable: server resource limit reached";
-          response.prepare_payload();
-          timeout.start();
-          http::async_write(stream, response, yield[ec]);
-          timeout.cancel();
-          ldout(cct, 1) << "====== req done http_status=503 (stack limit) ======" << dendl;
-          return;
-        }
-      }
 
       process_request(env, &req, uri_prefix, &client, y,
                       scheduler, &user, &latency, &http_ret);
@@ -542,7 +493,6 @@ class AsioFrontend {
   ceph::timespan request_timeout = std::chrono::milliseconds(REQUEST_TIMEOUT);
   size_t header_limit = 16384;
   size_t coroutine_stack_size;
-  StackGuardConfig stack_guard_config;
 #ifdef WITH_RADOSGW_BEAST_OPENSSL
 #ifdef __cpp_lib_atomic_shared_ptr
   std::atomic<std::shared_ptr<ssl::context>> ssl_context;
@@ -600,24 +550,14 @@ class AsioFrontend {
   {
     coroutine_stack_size = ctx()->_conf->rgw_frontend_coroutine_stack_size;
 
-    // Initialize stack guard configuration
-    stack_guard_config.enabled = ctx()->_conf->rgw_frontend_stack_guard_enabled;
-    stack_guard_config.stack_size = coroutine_stack_size;
-    stack_guard_config.safety_margin = ctx()->_conf->rgw_frontend_stack_safety_margin;
-    stack_guard_config.max_depth = ctx()->_conf->rgw_frontend_max_call_depth;
-
 #if defined(RGW_USE_SEGMENTED_STACKS) && defined(BOOST_USE_SEGMENTED_STACKS)
     ldout(ctx(), 1) << "beast frontend using segmented stacks (dynamically growing)" << dendl;
 #else
-    ldout(ctx(), 1) << "beast frontend using fixed-size stacks: "
-                    << coroutine_stack_size << " bytes" << dendl;
+    // Note: protected_fixedsize_stack provides guard pages via mmap/mprotect.
+    // Stack overflow will trigger SIGSEGV, preventing memory corruption.
+    ldout(ctx(), 1) << "beast frontend using protected fixed-size stacks: "
+                    << coroutine_stack_size << " bytes (with guard pages)" << dendl;
 #endif
-
-    if (stack_guard_config.enabled) {
-      ldout(ctx(), 1) << "beast frontend stack guard enabled: safety_margin="
-                      << stack_guard_config.safety_margin
-                      << " bytes, max_depth=" << stack_guard_config.max_depth << dendl;
-    }
 
     auto sched_t = dmc::get_scheduler_t(ctx());
     switch(sched_t){
@@ -1309,7 +1249,7 @@ void AsioFrontend::on_accept(Listener& l, tcp::socket stream)
         conn->buffer.consume(bytes);
         handle_connection(context, env, stream, timeout, header_limit,
                           conn->buffer, true, pause_mutex, scheduler.get(),
-                          uri_prefix, stack_guard_config, ec, yield);
+                          uri_prefix, ec, yield);
 
         if (!ec || ec == http::error::end_of_stream) {
           // ssl shutdown (ignoring errors)
@@ -1332,7 +1272,7 @@ void AsioFrontend::on_accept(Listener& l, tcp::socket stream)
         boost::system::error_code ec;
         handle_connection(context, env, conn->socket, timeout, header_limit,
                           conn->buffer, false, pause_mutex, scheduler.get(),
-                          uri_prefix, stack_guard_config, ec, yield);
+                          uri_prefix, ec, yield);
         conn->socket.shutdown(tcp::socket::shutdown_both, ec);
       }, [] (std::exception_ptr eptr) {
         if (eptr) std::rethrow_exception(eptr);

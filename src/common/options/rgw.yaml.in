@@ -3732,68 +3732,21 @@ options:
   - rgw_frontends
   - rgw_max_concurrent_requests
   with_legacy: true
-- name: rgw_frontend_stack_guard_enabled
-  type: bool
-  level: advanced
-  desc: Enable stack overflow detection for frontend coroutines.
-  long_desc: When enabled, the frontend will monitor stack usage and abort
-    requests that are about to overflow the stack, preventing memory corruption.
-    This adds minimal overhead but provides safety against runaway recursion
-    or deeply nested operations.
-  default: true
-  tags:
-  - performance
-  services:
-  - rgw
-  see_also:
-  - rgw_frontend_coroutine_stack_size
-  - rgw_frontend_stack_safety_margin
-  with_legacy: true
-- name: rgw_frontend_stack_safety_margin
-  type: size
-  level: advanced
-  desc: Minimum stack space to keep free before aborting request.
-  long_desc: When stack guard is enabled, requests will be aborted if remaining
-    stack space falls below this threshold. Increase this value if you see
-    false positives or have deeply nested operations. Decrease for tighter
-    memory usage (with more risk).
-  default: 16_K
-  min: 4_K
-  max: 128_K
-  tags:
-  - performance
-  services:
-  - rgw
-  see_also:
-  - rgw_frontend_stack_guard_enabled
-  - rgw_frontend_coroutine_stack_size
-  with_legacy: true
-- name: rgw_frontend_max_call_depth
-  type: int
-  level: advanced
-  desc: Maximum call depth for request processing.
-  long_desc: Limits the recursion depth during request processing. This helps
-    prevent stack overflow from deeply recursive operations. Set to 0 to disable
-    depth checking (not recommended).
-  default: 500
-  min: 0
-  max: 10000
-  tags:
-  - performance
-  services:
-  - rgw
-  see_also:
-  - rgw_frontend_stack_guard_enabled
-  with_legacy: true
-# Segmented stacks documentation note:
-# Segmented stacks (also called split stacks) allow coroutine stacks to grow
-# dynamically in non-contiguous segments. This is enabled at compile time via
-# -DWITH_RGW_SEGMENTED_STACKS=ON, which requires:
+# Stack overflow protection note:
+# The RGW frontend uses boost::context::protected_fixedsize_stack which allocates
+# coroutine stacks using mmap with guard pages (via mprotect). If a stack overflow
+# occurs, it will trigger SIGSEGV when hitting the guard page, preventing memory
+# corruption beyond the stack boundaries.
+#
+# Segmented stacks (optional, compile-time):
+# Segmented stacks allow coroutine stacks to grow dynamically in non-contiguous
+# segments. This is enabled at compile time via -DWITH_RGW_SEGMENTED_STACKS=ON,
+# which requires:
 #   1. GCC compiler with -fsplit-stack support
 #   2. Boost.Context compiled with segmented stack support
 #   3. All linked libraries must also support split stacks
 #
-# Benefits:
+# Benefits of segmented stacks:
 #   - Memory efficient: stacks start small and grow on demand
 #   - Supports many more concurrent connections with less memory
 #
