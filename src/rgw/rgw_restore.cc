@@ -32,7 +32,9 @@
 #include "rgw_string.h"
 #include "rgw_multi.h"
 #include "rgw_sal.h"
+#ifdef WITH_RADOSGW_RADOS
 #include "rgw_lc_tier.h"
+#endif
 #include "rgw_notify.h"
 #include "common/dout.h"
 

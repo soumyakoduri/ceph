@@ -992,9 +992,7 @@ class RadosRestore : public StoreRestore {
 
 public:
   RadosRestore(RadosStore* _st) ;
-  ~RadosRestore() override {
-    finalize();
-  }
+  ~RadosRestore() override;
 
   virtual int initialize(const DoutPrefixProvider* dpp, optional_yield y,
 		  int n_objs, std::vector<std::string>& obj_names) override;

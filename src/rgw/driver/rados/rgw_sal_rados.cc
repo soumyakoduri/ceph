@@ -5044,6 +5044,10 @@ int RadosRestore::initialize(const DoutPrefixProvider* dpp, optional_yield y,
   return 0;
 }
 
+RadosRestore::~RadosRestore() {
+  finalize();
+}
+
 void RadosRestore::finalize() {
   obj_names.clear();
   fifos.clear();
