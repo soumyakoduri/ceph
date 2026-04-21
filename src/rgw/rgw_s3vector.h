@@ -37,6 +37,27 @@ inline BackendType string_to_backend_type(const std::string& str) {
   return BackendType::LOCAL; // default
 }
 
+// S3 connection configuration for vector storage
+// This is populated from req_state in REST handlers and passed to connect functions
+struct S3ConnConfig {
+  std::string endpoint;      // S3 endpoint URL (empty = use config or auto-detect)
+  std::string access_key;    // S3 access key (empty = use config or bucket owner's key)
+  std::string secret_key;    // S3 secret key (empty = use config or bucket owner's key)
+  std::string region;        // S3 region (empty = use config or zonegroup name)
+  bool use_ssl = false;      // Use SSL for connection
+  bool allow_insecure = true; // Allow insecure SSL (for loopback connections)
+
+  // Check if this config has explicit credentials
+  bool has_credentials() const {
+    return !access_key.empty() && !secret_key.empty();
+  }
+
+  // Check if this config has explicit endpoint
+  bool has_endpoint() const {
+    return !endpoint.empty();
+  }
+};
+
 // Get the backend type from configuration
 BackendType get_backend_type(CephContext* cct);
 
@@ -45,6 +66,15 @@ std::string get_db_path(CephContext* cct, const std::string& vector_bucket_name)
 
 // Check if the backend is S3 (requires S3 bucket creation)
 bool is_s3_backend(CephContext* cct);
+
+// Build S3 connection config from RGW settings (for local RGW mode)
+// rgw_port: the port RGW is listening on
+// zonegroup_name: the zonegroup name to use as region
+// access_key, secret_key: bucket owner's credentials
+S3ConnConfig build_local_rgw_config(int rgw_port, bool use_ssl,
+                                     const std::string& zonegroup_name,
+                                     const std::string& access_key,
+                                     const std::string& secret_key);
 
 enum class DistanceMetric {
   UNKNOWN,
@@ -499,20 +529,24 @@ inline rgw::ARN vector_bucket_arn(const std::string& zonegroup, const std::strin
     );
 }
 
-int create_index(const create_index_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
-int create_vector_bucket(const create_vector_bucket_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
-int delete_index(const delete_index_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
-int delete_vector_bucket(const delete_vector_bucket_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
+// All s3vector functions accept an optional S3ConnConfig pointer for S3 backend connections.
+// When using S3 backend with local RGW (no explicit config), REST handlers should build this
+// config with user credentials and zonegroup, then pass it to these functions.
+
+int create_index(const create_index_t& configuration, DoutPrefixProvider* dpp, optional_yield y, const S3ConnConfig* s3_config = nullptr);
+int create_vector_bucket(const create_vector_bucket_t& configuration, DoutPrefixProvider* dpp, optional_yield y, const S3ConnConfig* s3_config = nullptr);
+int delete_index(const delete_index_t& configuration, DoutPrefixProvider* dpp, optional_yield y, const S3ConnConfig* s3_config = nullptr);
+int delete_vector_bucket(const delete_vector_bucket_t& configuration, DoutPrefixProvider* dpp, optional_yield y, const S3ConnConfig* s3_config = nullptr);
 int delete_vector_bucket_policy(const delete_vector_bucket_policy_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
-int put_vectors(const put_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
-int get_vectors(const get_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y, get_vectors_reply_t& reply);
-int list_vectors(const list_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y, list_vectors_reply_t& reply);
-int get_index(const get_index_t& configuration, const std::string& region, const std::string& account, DoutPrefixProvider* dpp, optional_yield y, get_index_reply_t& reply);
-int list_indexes(const list_indexes_t& configuration, DoutPrefixProvider* dpp, optional_yield y, list_indexes_reply_t& reply);
+int put_vectors(const put_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y, const S3ConnConfig* s3_config = nullptr);
+int get_vectors(const get_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y, get_vectors_reply_t& reply, const S3ConnConfig* s3_config = nullptr);
+int list_vectors(const list_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y, list_vectors_reply_t& reply, const S3ConnConfig* s3_config = nullptr);
+int get_index(const get_index_t& configuration, const std::string& region, const std::string& account, DoutPrefixProvider* dpp, optional_yield y, get_index_reply_t& reply, const S3ConnConfig* s3_config = nullptr);
+int list_indexes(const list_indexes_t& configuration, DoutPrefixProvider* dpp, optional_yield y, list_indexes_reply_t& reply, const S3ConnConfig* s3_config = nullptr);
 int put_vector_bucket_policy(const put_vector_bucket_policy_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
 int get_vector_bucket_policy(const get_vector_bucket_policy_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
-int delete_vectors(const delete_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
-int query_vectors(const query_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y, query_vectors_reply_t& reply);
+int delete_vectors(const delete_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y, const S3ConnConfig* s3_config = nullptr);
+int query_vectors(const query_vectors_t& configuration, DoutPrefixProvider* dpp, optional_yield y, query_vectors_reply_t& reply, const S3ConnConfig* s3_config = nullptr);
 
 }
 

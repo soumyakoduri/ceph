@@ -4647,13 +4647,12 @@ options:
   type: str
   level: advanced
   desc: Backend storage type for S3 Vectors
-  long_desc: |
-    The storage backend type for S3 Vector data. Options are:
-    - "local": Local filesystem storage (default). Data stored at rgw_s3vector_local_path.
-    - "s3": S3 storage backend. If no endpoint/credentials are configured, uses local RGW
-      via loopback interface (localhost) with auto-detected port, zonegroup as region,
-      and vector bucket owner credentials. If endpoint/credentials are provided, connects
-      to an external S3 service.
+  long_desc: The storage backend type for S3 Vector data. Options are
+    local - Local filesystem storage (default). Data stored at rgw_s3vector_local_path.
+    s3 - S3 storage backend. If no endpoint/credentials are configured, uses local RGW
+       via loopback interface (localhost) with auto-detected port, zonegroup as region,
+       and vector bucket owner credentials. If endpoint/credentials are provided, connects
+       to an external S3 service.
     When using "s3" backend, a corresponding S3 bucket with the same name as the vector
     bucket is automatically created to store the LanceDB data.
   default: local
@@ -4675,13 +4674,11 @@ options:
   type: str
   level: advanced
   desc: S3 endpoint URL for S3 backend
-  long_desc: |
-    The endpoint URL for the S3 service when using the S3 backend.
+  long_desc: The endpoint URL for the S3 service when using the S3 backend.
     If empty, uses local RGW via loopback interface (http://localhost:<rgw_port>).
-    For external S3 services, specify the full endpoint URL:
-    - AWS S3: https://s3.<region>.amazonaws.com
-    - MinIO: http://minio-host:9000
-    - Other S3-compatible: full URL with protocol, host, and port
+    For external S3 services, specify the full endpoint URL(for eg.,)
+    AWS S3 - https://s3.<region>.amazonaws.com
+    Other S3-compatible - full URL with protocol, host, and port
   default:
   services:
   - rgw
@@ -4690,8 +4687,7 @@ options:
   type: str
   level: advanced
   desc: S3 access key for S3 backend
-  long_desc: |
-    The access key ID for authenticating to the S3 service.
+  long_desc: The access key ID for authenticating to the S3 service.
     If empty and using local RGW, the vector bucket owner's credentials are used.
     Required when connecting to an external S3 service.
   default:
@@ -4702,8 +4698,7 @@ options:
   type: str
   level: advanced
   desc: S3 secret key for S3 backend
-  long_desc: |
-    The secret access key for authenticating to the S3 service.
+  long_desc: The secret access key for authenticating to the S3 service.
     If empty and using local RGW, the vector bucket owner's credentials are used.
     Required when connecting to an external S3 service.
   default:
@@ -4714,8 +4709,7 @@ options:
   type: str
   level: advanced
   desc: S3 region for S3 backend
-  long_desc: |
-    The region for the S3 service.
+  long_desc: The region for the S3 service.
     If empty and using local RGW, the zonegroup name is used as region.
     For AWS S3, specify the appropriate region (e.g., us-east-1, eu-west-1).
   default:

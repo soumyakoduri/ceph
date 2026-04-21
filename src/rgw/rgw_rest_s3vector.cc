@@ -7,6 +7,7 @@
 #include "rgw_process_env.h"
 #include "common/async/yield_context.h"
 #include "rgw_arn.h"
+#include <optional>
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_rgw
@@ -16,6 +17,90 @@ namespace {
 class RGWS3VectorBase : public RGWDefaultResponseOp {
 protected:
   bufferlist in_data;
+  std::optional<rgw::s3vector::S3ConnConfig> cached_s3_config;
+
+  // Build S3ConnConfig from req_state for S3 backend with local RGW
+  // Returns nullptr if S3 backend is not enabled or explicit config exists
+  const rgw::s3vector::S3ConnConfig* get_s3_config() {
+    if (!rgw::s3vector::is_s3_backend(s->cct)) {
+      return nullptr;
+    }
+
+    // Check if we already have cached config
+    if (cached_s3_config) {
+      return &cached_s3_config.value();
+    }
+
+    // Check if config file has explicit endpoint - if so, no need to build config
+    const auto endpoint = s->cct->_conf.get_val<std::string>("rgw_s3vector_s3_endpoint");
+    const auto access_key = s->cct->_conf.get_val<std::string>("rgw_s3vector_s3_access_key");
+    if (!endpoint.empty() || !access_key.empty()) {
+      // Config file has explicit settings, let connect() use them
+      return nullptr;
+    }
+
+    // Build config for local RGW with user credentials
+    // Get port and SSL from rgw_frontends config
+    const auto frontends = s->cct->_conf.get_val<std::string>("rgw_frontends");
+    int port = 80;
+    bool use_ssl = false;
+
+    if (!frontends.empty()) {
+      auto pos = frontends.find("ssl_port=");
+      if (pos != std::string::npos) {
+        use_ssl = true;
+        pos += 9;
+        auto end = frontends.find_first_not_of("0123456789", pos);
+        if (end == std::string::npos) end = frontends.length();
+        try {
+          port = std::stoi(frontends.substr(pos, end - pos));
+        } catch (...) {
+          port = 443;
+        }
+      } else {
+        pos = frontends.find("port=");
+        if (pos != std::string::npos) {
+          pos += 5;
+          auto end = frontends.find_first_not_of("0123456789", pos);
+          if (end == std::string::npos) end = frontends.length();
+          try {
+            port = std::stoi(frontends.substr(pos, end - pos));
+          } catch (...) {
+            port = 80;
+          }
+        }
+      }
+    }
+
+    // Get user credentials - use the first access key from the user
+    std::string user_access_key;
+    std::string user_secret_key;
+    if (s->user) {
+      const auto& access_keys = s->user->get_info().access_keys;
+      if (!access_keys.empty()) {
+        const auto& first_key = access_keys.begin()->second;
+        user_access_key = first_key.id;
+        user_secret_key = first_key.key;
+      }
+    }
+
+    // Build and cache the config
+    cached_s3_config = rgw::s3vector::build_local_rgw_config(
+      port, use_ssl,
+      s->zonegroup_name,
+      user_access_key,
+      user_secret_key
+    );
+
+    ldpp_dout(this, 10) << "INFO: built S3 config for local RGW - endpoint: "
+                        << cached_s3_config->endpoint
+                        << ", region: " << cached_s3_config->region
+                        << ", has_credentials: " << cached_s3_config->has_credentials()
+                        << dendl;
+
+    return &cached_s3_config.value();
+  }
+
   template<typename T>
   int do_init_processing(T& configuration, optional_yield y) {
     const auto max_size = s->cct->_conf->rgw_max_put_param_size;
@@ -74,7 +159,7 @@ class RGWS3VectorCreateIndex : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::create_index(configuration, this, y);
+    op_ret = rgw::s3vector::create_index(configuration, this, y, get_s3_config());
   }
 
   void send_response() override {
@@ -213,7 +298,7 @@ class RGWS3VectorCreateVectorBucket : public RGWS3VectorBase {
       }
     }
 
-    op_ret = rgw::s3vector::create_vector_bucket(configuration, this, y);
+    op_ret = rgw::s3vector::create_vector_bucket(configuration, this, y, get_s3_config());
     if (op_ret < 0) {
       ldpp_dout(this, 1) << "ERROR: failed to initialize s3vector bucket " << bucket_id << ". error: " << ret << dendl;
       return;
@@ -296,7 +381,7 @@ class RGWS3VectorDeleteIndex : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_index(configuration, this, y);
+    op_ret = rgw::s3vector::delete_index(configuration, this, y, get_s3_config());
   }
 };
 
@@ -356,7 +441,7 @@ class RGWS3VectorDeleteVectorBucket : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to delete s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_vector_bucket(configuration, this, y);
+    op_ret = rgw::s3vector::delete_vector_bucket(configuration, this, y, get_s3_config());
 
     // When using S3 backend, also delete the corresponding S3 bucket
     // S3 bucket name = vector bucket name (same name)
@@ -445,7 +530,7 @@ class RGWS3VectorPutVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::put_vectors(configuration, this, y);
+    op_ret = rgw::s3vector::put_vectors(configuration, this, y, get_s3_config());
   }
 };
 
@@ -479,7 +564,7 @@ class RGWS3VectorGetVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::get_vectors(configuration, this, y, reply);
+    op_ret = rgw::s3vector::get_vectors(configuration, this, y, reply, get_s3_config());
   }
 
   void send_response() override {
@@ -531,7 +616,7 @@ class RGWS3VectorListVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::list_vectors(configuration, this, y, reply);
+    op_ret = rgw::s3vector::list_vectors(configuration, this, y, reply, get_s3_config());
   }
 
   void send_response() override {
@@ -739,7 +824,7 @@ class RGWS3VectorGetIndex : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::get_index(configuration, s->zonegroup_name, s->account_name, this, y, reply);
+    op_ret = rgw::s3vector::get_index(configuration, s->zonegroup_name, s->account_name, this, y, reply, get_s3_config());
   }
 
   void send_response() override {
@@ -798,7 +883,7 @@ class RGWS3VectorListIndexes : public RGWS3VectorBase {
         configuration.vector_bucket_name
       );
     }
-    op_ret = rgw::s3vector::list_indexes(configuration, this, y, reply);
+    op_ret = rgw::s3vector::list_indexes(configuration, this, y, reply, get_s3_config());
   }
 
   void send_response() override {
@@ -915,7 +1000,7 @@ class RGWS3VectorDeleteVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_vectors(configuration, this, y);
+    op_ret = rgw::s3vector::delete_vectors(configuration, this, y, get_s3_config());
   }
 };
 
@@ -949,7 +1034,7 @@ class RGWS3VectorQueryVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::query_vectors(configuration, this, y, reply);
+    op_ret = rgw::s3vector::query_vectors(configuration, this, y, reply, get_s3_config());
   }
 
   void send_response() override {
