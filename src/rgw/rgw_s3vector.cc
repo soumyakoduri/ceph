@@ -5,12 +5,15 @@
 #include "common/ceph_json.h"
 #include "common/Formatter.h"
 #include "common/dout.h"
+#include "common/ceph_context.h"
+#include "common/config.h"
 #include <arrow/type_fwd.h>
 #include <fmt/format.h>
 #include "lancedb.h"
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <charconv>
+#include <filesystem>
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -53,11 +56,107 @@ namespace rgw::s3vector {
     return -EIO;
   }
 
+  // Backend configuration helper functions
+
+  // Default local path for vector data storage (backward compatible with original code)
+  static constexpr const char* default_local_path = "/tmp/lancedb";
+
+  BackendType get_backend_type(CephContext* cct) {
+    if (!cct) return BackendType::LOCAL;
+    const auto backend = cct->_conf.get_val<std::string>("rgw_s3vector_backend");
+    return string_to_backend_type(backend);
+  }
+
+  bool is_s3_backend(CephContext* cct) {
+    if (!cct) return false;
+    return get_backend_type(cct) == BackendType::S3;
+  }
+
+  std::string get_db_path(CephContext* cct, const std::string& vector_bucket_name) {
+    if (!cct) {
+      // fallback to default path if no context
+      return fmt::format("{}/{}", default_local_path, vector_bucket_name);
+    }
+
+    const auto backend_type = get_backend_type(cct);
+
+    if (backend_type == BackendType::S3) {
+      // For S3 backend, use s3:// URL with the vector bucket name as bucket
+      // S3 bucket name = vector bucket name (same name)
+      return fmt::format("s3://{}", vector_bucket_name);
+    } else {
+      // Local backend
+      const auto local_path = cct->_conf.get_val<std::string>("rgw_s3vector_local_path");
+      std::string base_path = local_path.empty() ? default_local_path : local_path;
+
+      // Ensure base directory exists
+      std::error_code ec;
+      std::filesystem::create_directories(base_path, ec);
+
+      return fmt::format("{}/{}", base_path, vector_bucket_name);
+    }
+  }
+
+  // Check if using external S3 (endpoint is configured)
+  bool is_external_s3(CephContext* cct) {
+    if (!cct) return false;
+    const auto endpoint = cct->_conf.get_val<std::string>("rgw_s3vector_s3_endpoint");
+    return !endpoint.empty();
+  }
+
   // utility functions for connection creation and opening table
 
   LanceDBConnection* connect(DoutPrefixProvider* dpp, const std::string& vector_bucket_name) {
-    const auto dbname = fmt::format("/tmp/lancedb/{}", vector_bucket_name);
+    CephContext* cct = dpp ? dpp->get_cct() : nullptr;
+    const auto dbname = get_db_path(cct, vector_bucket_name);
     LanceDBConnectBuilder* builder = lancedb_connect(dbname.c_str());
+
+    // Configure S3 storage options for S3 backend
+    if (cct && get_backend_type(cct) == BackendType::S3) {
+      const auto endpoint = cct->_conf.get_val<std::string>("rgw_s3vector_s3_endpoint");
+      const auto access_key = cct->_conf.get_val<std::string>("rgw_s3vector_s3_access_key");
+      const auto secret_key = cct->_conf.get_val<std::string>("rgw_s3vector_s3_secret_key");
+      const auto region = cct->_conf.get_val<std::string>("rgw_s3vector_s3_region");
+
+      if (endpoint.empty()) {
+        // Using local RGW via loopback interface
+        // TODO: Auto-detect RGW port from rgw_frontends config
+        // TODO: Auto-detect SSL from rgw_frontends config
+        // TODO: Use zonegroup as region
+        // TODO: Get bucket owner credentials
+        // For now, require explicit configuration
+        ldpp_dout(dpp, 10) << "INFO: s3vector using local RGW backend (no endpoint configured)" << dendl;
+
+        // Set region if provided, otherwise will need zonegroup
+        if (!region.empty()) {
+          builder = lancedb_connect_builder_storage_option(builder, "aws_region", region.c_str());
+        }
+        if (!access_key.empty()) {
+          builder = lancedb_connect_builder_storage_option(builder, "aws_access_key_id", access_key.c_str());
+        }
+        if (!secret_key.empty()) {
+          builder = lancedb_connect_builder_storage_option(builder, "aws_secret_access_key", secret_key.c_str());
+        }
+      } else {
+        // Using external S3 service with explicit configuration
+        ldpp_dout(dpp, 10) << "INFO: s3vector using external S3 backend with endpoint: " << endpoint << dendl;
+
+        builder = lancedb_connect_builder_storage_option(builder, "aws_endpoint", endpoint.c_str());
+        // Allow HTTP for custom endpoints (e.g., MinIO, local testing)
+        builder = lancedb_connect_builder_storage_option(builder, "allow_http", "true");
+
+        if (!access_key.empty()) {
+          builder = lancedb_connect_builder_storage_option(builder, "aws_access_key_id", access_key.c_str());
+        }
+        if (!secret_key.empty()) {
+          builder = lancedb_connect_builder_storage_option(builder, "aws_secret_access_key", secret_key.c_str());
+        }
+        if (!region.empty()) {
+          builder = lancedb_connect_builder_storage_option(builder, "aws_region", region.c_str());
+        }
+      }
+    }
+
     LanceDBConnection* conn = lancedb_connect_builder_execute(builder);
     if (!conn) {
       ldpp_dout(dpp, 1) << "ERROR: s3vector failed to connect to: " << dbname << dendl;

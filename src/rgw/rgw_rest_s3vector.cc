@@ -180,6 +180,39 @@ class RGWS3VectorCreateVectorBucket : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to create s3vector bucket " << bucket_id << ". error: " << ret << dendl;
       return;
     }
+
+    // When using S3 backend, create a corresponding regular S3 bucket for vector data storage
+    // S3 bucket name = vector bucket name (same name)
+    if (rgw::s3vector::is_s3_backend(s->cct)) {
+      ldpp_dout(this, 10) << "INFO: S3 backend enabled, creating corresponding S3 bucket: "
+                          << configuration.vector_bucket_name << dendl;
+
+      // Check if the S3 bucket already exists (same name as vector bucket)
+      const rgw_bucket s3_bucket_id(s->bucket_tenant, configuration.vector_bucket_name);
+      std::unique_ptr<rgw::sal::Bucket> s3_bucket;
+      ret = driver->load_bucket(this, s3_bucket_id, &s3_bucket, y);
+      if (ret == -ENOENT) {
+        // Create the regular S3 bucket for vector data storage
+        rgw::sal::Bucket::CreateParams s3_createparams;
+        s3_createparams.owner = s->user->get_id();
+        s3_createparams.zonegroup_id = zonegroup.id;
+        s3_createparams.placement_rule.storage_class = s->info.storage_class;
+
+        ret = s3_bucket->create(this, s3_createparams, y);
+        if (ret < 0 && ret != -EEXIST) {
+          ldpp_dout(this, 1) << "ERROR: failed to create S3 bucket for vector data: "
+                            << configuration.vector_bucket_name << ". error: " << ret << dendl;
+          // Don't fail the vector bucket creation, just log the warning
+          ldpp_dout(this, 1) << "WARNING: proceeding without S3 bucket, vector operations may fail" << dendl;
+        } else {
+          ldpp_dout(this, 10) << "INFO: created S3 bucket for vector data: "
+                              << configuration.vector_bucket_name << dendl;
+        }
+      } else if (ret == 0) {
+        ldpp_dout(this, 10) << "INFO: S3 bucket already exists: " << configuration.vector_bucket_name << dendl;
+      }
+    }
+
     op_ret = rgw::s3vector::create_vector_bucket(configuration, this, y);
     if (op_ret < 0) {
       ldpp_dout(this, 1) << "ERROR: failed to initialize s3vector bucket " << bucket_id << ". error: " << ret << dendl;
@@ -324,6 +357,29 @@ class RGWS3VectorDeleteVectorBucket : public RGWS3VectorBase {
       return;
     }
     op_ret = rgw::s3vector::delete_vector_bucket(configuration, this, y);
+
+    // When using S3 backend, also delete the corresponding S3 bucket
+    // S3 bucket name = vector bucket name (same name)
+    if (op_ret == 0 && rgw::s3vector::is_s3_backend(s->cct)) {
+      ldpp_dout(this, 10) << "INFO: S3 backend enabled, deleting corresponding S3 bucket: "
+                          << configuration.vector_bucket_name << dendl;
+
+      const rgw_bucket s3_bucket_id(s->bucket_tenant, configuration.vector_bucket_name);
+      std::unique_ptr<rgw::sal::Bucket> s3_bucket;
+      int ret = driver->load_bucket(this, s3_bucket_id, &s3_bucket, y);
+      if (ret == 0) {
+        // delete_children=true to remove all objects in the bucket
+        ret = s3_bucket->remove(this, true, y);
+        if (ret < 0 && ret != -ENOENT) {
+          ldpp_dout(this, 1) << "WARNING: failed to delete S3 bucket for vector data: "
+                            << configuration.vector_bucket_name
+                            << ". error: " << ret << ". Manual cleanup may be required." << dendl;
+        } else {
+          ldpp_dout(this, 10) << "INFO: deleted S3 bucket for vector data: "
+                              << configuration.vector_bucket_name << dendl;
+        }
+      }
+    }
   }
 };
 

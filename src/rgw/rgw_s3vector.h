@@ -19,7 +19,32 @@ namespace rgw::sal {
 class Driver;
 }
 
+class CephContext;
+
 namespace rgw::s3vector {
+
+// Backend type for S3 Vector storage
+enum class BackendType {
+  LOCAL,  // Local filesystem storage (default)
+  S3      // S3 storage backend (local RGW or external S3 service)
+};
+
+// Convert string to backend type
+inline BackendType string_to_backend_type(const std::string& str) {
+  if (str == "s3" || str == "S3") {
+    return BackendType::S3;
+  }
+  return BackendType::LOCAL; // default
+}
+
+// Get the backend type from configuration
+BackendType get_backend_type(CephContext* cct);
+
+// Get the database path for a vector bucket based on configuration
+std::string get_db_path(CephContext* cct, const std::string& vector_bucket_name);
+
+// Check if the backend is S3 (requires S3 bucket creation)
+bool is_s3_backend(CephContext* cct);
 
 enum class DistanceMetric {
   UNKNOWN,
