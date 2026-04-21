@@ -570,6 +570,31 @@ options:
   services:
   - rgw
   with_legacy: true
+- name: rgw_restore_max_worker
+  type: int
+  level: advanced
+  desc: Number of RestoreWorker threads that will be run in parallel
+  long_desc: Number of RestoreWorker threads that will run in parallel--used to permit
+    multiple bucket/index shards to be processed simultaneously for cloud restore operations.
+  fmt_desc: This option specifies the number of restore worker threads to run in parallel,
+    thereby processing restore entries from multiple shards simultaneously.
+  default: 3
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_restore_max_wp_worker
+  type: int
+  level: advanced
+  desc: Number of workpool coroutines per RestoreWorker
+  long_desc: Number of coroutines in per-RestoreWorker workpools--used to accelerate
+    processing of restore entries within each shard by yielding during I/O operations.
+  fmt_desc: This option specifies the number of coroutines in each restore worker's
+    work pool. This option can help accelerate processing restore entries by allowing
+    concurrent operations.
+  default: 128
+  services:
+  - rgw
+  with_legacy: true
 - name: rgw_mp_lock_max_time
   type: int
   level: advanced

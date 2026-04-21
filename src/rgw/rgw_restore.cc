@@ -13,7 +13,10 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/variant.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/spawn.hpp>
 
+#include "common/async/spawn_throttle.h"
 #include "include/scope_guard.h"
 #include "include/function2.hpp"
 #include "common/Clock.h" // for ceph_clock_now()
@@ -230,25 +233,33 @@ bool Restore::going_down()
 
 void Restore::start_processor()
 {
-  worker = std::make_unique<Restore::RestoreWorker>(this, cct, this);
-  worker->create("rgw_restore");
+  auto maxw = cct->_conf->rgw_restore_max_worker;
+  workers.reserve(maxw);
+  for (int ix = 0; ix < maxw; ++ix) {
+    auto worker = std::make_unique<Restore::RestoreWorker>(this, cct, this, ix);
+    worker->create((std::string{"rgw_restore_"} + std::to_string(ix)).c_str());
+    workers.emplace_back(std::move(worker));
+  }
+  ldpp_dout(this, 10) << "Started " << maxw << " restore worker threads" << dendl;
 }
 
 void Restore::stop_processor()
 {
   down_flag = true;
-  if (worker) {
+  for (auto& worker : workers) {
     worker->stop();
     worker->join();
   }
-  worker.reset(nullptr);
+  workers.clear();
 }
 
 void Restore::wake_worker()
 {
-  if (worker) {
-    std::lock_guard lock(worker->lock);
-    worker->cond.notify_one();
+  for (auto& worker : workers) {
+    if (worker) {
+      std::lock_guard<std::mutex> lock(worker->lock);
+      worker->cond.notify_one();
+    }
   }
 }
 
@@ -303,8 +314,8 @@ int Restore::process(RestoreWorker* worker, optional_yield y)
   const int start = ceph::util::generate_random_number(0, max_objs - 1);
   for (int i = 0; i < max_objs; i++) {
     int index = (i + start) % max_objs;
-    int ret = process(index, max_secs, y);
-    if (ret < 0)
+    int ret = process(index, max_secs, worker, y);
+    if (ret < 0 && ret != -EBUSY)
       return ret;
   }
   return 0;
@@ -323,20 +334,51 @@ struct RestoreLockAdapter {
   }
 };
 
-/* 
+/*
  * Given an index, fetch a list of restore entries to process. After each
  * iteration, trim the list to the last marker read.
  *
  * While processing the entries, if any of their restore operation is still in
  * progress, such entries are added back to the list.
- */ 
-int Restore::process(int index, int max_secs, optional_yield y)
+ *
+ * This version spawns a coroutine for process_shard() so it can use spawn_throttle
+ * for concurrent operations within the shard.
+ */
+int Restore::process(int index, int max_secs, RestoreWorker* worker, optional_yield y)
 {
-  ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": process entered index="	
+  ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": process entered index="
+		      << index << ", max_secs=" << max_secs
+		      << ", worker=" << worker->get_ix() << dendl;
+
+  int ret = 0;
+
+  // Spawn a coroutine for process_shard() so it can use spawn_throttle
+  // for concurrent operations
+  boost::asio::io_context context;
+  boost::asio::spawn(context,
+      [this, index, max_secs, worker, &ret] (boost::asio::yield_context yield) {
+        ret = process_shard(index, max_secs, worker, yield);
+      },
+      [] (std::exception_ptr eptr) {
+        if (eptr) std::rethrow_exception(eptr);
+      });
+  context.run();
+
+  return ret;
+}
+
+/*
+ * Coroutine-based shard processing with spawn_throttle for concurrent entry processing.
+ */
+int Restore::process_shard(int index, int max_secs, RestoreWorker* worker,
+                           boost::asio::yield_context yield)
+{
+  ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": process_shard entered index="
 		      << index << ", max_secs=" << max_secs << dendl;
 
-  /* list used to gather still IN_PROGRESS */
+  /* list used to gather still IN_PROGRESS entries */
   std::vector<RestoreEntry> r_entries;
+  std::mutex r_entries_lock;  // protect r_entries for concurrent access
 
   std::unique_ptr<rgw::sal::RestoreSerializer> serializer =
   			sal_restore->get_serializer(std::string(restore_index_lock_name),
@@ -354,27 +396,39 @@ int Restore::process(int index, int max_secs, optional_yield y)
 
   end += max_secs;
   const ceph::timespan time = std::chrono::seconds(max_secs);
-  int ret = serializer->try_lock(this, time, y);
+  int ret = serializer->try_lock(this, time, yield);
   if (ret == -EBUSY || ret == -EEXIST) {
-    /* already locked by another lc processor */
-    ldpp_dout(this, 0) << __PRETTY_FUNCTION__ << ": failed to acquire lock on "	 
+    /* already locked by another restore processor */
+    ldpp_dout(this, 0) << __PRETTY_FUNCTION__ << ": failed to acquire lock on "
 		       << obj_names[index] << dendl;
     return -EBUSY;
   }
   if (ret < 0)
     return 0;
 
-  auto lock_adapter = RestoreLockAdapter{*serializer, this, y};
+  auto lock_adapter = RestoreLockAdapter{*serializer, this, yield};
   std::unique_lock<RestoreLockAdapter> lock(lock_adapter, std::adopt_lock);
   std::string marker;
   std::string next_marker;
   bool truncated = false;
 
+  // Use spawn_throttle for concurrent entry processing within this shard
+  size_t wp_limit = cct->_conf.get_val<int64_t>("rgw_restore_max_wp_worker");
+  auto workpool = ceph::async::spawn_throttle{yield, wp_limit};
+  auto workpool_guard = make_scope_guard(
+    [&workpool] {
+      workpool.wait();
+    }
+  );
+
+  std::atomic<int> last_error{0};
+  std::atomic<bool> should_stop{false};
+
   do {
     int max = 100;
     std::vector<RestoreEntry> entries;
 
-    ret = sal_restore->list(this, y, index, marker, &next_marker, max, entries, &truncated);
+    ret = sal_restore->list(this, yield, index, marker, &next_marker, max, entries, &truncated);
     ldpp_dout(this, 20) << __PRETTY_FUNCTION__ <<
       ": list on shard:" << obj_names[index] << " returned:" << ret <<
       ", entries.size=" << entries.size() << ", truncated=" << truncated <<
@@ -390,49 +444,68 @@ int Restore::process(int index, int max_secs, optional_yield y)
     }
 
     marker = next_marker;
-    std::vector<RestoreEntry>::iterator iter;
-    for (iter = entries.begin(); iter != entries.end(); ++iter) {
-      RestoreEntry entry = *iter;
 
-      ret = process_restore_entry(entry, y);
-
-      if (!ret && entry.status == rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress) {
-      	 r_entries.push_back(entry);
-         ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": re-pushing entry: '" << entry
-		 	 << "' on shard:"
-  	  	         << obj_names[index] << dendl;	 
+    // Spawn coroutines for each entry to process concurrently
+    for (auto& entry : entries) {
+      if (should_stop.load() || going_down()) {
+        break;
       }
 
-      // Skip the entry of object/bucket which no longer exists
-      if (ret < 0 && (ret != -ENOENT))
-        goto done;
+      workpool.spawn(
+        [this, entry_copy = entry, &r_entries, &r_entries_lock,
+         &last_error, &should_stop, index]
+        (boost::asio::yield_context entry_yield) mutable {
+          int entry_ret = process_restore_entry(entry_copy, entry_yield);
 
-      ///process all entries, trim and re-add
-      utime_t now = ceph_clock_now();
-      if (now >= end) {
-        goto done;
-      }
+          if (!entry_ret && entry_copy.status == rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress) {
+            std::lock_guard<std::mutex> guard(r_entries_lock);
+            r_entries.push_back(entry_copy);
+            ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": re-pushing entry: '" << entry_copy
+                                << "' on shard:" << obj_names[index] << dendl;
+          }
 
-      if (going_down()) {
- 	// leave early, even if tag isn't removed, it's ok since it
-	// will be picked up next time around
-	goto done;
-      }
+          // Skip the entry of object/bucket which no longer exists
+          if (entry_ret < 0 && (entry_ret != -ENOENT)) {
+            last_error.store(entry_ret);
+            should_stop.store(true);
+          }
+        });
     }
-  } while (truncated);
+
+    // Check time limit after processing batch
+    utime_t now = ceph_clock_now();
+    if (now >= end) {
+      goto done;
+    }
+
+    if (going_down()) {
+      // leave early, even if tag isn't removed, it's ok since it
+      // will be picked up next time around
+      goto done;
+    }
+  } while (truncated && !should_stop.load());
+
+  // Wait for all spawned coroutines to complete before trimming
+  workpool.wait();
+
+  if (last_error.load() < 0) {
+    ret = last_error.load();
+    goto done;
+  }
 
   ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": trimming till marker: '" << marker
 		 	 << "' on shard:"
-  	  	         << obj_names[index] << dendl;    
-  ret = sal_restore->trim_entries(this, y, index, marker);
+  	  	         << obj_names[index] << dendl;
+  ret = sal_restore->trim_entries(this, yield, index, marker);
   if (ret < 0) {
-    ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: failed to trim entries on "	    	  	         << obj_names[index] << dendl;
+    ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: failed to trim entries on "
+                        << obj_names[index] << dendl;
   }
 
   if (!r_entries.empty()) {
-    ret = sal_restore->add_entries(this, y, index, r_entries);
+    ret = sal_restore->add_entries(this, yield, index, r_entries);
     if (ret < 0) {
-      ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: failed to add entries on "    
+      ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: failed to add entries on "
   	  	           << obj_names[index] << dendl;
     }
   }
@@ -583,6 +656,13 @@ done:
   }
 
   return ret;
+}
+
+// Coroutine-based version of process_restore_entry using boost::asio::yield_context
+int Restore::process_restore_entry(RestoreEntry& entry, boost::asio::yield_context yield)
+{
+  // Wrap the yield_context as optional_yield and delegate to the main implementation
+  return process_restore_entry(entry, optional_yield{yield});
 }
 
 time_t Restore::thread_stop_at()

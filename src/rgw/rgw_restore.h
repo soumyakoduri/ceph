@@ -24,6 +24,9 @@
 
 #include <atomic>
 #include <tuple>
+#include <mutex>
+
+#include <boost/asio/spawn.hpp>
 
 #define HASH_PRIME 7877
 #define MAX_ID_LEN 255
@@ -81,19 +84,27 @@ class Restore : public DoutPrefixProvider {
     const DoutPrefixProvider *dpp;
     CephContext *cct;
     rgw::restore::Restore *restore;
-    ceph::mutex lock = ceph::make_mutex("RestoreWorker");
-    ceph::condition_variable cond;
+    int ix;  // worker index
+    std::mutex lock;
+    std::condition_variable cond;
 
   public:
 
     using lock_guard = std::lock_guard<std::mutex>;
     using unique_lock = std::unique_lock<std::mutex>;
 
-    RestoreWorker(const DoutPrefixProvider* _dpp, CephContext *_cct, rgw::restore::Restore *_restore) : dpp(_dpp), cct(_cct), restore(_restore) {}
+    RestoreWorker(const DoutPrefixProvider* _dpp, CephContext *_cct,
+                  rgw::restore::Restore *_restore, int _ix)
+      : dpp(_dpp), cct(_cct), restore(_restore), ix(_ix) {}
+
     rgw::restore::Restore* get_restore() { return restore; }
+
     std::string thr_name() {
-      return std::string{"restore_thrd: "}; // + std::to_string(ix);
+      return std::string{"restore_thrd: "} + std::to_string(ix);
     }
+
+    int get_ix() const { return ix; }
+
     void *entry() override;
     void stop();
 
@@ -101,7 +112,7 @@ class Restore : public DoutPrefixProvider {
     friend class RGWRados;
   }; // RestoreWorker
 
-  std::unique_ptr<Restore::RestoreWorker> worker;
+  std::vector<std::unique_ptr<Restore::RestoreWorker>> workers;
 
 public:
   ~Restore() {
@@ -130,9 +141,15 @@ public:
 
   int process(RestoreWorker* worker, optional_yield y);
   int choose_oid(const rgw::restore::RestoreEntry& e);
-  int process(int index, int max_secs, optional_yield y);
+  int process(int index, int max_secs, RestoreWorker* worker, optional_yield y);
   int process_restore_entry(rgw::restore::RestoreEntry& entry, optional_yield y);
   time_t thread_stop_at();
+
+  // Coroutine-based processing with yield context for workpool
+  int process_shard(int index, int max_secs, RestoreWorker* worker,
+                    boost::asio::yield_context yield);
+  int process_restore_entry(rgw::restore::RestoreEntry& entry,
+                            boost::asio::yield_context yield);
 
   /** Set the restore status for the given object */
   int set_cloud_restore_status(const DoutPrefixProvider* dpp, rgw::sal::Object* pobj,
