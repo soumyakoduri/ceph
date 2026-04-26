@@ -23,7 +23,7 @@ lance-core = { version = "0.39", default-features = false }
 object_store = "0.12"
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 async-trait = "0.1"
 futures = "0.3"
 
@@ -48,3 +48,4 @@ mock-sal = []
 
 [dev-dependencies]
 tokio-test = "0.4"
+lazy_static = "1.4"

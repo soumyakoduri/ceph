@@ -1014,6 +1014,7 @@ dependencies = [
  "lance-core",
  "lance-io",
  "lancedb",
+ "lazy_static",
  "libc",
  "object_store",
  "pkg-config",
