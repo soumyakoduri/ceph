@@ -10,21 +10,43 @@
  * SPDX-FileCopyrightText: Copyright The Ceph Authors
  *
  * This file implements C wrapper functions for RGW SAL that are called
- * by the ceph-lancedb-rgw Rust crate via FFI.
+ * by Rust crates via FFI.
  */
 
-#include "rgw_sal_lancedb_wrapper.h"
+#include "rgw_sal_wrapper.h"
 #include "rgw/rgw_sal.h"
 #include "rgw/rgw_bucket.h"
+#include "rgw/rgw_req_context.h"
+#include "rgw/rgw_obj_types.h"
+#include "rgw/rgw_compression_types.h"
 #include "common/dout.h"
 #include "common/errno.h"
+#include "global/global_context.h"
 
 #include <cstring>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #define dout_subsys ceph_subsys_rgw
+
+// Simple callback to collect data into a bufferlist
+class BufferlistDataCB : public RGWGetDataCB {
+    bufferlist& bl_;
+public:
+    explicit BufferlistDataCB(bufferlist& bl) : bl_(bl) {}
+
+    int handle_data(bufferlist& bl, off_t bl_ofs, off_t bl_len) override {
+        // Append the relevant portion of the data using iterator
+        // This correctly handles fragmented bufferlists
+        if (bl_len > 0 && bl.length() > 0) {
+            bl.begin(bl_ofs).copy(bl_len, bl_);
+        }
+        return 0;
+    }
+};
 
 // Helper to get DoutPrefixProvider
 static inline const DoutPrefixProvider* get_dpp(const void* dpp) {
@@ -50,7 +72,7 @@ static int get_bucket(
     rgw_bucket bucket_id;
     bucket_id.name = bucket_name;
 
-    int ret = driver->get_bucket(dpp, nullptr, bucket_id, &bucket_out, null_yield);
+    int ret = driver->load_bucket(dpp, bucket_id, &bucket_out, null_yield);
     if (ret < 0) {
         return ret;
     }
@@ -100,11 +122,12 @@ int rgw_put_object(
         }
 
         // Create writer
+        ACLOwner owner;
         std::unique_ptr<rgw::sal::Writer> writer = driver->get_atomic_writer(
             dpp,
             null_yield,
             obj.get(),
-            nullptr,  // owner
+            owner,    // owner (empty ACLOwner)
             nullptr,  // ptail_placement_rule
             0,        // olh_epoch
             ""        // unique_tag
@@ -129,8 +152,14 @@ int rgw_put_object(
             return ret;
         }
 
+        // Flush any buffered data by calling process() with empty bufferlist
+        // This is required by the writer protocol (see rgw_op.cc)
+        ret = writer->process(bufferlist(), len);
+        if (ret < 0) {
+            return ret;
+        }
+
         // Complete write
-        bufferlist empty_bl;
         rgw::sal::Attrs attrs;
         if (content_type && strlen(content_type) > 0) {
             bufferlist ct_bl;
@@ -139,6 +168,7 @@ int rgw_put_object(
         }
 
         ceph::real_time mtime = ceph::real_clock::now();
+        req_context rctx{dpp, null_yield, nullptr};
 
         ret = writer->complete(
             len,        // accounted_size
@@ -146,13 +176,15 @@ int rgw_put_object(
             &mtime,     // mtime
             mtime,      // set_mtime
             attrs,      // attrs
+            std::nullopt,  // cksum
             ceph::real_time(),  // delete_at
             nullptr,    // if_match
             nullptr,    // if_nomatch
             nullptr,    // user_data
             nullptr,    // zones_trace
             nullptr,    // pcanceled
-            null_yield
+            rctx,       // req_context
+            0           // flags
         );
 
         return ret;
@@ -199,19 +231,18 @@ int rgw_get_object(
             return -ENOMEM;
         }
 
-        // Get object state
-        RGWObjState* state = nullptr;
-        ret = obj->get_obj_state(dpp, &state, null_yield);
+        // Load object state
+        ret = obj->load_obj_state(dpp, null_yield);
         if (ret < 0) {
             return ret;
         }
 
-        if (!state->exists) {
+        if (!obj->exists()) {
             return -ENOENT;
         }
 
         // Calculate actual read length
-        uint64_t obj_size = state->size;
+        uint64_t obj_size = obj->get_size();
         uint64_t read_len = length;
 
         if (length == UINT64_MAX || offset + length > obj_size) {
@@ -243,9 +274,11 @@ int rgw_get_object(
             return ret;
         }
 
-        // Read data
+        // Use the synchronous read() method which reads directly into a bufferlist
+        // read() takes (ofs, end, bl, yield, dpp) - end is inclusive
         bufferlist bl;
-        ret = read_op->read(offset, read_len, bl, null_yield, dpp);
+        int64_t end_ofs = offset + read_len - 1;
+        ret = read_op->read(offset, end_ofs, bl, null_yield, dpp);
         if (ret < 0) {
             free(buffer->data);
             buffer->data = nullptr;
@@ -257,7 +290,9 @@ int rgw_get_object(
         if (actual_len > read_len) {
             actual_len = read_len;
         }
-        memcpy(buffer->data, bl.c_str(), actual_len);
+        if (actual_len > 0) {
+            memcpy(buffer->data, bl.c_str(), actual_len);
+        }
         buffer->len = actual_len;
 
         return 0;
@@ -357,30 +392,32 @@ int rgw_head_object(
             return -ENOMEM;
         }
 
-        // Get object state
-        RGWObjState* state = nullptr;
-        ret = obj->get_obj_state(dpp, &state, null_yield);
+        // Load object state
+        ret = obj->load_obj_state(dpp, null_yield);
         if (ret < 0) {
             return ret;
         }
 
-        if (!state->exists) {
+        if (!obj->exists()) {
             return -ENOENT;
         }
 
         // Fill metadata
-        meta->size = state->size;
-        meta->last_modified = ceph::real_clock::to_time_t(state->mtime);
+        meta->size = obj->get_size();
+        meta->last_modified = ceph::real_clock::to_time_t(obj->get_mtime());
+
+        // Get attributes
+        const rgw::sal::Attrs& attrs = obj->get_attrs();
 
         // Get ETag from attributes
-        auto etag_iter = state->attrset.find(RGW_ATTR_ETAG);
-        if (etag_iter != state->attrset.end()) {
+        auto etag_iter = attrs.find(RGW_ATTR_ETAG);
+        if (etag_iter != attrs.end()) {
             meta->etag = strdup_safe(etag_iter->second.to_str());
         }
 
         // Get content type from attributes
-        auto ct_iter = state->attrset.find(RGW_ATTR_CONTENT_TYPE);
-        if (ct_iter != state->attrset.end()) {
+        auto ct_iter = attrs.find(RGW_ATTR_CONTENT_TYPE);
+        if (ct_iter != attrs.end()) {
             meta->content_type = strdup_safe(ct_iter->second.to_str());
         }
 
@@ -521,36 +558,40 @@ int rgw_copy_object(
         }
 
         // Copy object
-        RGWObjManifest* manifest = nullptr;
+        ACLOwner owner;
+        rgw_user remote_user;
+        rgw_zone_id source_zone;
+        rgw_placement_rule dest_placement;
         rgw::sal::Attrs attrs;
 
         ret = src_obj->copy_object(
-            nullptr,        // user
-            nullptr,        // info
-            nullptr,        // zone_group
-            nullptr,        // dest_placement
-            dst_bucket.get(),
+            owner,
+            remote_user,
+            nullptr,        // req_info
+            source_zone,
             dst_obj.get(),
+            dst_bucket.get(),
             src_bucket.get(),
-            src_obj.get(),
-            nullptr,        // dest_bucket_info
-            nullptr,        // src_bucket_info
-            ceph::real_time(),  // src_mtime
+            dest_placement,
+            nullptr,        // src_mtime
+            nullptr,        // mtime
             nullptr,        // mod_ptr
             nullptr,        // unmod_ptr
             false,          // high_precision_time
             nullptr,        // if_match
             nullptr,        // if_nomatch
-            ATTRSMOD_NONE,
+            rgw::sal::ATTRSMOD_NONE,
             false,          // copy_if_newer
             attrs,
             RGWObjCategory::Main,
             0,              // olh_epoch
-            ceph::real_time(),  // delete_at
+            boost::none,    // delete_at
             nullptr,        // version_id
             nullptr,        // tag
             nullptr,        // etag
-            nullptr,        // petag
+            nullptr,        // progress_cb
+            nullptr,        // progress_data
+            nullptr,        // dp_factory
             dpp,
             null_yield
         );
@@ -648,8 +689,9 @@ int rgw_init_multipart(
 
         ACLOwner owner;
         rgw_placement_rule placement;
+        rgw::sal::Attrs attrs;
 
-        ret = upload->init(dpp, null_yield, nullptr, owner, placement, nullptr);
+        ret = upload->init(dpp, null_yield, owner, placement, attrs);
         if (ret < 0) {
             return ret;
         }
@@ -709,14 +751,15 @@ int rgw_multipart_put_part(
         }
 
         // Get writer for part
+        ACLOwner owner;
         std::unique_ptr<rgw::sal::Writer> writer = upload->get_writer(
             dpp,
             null_yield,
-            nullptr,  // head_obj
-            nullptr,  // owner
+            nullptr,  // obj
+            owner,    // owner
             nullptr,  // ptail_placement_rule
             part_num,
-            ""        // unique_tag
+            std::to_string(part_num)  // part_num_str
         );
 
         if (!writer) {
@@ -738,10 +781,16 @@ int rgw_multipart_put_part(
             return ret;
         }
 
+        // Flush any buffered data by calling process() with empty bufferlist
+        ret = writer->process(bufferlist(), len);
+        if (ret < 0) {
+            return ret;
+        }
+
         // Complete write
-        bufferlist empty_bl;
         rgw::sal::Attrs attrs;
         ceph::real_time mtime = ceph::real_clock::now();
+        req_context rctx{dpp, null_yield, nullptr};
 
         ret = writer->complete(
             len,        // accounted_size
@@ -749,13 +798,15 @@ int rgw_multipart_put_part(
             &mtime,
             mtime,
             attrs,
+            std::nullopt,  // cksum
             ceph::real_time(),  // delete_at
             nullptr,    // if_match
             nullptr,    // if_nomatch
             nullptr,    // user_data
             nullptr,    // zones_trace
             nullptr,    // pcanceled
-            null_yield
+            rctx,       // req_context
+            0           // flags
         );
 
         if (ret < 0) {
@@ -808,30 +859,43 @@ int rgw_multipart_complete(
             return -ENOMEM;
         }
 
-        // Build parts list
-        std::list<rgw_obj_key> remove_objs;
-        bool compressed = false;
+        // Build parts list from provided etags
+        std::map<int, std::string> part_etags;
+        for (size_t i = 0; i < count; i++) {
+            if (etags[i]) {
+                part_etags[static_cast<int>(i + 1)] = etags[i];
+            }
+        }
 
+        std::list<rgw_obj_index_key> remove_objs;
+        uint64_t accounted_size = 0;
+        bool compressed = false;
         RGWCompressionInfo cs_info;
         off_t ofs = 0;
-        uint64_t accounted_size = 0;
-        std::string etag;
+        std::string tag;
+        ACLOwner owner;
+        rgw::sal::MultipartUpload::prefix_map_t processed_prefixes;
+
+        // Get target object
+        std::unique_ptr<rgw::sal::Object> target_obj = bucket->get_object(rgw_obj_key(key));
 
         ret = upload->complete(
             dpp,
             null_yield,
-            nullptr,    // cs_info
-            nullptr,    // ofs
-            etag,
-            nullptr,    // mtime
-            0,          // set_mtime
-            rgw::sal::Attrs(),
-            ceph::real_time(),  // delete_at
-            nullptr,    // if_match
-            nullptr,    // if_nomatch
-            nullptr,    // user_data
-            nullptr,    // zones_trace
-            nullptr     // pcanceled
+            g_ceph_context,  // cct
+            part_etags,
+            remove_objs,
+            accounted_size,
+            compressed,
+            cs_info,
+            ofs,
+            tag,
+            owner,
+            0,               // olh_epoch
+            target_obj.get(),
+            processed_prefixes,
+            nullptr,         // if_match
+            nullptr          // if_nomatch
         );
 
         return ret;

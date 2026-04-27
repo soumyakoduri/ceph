@@ -9,12 +9,12 @@
  * SPDX-License-Identifier: Apache-2.0
  * SPDX-FileCopyrightText: Copyright The Ceph Authors
  *
- * Unit tests for rgw_sal_lancedb_wrapper.h/cc
+ * Unit tests for rgw_sal_wrapper.h/cc
  * Tests the C wrapper functions that interface with the Rust ceph-lancedb-rgw crate.
  */
 
 #include "gtest/gtest.h"
-#include "rgw/rgw_sal_lancedb_wrapper.h"
+#include "rgw/rgw_sal_wrapper.h"
 #include <cstring>
 #include <vector>
 

@@ -10,12 +10,12 @@
  * SPDX-FileCopyrightText: Copyright The Ceph Authors
  *
  * This file provides C wrapper functions for RGW SAL that are called
- * by the ceph-lancedb-rgw Rust crate. These functions match the FFI
- * bindings defined in ceph-lancedb-rgw/src/ffi.rs.
+ * by Rust crates via FFI. These functions match the FFI bindings
+ * defined in the corresponding Rust code.
  */
 
-#ifndef RGW_SAL_LANCEDB_WRAPPER_H
-#define RGW_SAL_LANCEDB_WRAPPER_H
+#ifndef RGW_SAL_WRAPPER_H
+#define RGW_SAL_WRAPPER_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -337,4 +337,4 @@ void rgw_free_list_result(RGWListResult* result);
 }
 #endif
 
-#endif /* RGW_SAL_LANCEDB_WRAPPER_H */
+#endif /* RGW_SAL_WRAPPER_H */

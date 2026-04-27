@@ -148,7 +148,9 @@ set(librgw_common_srcs
   rgw_bucket_sync.cc
   rgw_rest_restore.cc
   rgw_rest_s3vector.cc
-  rgw_s3vector.cc)
+  rgw_s3vector.cc
+  rgw_rest_sal_wrapper_test.cc
+  rgw_sal_wrapper.cc)
 
 list(APPEND librgw_common_srcs
   driver/immutable_config/store.cc

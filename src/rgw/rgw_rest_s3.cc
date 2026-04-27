@@ -40,6 +40,7 @@
 #include "rgw_rest_s3website.h"
 #include "rgw_rest_pubsub.h"
 #include "rgw_rest_s3vector.h"
+#include "rgw_rest_sal_wrapper_test.h"
 #include "rgw_auth_s3.h"
 #include "rgw_acl.h"
 #include "rgw_policy_s3.h"
@@ -5456,6 +5457,11 @@ RGWOp *RGWHandler_REST_Bucket_S3::op_delete()
 
 RGWOp *RGWHandler_REST_Bucket_S3::op_post()
 {
+  // SAL wrapper test endpoint
+  if (s->info.args.exists("sal-wrapper-test")) {
+    return new RGWSALWrapperTest();
+  }
+
   if (s->info.args.exists("delete")) {
     return new RGWDeleteMultiObj_ObjStore_S3;
   }
