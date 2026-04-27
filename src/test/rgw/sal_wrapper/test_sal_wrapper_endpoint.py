@@ -18,8 +18,8 @@ import requests
 
 # Configuration
 ENDPOINT = 'http://localhost:8000'
-ACCESS_KEY = 'testkey'
-SECRET_KEY = 'testsecret'
+ACCESS_KEY = '0555b35654ad1656d804'
+SECRET_KEY = 'h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=='
 BUCKET = 'sal-wrapper-test'
 REGION = 'us-east-1'
 SERVICE = 's3'

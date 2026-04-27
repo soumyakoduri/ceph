@@ -4697,15 +4697,6 @@ options:
   services:
   - rgw
   with_legacy: true
-- name: rgw_s3vector_s3_bucket
-  type: str
-  level: advanced
-  desc: S3 bucket name for S3 Vector backend
-  long_desc: The S3 bucket name where LanceDB databases will be stored when
-    rgw_s3vector_backend is set to "s3". Each vector bucket will be created as a prefix within this bucket.
-  services:
-  - rgw
-  with_legacy: true
 - name: rgw_s3vector_s3_allow_http
   type: bool
   level: advanced
@@ -4713,6 +4704,16 @@ options:
   long_desc: When set to true, allows connecting to S3 endpoints using HTTP instead of HTTPS.
     This is useful for local development with MinIO or other S3-compatible services.
   default: false
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_s3vector_s3_bucket
+  type: str
+  level: advanced
+  desc: S3 bucket name for S3 Vector backend storage
+  long_desc: The S3 bucket name to use for storing vector data when rgw_s3vector_backend
+    is set to "s3". All vector buckets will store their data within this bucket using
+    the vector bucket name as a prefix. This bucket must be created beforehand.
   services:
   - rgw
   with_legacy: true
