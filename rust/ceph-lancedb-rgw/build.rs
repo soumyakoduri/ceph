@@ -7,38 +7,20 @@
 //! with real SAL support (i.e., without the mock-sal feature).
 
 fn main() {
-    // When not using mock-sal, we need to link to Ceph libraries
+    // When not using mock-sal, the Rust functions (rgw_put_object, etc.) are
+    // resolved at runtime. The symbols are provided by rgw_sal_wrapper.cc which
+    // is compiled into libradosgw. Since this crate produces a shared library
+    // (.so) that's loaded into the same process as radosgw, the symbols will
+    // be available at runtime.
+    //
+    // We do NOT statically link here to avoid circular dependency:
+    // - ceph-lancedb-rgw depends on rgw_sal_wrapper symbols
+    // - rgw_common depends on libceph_lancedb_rgw.so
+    //
+    // By using runtime symbol resolution (undefined symbols in .so are allowed),
+    // both can be built independently and linked together in radosgw.
     #[cfg(not(feature = "mock-sal"))]
     {
-        // Try to find Ceph build directory from environment
-        if let Ok(ceph_build_dir) = std::env::var("CEPH_BUILD_DIR") {
-            println!("cargo:rustc-link-search=native={}/lib", ceph_build_dir);
-            println!("cargo:rustc-link-search=native={}/lib/rgw", ceph_build_dir);
-        }
-
-        // Try to find Ceph source directory for header includes
-        if let Ok(ceph_src_dir) = std::env::var("CEPH_SRC_DIR") {
-            println!("cargo:include={}/src", ceph_src_dir);
-        }
-
-        // Link to the SAL LanceDB wrapper library
-        // This is built from ceph/src/rgw/rgw_sal_lancedb_wrapper.cc
-        println!("cargo:rustc-link-lib=static=rgw_sal_lancedb_wrapper");
-
-        // Link to required RGW libraries
-        println!("cargo:rustc-link-lib=static=rgw_common");
-        println!("cargo:rustc-link-lib=static=rgw_sal");
-
-        // Link to Ceph common libraries
-        println!("cargo:rustc-link-lib=static=ceph-common");
-        println!("cargo:rustc-link-lib=static=common");
-
-        // Note: RADOS is not directly linked - SAL abstracts over backends
-        // and handles RADOS internally through rgw_sal if the backend uses it
-
-        // Link to standard C++ library
-        println!("cargo:rustc-link-lib=dylib=stdc++");
-
         // Re-run if environment changes
         println!("cargo:rerun-if-env-changed=CEPH_BUILD_DIR");
         println!("cargo:rerun-if-env-changed=CEPH_SRC_DIR");

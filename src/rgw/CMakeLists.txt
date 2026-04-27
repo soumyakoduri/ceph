@@ -413,6 +413,21 @@ if(WITH_RADOSGW_LANCEDB)
   add_dependencies(rgw_common lancedb-c)
   install(FILES ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb.so
     DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+  # Create imported library target for libceph_lancedb_rgw (SAL wrapper)
+  add_library(ceph_lancedb_rgw SHARED IMPORTED)
+  set_target_properties(ceph_lancedb_rgw PROPERTIES
+    IMPORTED_LOCATION ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
+    IMPORTED_NO_SONAME TRUE
+  )
+  target_link_libraries(rgw_common PUBLIC ceph_lancedb_rgw)
+  target_include_directories(rgw_common PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/rgw
+    ${CMAKE_SOURCE_DIR}/rust/ceph-lancedb-rgw/include
+  )
+  add_dependencies(rgw_common ceph-lancedb-rgw)
+  install(FILES ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
+    DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 
 set(rgw_a_srcs

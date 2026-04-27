@@ -1207,6 +1207,33 @@ if(WITH_RADOSGW)
                       ${CMAKE_CURRENT_SOURCE_DIR}/lancedb-c/include/lancedb.h
                       ${CMAKE_BINARY_DIR}/src/include/lancedb.h
     )
+
+    # Build ceph-lancedb-rgw Rust crate (SAL wrapper for LanceDB)
+    set(CEPH_LANCEDB_RGW_SOURCE_DIR "${CMAKE_SOURCE_DIR}/rust/ceph-lancedb-rgw")
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+      set(CEPH_LANCEDB_RGW_CARGO_PROFILE "debug")
+      set(CEPH_LANCEDB_RGW_CARGO_FLAG "")
+    else()
+      set(CEPH_LANCEDB_RGW_CARGO_PROFILE "release")
+      set(CEPH_LANCEDB_RGW_CARGO_FLAG "--release")
+    endif()
+    set(CEPH_LANCEDB_RGW_TARGET_DIR "${CEPH_LANCEDB_RGW_SOURCE_DIR}/target/${CEPH_LANCEDB_RGW_CARGO_PROFILE}")
+
+    ExternalProject_Add(ceph-lancedb-rgw
+      SOURCE_DIR ${CEPH_LANCEDB_RGW_SOURCE_DIR}
+      CONFIGURE_COMMAND ""
+      BUILD_COMMAND cargo build ${CEPH_LANCEDB_RGW_CARGO_FLAG}
+      BUILD_IN_SOURCE TRUE
+      BUILD_ALWAYS OFF
+      BUILD_BYPRODUCTS ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
+      INSTALL_COMMAND ${CMAKE_COMMAND} -E copy
+                      ${CEPH_LANCEDB_RGW_TARGET_DIR}/libceph_lancedb_rgw.so
+                      ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
+                  COMMAND ${CMAKE_COMMAND} -E copy
+                      ${CEPH_LANCEDB_RGW_SOURCE_DIR}/include/ceph_lancedb_rgw.h
+                      ${CMAKE_BINARY_DIR}/src/include/ceph_lancedb_rgw.h
+    )
+    add_dependencies(ceph-lancedb-rgw lancedb-c)
   endif(WITH_RADOSGW_LANCEDB)
   add_subdirectory(rgw)
 endif(WITH_RADOSGW)
