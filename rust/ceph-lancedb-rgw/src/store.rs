@@ -62,6 +62,8 @@ pub struct RGWObjectStore {
     dpp: *const c_void,
     /// Bucket name for this store instance
     bucket: String,
+    /// Path prefix to prepend to all object keys (e.g., "vector-bucket-name/")
+    prefix: String,
 }
 
 // Safety: RGW driver and dpp are designed to be thread-safe in Ceph.
@@ -75,11 +77,18 @@ impl RGWObjectStore {
     /// # Safety
     /// The caller must ensure that `driver` and `dpp` pointers remain valid
     /// for the lifetime of this store and any clones.
-    pub unsafe fn new(driver: *mut c_void, dpp: *const c_void, bucket: &str) -> Self {
+    ///
+    /// # Arguments
+    /// * `driver` - Pointer to RGW driver
+    /// * `dpp` - Pointer to DoutPrefixProvider
+    /// * `bucket` - Bucket name
+    /// * `prefix` - Path prefix to prepend to all keys (e.g., "vector-bucket/")
+    pub unsafe fn new(driver: *mut c_void, dpp: *const c_void, bucket: &str, prefix: &str) -> Self {
         Self {
             driver,
             dpp,
             bucket: bucket.to_string(),
+            prefix: prefix.to_string(),
         }
     }
 
@@ -89,11 +98,19 @@ impl RGWObjectStore {
     }
 
     /// Convert path to C string key
+    /// Note: We do NOT prepend the prefix here because the Lance ObjectStore wrapper
+    /// already handles the base path from the URL. Our inner store receives paths
+    /// that are already relative to the bucket root (including any path prefix).
     fn path_to_cstr(&self, path: &Path) -> ObjectStoreResult<CString> {
         CString::new(path.to_string()).map_err(|e| object_store::Error::Generic {
             store: "rgw",
             source: Box::new(e),
         })
+    }
+
+    /// Get the prefix for this store
+    pub fn prefix(&self) -> &str {
+        &self.prefix
     }
 
     /// Convert errno to ObjectStore error
@@ -121,7 +138,11 @@ impl RGWObjectStore {
 
 impl std::fmt::Display for RGWObjectStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RGWObjectStore(bucket={})", self.bucket)
+        if self.prefix.is_empty() {
+            write!(f, "RGWObjectStore(bucket={})", self.bucket)
+        } else {
+            write!(f, "RGWObjectStore(bucket={}, prefix={})", self.bucket, self.prefix)
+        }
     }
 }
 
@@ -129,6 +150,7 @@ impl std::fmt::Debug for RGWObjectStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RGWObjectStore")
             .field("bucket", &self.bucket)
+            .field("prefix", &self.prefix)
             .field("driver", &format!("{:p}", self.driver))
             .finish()
     }
@@ -313,6 +335,8 @@ impl ObjectStore for RGWObjectStore {
     }
 
     /// List objects with the given prefix
+    /// Note: We do NOT prepend our store prefix here because the Lance ObjectStore wrapper
+    /// already handles the base path from the URL. Paths are passed through as-is.
     fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, ObjectStoreResult<ObjectMeta>> {
         let prefix_str = prefix.map(|p| p.to_string()).unwrap_or_default();
         let bucket = self.bucket.clone();
@@ -375,6 +399,8 @@ impl ObjectStore for RGWObjectStore {
                                 .iter()
                                 .map(|e| {
                                     let key = CStr::from_ptr(e.key).to_string_lossy().into_owned();
+                                    // Keys are returned as-is - no prefix stripping needed
+                                    // since Lance ObjectStore wrapper handles base path
                                     Ok(ObjectMeta {
                                         location: Path::from(key),
                                         last_modified: chrono::DateTime::from_timestamp(
@@ -414,8 +440,26 @@ impl ObjectStore for RGWObjectStore {
     }
 
     /// List objects with delimiter support
+    /// Note: We do NOT prepend our store prefix here because the Lance ObjectStore wrapper
+    /// already handles the base path from the URL. Paths are passed through as-is.
+    /// However, we DO ensure the prefix ends with '/' when listing directory contents,
+    /// because Lance passes the path without trailing slash but S3 listing semantics
+    /// require it to list contents INSIDE a directory rather than the directory itself.
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> ObjectStoreResult<ListResult> {
-        let prefix_str = prefix.map(|p| p.to_string()).unwrap_or_default();
+        let prefix_str = match prefix {
+            Some(p) => {
+                let s = p.to_string();
+                // Ensure prefix ends with '/' to list directory contents
+                if s.is_empty() {
+                    s
+                } else if s.ends_with('/') {
+                    s
+                } else {
+                    format!("{}/", s)
+                }
+            }
+            None => String::new(),
+        };
         let bucket_c = self.bucket_cstr();
         let prefix_c = CString::new(prefix_str.as_str()).unwrap();
         let marker_c = CString::new("").unwrap();
@@ -461,36 +505,38 @@ impl ObjectStore for RGWObjectStore {
 
         let owned_result = OwnedRGWListResult(result);
 
-        let objects: Vec<ObjectMeta> = unsafe {
-            if owned_result.0.entries.is_null() || owned_result.0.count == 0 {
-                vec![]
-            } else {
+        let mut objects: Vec<ObjectMeta> = Vec::new();
+        let mut common_prefixes: Vec<Path> = Vec::new();
+
+        unsafe {
+            if !owned_result.0.entries.is_null() && owned_result.0.count > 0 {
                 let slice =
                     std::slice::from_raw_parts(owned_result.0.entries, owned_result.0.count);
-                slice
-                    .iter()
-                    .filter_map(|e| {
-                        let key = CStr::from_ptr(e.key).to_string_lossy().into_owned();
-                        // Skip "directories" (keys ending with delimiter)
-                        if key.ends_with('/') {
-                            None
-                        } else {
-                            Some(ObjectMeta {
-                                location: Path::from(key),
-                                last_modified: chrono::DateTime::from_timestamp(e.last_modified, 0)
-                                    .unwrap_or_else(chrono::Utc::now),
-                                size: e.size,
-                                e_tag: None,
-                                version: None,
-                            })
+                for e in slice.iter() {
+                    let key = CStr::from_ptr(e.key).to_string_lossy().into_owned();
+                    // Keys are returned as-is - no prefix stripping needed
+                    // since Lance ObjectStore wrapper handles base path
+
+                    // Entries ending with '/' are common prefixes (directories)
+                    if key.ends_with('/') {
+                        // Remove trailing slash for Path
+                        let prefix_path = key.trim_end_matches('/');
+                        if !prefix_path.is_empty() {
+                            common_prefixes.push(Path::from(prefix_path));
                         }
-                    })
-                    .collect()
+                    } else if !key.is_empty() {
+                        objects.push(ObjectMeta {
+                            location: Path::from(key.clone()),
+                            last_modified: chrono::DateTime::from_timestamp(e.last_modified, 0)
+                                .unwrap_or_else(chrono::Utc::now),
+                            size: e.size,
+                            e_tag: None,
+                            version: None,
+                        });
+                    }
+                }
             }
         };
-
-        // TODO: Extract common prefixes from result
-        let common_prefixes = vec![];
 
         Ok(ListResult {
             common_prefixes,
@@ -834,15 +880,37 @@ mod tests {
 
     #[test]
     fn test_store_display() {
-        let store = unsafe { RGWObjectStore::new(std::ptr::null_mut(), std::ptr::null(), "test-bucket") };
+        let store = unsafe { RGWObjectStore::new(std::ptr::null_mut(), std::ptr::null(), "test-bucket", "") };
         assert_eq!(format!("{}", store), "RGWObjectStore(bucket=test-bucket)");
     }
 
     #[test]
+    fn test_store_display_with_prefix() {
+        let store = unsafe { RGWObjectStore::new(std::ptr::null_mut(), std::ptr::null(), "test-bucket", "my-prefix/") };
+        assert_eq!(format!("{}", store), "RGWObjectStore(bucket=test-bucket, prefix=my-prefix/)");
+    }
+
+    #[test]
     fn test_store_debug() {
-        let store = unsafe { RGWObjectStore::new(std::ptr::null_mut(), std::ptr::null(), "test-bucket") };
+        let store = unsafe { RGWObjectStore::new(std::ptr::null_mut(), std::ptr::null(), "test-bucket", "") };
         let debug_str = format!("{:?}", store);
         assert!(debug_str.contains("RGWObjectStore"));
         assert!(debug_str.contains("test-bucket"));
+    }
+
+    #[test]
+    fn test_path_to_cstr_with_prefix() {
+        let store = unsafe { RGWObjectStore::new(std::ptr::null_mut(), std::ptr::null(), "test-bucket", "my-prefix/") };
+        let path = Path::from("some/path.txt");
+        let cstr = store.path_to_cstr(&path).unwrap();
+        assert_eq!(cstr.to_str().unwrap(), "my-prefix/some/path.txt");
+    }
+
+    #[test]
+    fn test_path_to_cstr_without_prefix() {
+        let store = unsafe { RGWObjectStore::new(std::ptr::null_mut(), std::ptr::null(), "test-bucket", "") };
+        let path = Path::from("some/path.txt");
+        let cstr = store.path_to_cstr(&path).unwrap();
+        assert_eq!(cstr.to_str().unwrap(), "some/path.txt");
     }
 }

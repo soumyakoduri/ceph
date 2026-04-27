@@ -97,9 +97,13 @@ lazy_static::lazy_static! {
 
 /// Create a test store with mock pointers
 fn create_test_store(bucket: &str) -> RGWObjectStore {
+    create_test_store_with_prefix(bucket, "")
+}
+
+fn create_test_store_with_prefix(bucket: &str, prefix: &str) -> RGWObjectStore {
     let fake_driver = 0x1000usize as *mut c_void;
     let fake_dpp = 0x2000usize as *const c_void;
-    unsafe { RGWObjectStore::new(fake_driver, fake_dpp, bucket) }
+    unsafe { RGWObjectStore::new(fake_driver, fake_dpp, bucket, prefix) }
 }
 
 //=============================================================================

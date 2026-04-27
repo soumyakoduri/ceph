@@ -469,6 +469,12 @@ int rgw_list_objects(
         params.list_versions = false;
         params.allow_unordered = false;
 
+        ldpp_dout(dpp, 10) << "rgw_list_objects: bucket=" << bucket_name
+                          << " prefix='" << params.prefix << "'"
+                          << " delimiter='" << params.delim << "'"
+                          << " marker='" << params.marker.name << "'"
+                          << " max_keys=" << max_keys << dendl;
+
         rgw::sal::Bucket::ListResults results;
 
         // Execute list
@@ -477,26 +483,51 @@ int rgw_list_objects(
             return ret;
         }
 
-        // Allocate entries
-        size_t count = results.objs.size();
-        if (count > 0) {
+        // Allocate entries - include both objects and common prefixes
+        // Common prefixes are directories when using a delimiter
+        size_t obj_count = results.objs.size();
+        size_t prefix_count = results.common_prefixes.size();
+        size_t total_count = obj_count + prefix_count;
+
+        ldpp_dout(dpp, 10) << "rgw_list_objects: found " << obj_count << " objects, "
+                          << prefix_count << " common_prefixes, "
+                          << "is_truncated=" << results.is_truncated << dendl;
+        for (const auto& obj : results.objs) {
+            ldpp_dout(dpp, 15) << "  object: " << obj.key.name << dendl;
+        }
+        for (const auto& [pname, _] : results.common_prefixes) {
+            ldpp_dout(dpp, 15) << "  prefix: " << pname << dendl;
+        }
+
+        if (total_count > 0) {
             result->entries = static_cast<RGWListEntry*>(
-                calloc(count, sizeof(RGWListEntry))
+                calloc(total_count, sizeof(RGWListEntry))
             );
             if (!result->entries) {
                 return -ENOMEM;
             }
 
-            for (size_t i = 0; i < count; i++) {
-                const auto& obj = results.objs[i];
+            // Add objects
+            size_t i = 0;
+            for (const auto& obj : results.objs) {
                 result->entries[i].key = strdup_safe(obj.key.name);
                 result->entries[i].size = obj.meta.size;
                 result->entries[i].last_modified =
                     ceph::real_clock::to_time_t(obj.meta.mtime);
+                i++;
+            }
+
+            // Add common prefixes (directories) - these have size 0 and current time
+            // common_prefixes is a map<string, bool>
+            for (const auto& [prefix_name, _] : results.common_prefixes) {
+                result->entries[i].key = strdup_safe(prefix_name);
+                result->entries[i].size = 0;
+                result->entries[i].last_modified = time(nullptr);
+                i++;
             }
         }
 
-        result->count = count;
+        result->count = total_count;
         result->is_truncated = results.is_truncated ? 1 : 0;
 
         if (results.is_truncated && !results.next_marker.name.empty()) {

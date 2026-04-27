@@ -63,8 +63,9 @@ impl RGWStoreProvider {
 impl lance_io::object_store::ObjectStoreProvider for RGWStoreProvider {
     /// Create a new ObjectStore for the given URL
     ///
-    /// Extracts the bucket name from the URL and creates an RGWObjectStore
-    /// configured to operate on that bucket.
+    /// Extracts the bucket name and path prefix from the URL and creates an
+    /// RGWObjectStore configured to operate on that bucket with the path prefix.
+    /// For example: s3://bucket/vector-bucket/ -> bucket="bucket", prefix="vector-bucket/"
     async fn new_store(&self, base_path: Url, params: &ObjectStoreParams) -> Result<ObjectStore> {
         // Extract bucket from URL: s3://bucket/path -> bucket
         let bucket = match base_path.host_str() {
@@ -77,8 +78,22 @@ impl lance_io::object_store::ObjectStoreProvider for RGWStoreProvider {
             }
         };
 
-        // Create RGW ObjectStore
-        let inner = Arc::new(unsafe { RGWObjectStore::new(self.driver, self.dpp, bucket) });
+        // Extract path prefix from URL: s3://bucket/path/ -> "path/"
+        // The path includes the leading slash, so we trim it
+        let path = base_path.path().trim_start_matches('/');
+        // Ensure the prefix ends with a slash if non-empty (for proper path concatenation)
+        let prefix = if path.is_empty() {
+            String::new()
+        } else if path.ends_with('/') {
+            path.to_string()
+        } else {
+            format!("{}/", path)
+        };
+
+        // Create RGW ObjectStore with bucket and prefix
+        // Note: The prefix is stored but not used for path manipulation
+        // since Lance's ObjectStore wrapper handles the base path
+        let inner = Arc::new(unsafe { RGWObjectStore::new(self.driver, self.dpp, bucket, &prefix) });
 
         // Build ObjectStore with the inner RGW store
         // Use sensible defaults for optional parameters
