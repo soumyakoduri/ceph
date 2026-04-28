@@ -13,10 +13,10 @@ The SAL wrapper test endpoint is already integrated into RGW. The following file
 - `src/rgw/rgw_sal_wrapper.h` - SAL wrapper C API header
 - `src/rgw/rgw_sal_wrapper.cc` - SAL wrapper C API implementation
 
-Build RGW:
+Build RGW (requires `WITH_RADOSGW_LANCEDB=ON`):
 
 ```bash
-cd /home/skoduri/Documents/IBM/lancedb/lancedb-code/ceph/build
+cd <ceph-source>/build
 ninja radosgw
 ```
 
@@ -73,7 +73,6 @@ curl -X POST "http://localhost:8000/sal-wrapper-test?sal-wrapper-test" \
 | `put_get` | Test put and get operations with data verification |
 | `list` | Test listing objects with prefix |
 | `copy` | Test object copy operations |
-| `multipart` | Test multipart upload operations |
 
 When running `all`, the following individual tests are executed:
 - `put_get_basic` - Put/get with data verification
@@ -155,12 +154,12 @@ The script:
 3. Queries the endpoint info (GET request)
 4. Runs all SAL wrapper tests (POST request with presigned URL auth)
 
-To configure the script, edit the variables at the top of `test_sal_wrapper_endpoint.py`:
-```python
-ENDPOINT = 'http://localhost:8000'
-ACCESS_KEY = '0555b35654ad1656d804'   # Use your RGW user's access key
-SECRET_KEY = 'h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=='
-BUCKET = 'sal-wrapper-test'
+Configure via environment variables or edit `test_sal_wrapper_endpoint.py`:
+```bash
+export RGW_ENDPOINT='http://localhost:8000'
+export AWS_ACCESS_KEY_ID='your-access-key'
+export AWS_SECRET_ACCESS_KEY='your-secret-key'
+export RGW_TEST_BUCKET='sal-wrapper-test'
 ```
 
 ## Testing the Rust Crate with Real SAL
@@ -168,9 +167,9 @@ BUCKET = 'sal-wrapper-test'
 Once the test endpoint works, you can also test the Rust crate:
 
 ```bash
-# Set environment
-export CEPH_BUILD_DIR=/home/skoduri/Documents/IBM/lancedb/lancedb-code/ceph/build
-export CEPH_SRC_DIR=/home/skoduri/Documents/IBM/lancedb/lancedb-code/ceph
+# Set environment (adjust paths for your setup)
+export CEPH_BUILD_DIR=<ceph-source>/build
+export CEPH_SRC_DIR=<ceph-source>
 
 # Build without mock-sal (requires linking to real Ceph libs)
 cd rust/ceph-lancedb-rgw

@@ -29,7 +29,7 @@ namespace {
 
 // Test configuration from request
 struct TestConfig {
-  std::string test_type = "all";  // "all", "put_get", "list", "copy", "multipart"
+  std::string test_type = "all";  // "all", "put_get", "list", "copy"
   int iterations = 10;
   size_t object_size = 1024;
 
@@ -586,16 +586,3 @@ void RGWSALWrapperTest::send_response() {
   rgw_flush_formatter_and_reset(s, s->formatter);
 }
 
-RGWOp* RGWHandler_REST_SALWrapperTest::op_post() {
-  return new RGWSALWrapperTest();
-}
-
-RGWOp* RGWHandler_REST_SALWrapperTest::op_get() {
-  return new RGWSALWrapperTestInfo();
-}
-
-RGWHandler_REST* make_sal_wrapper_test_handler(rgw::sal::Driver* driver,
-                                            req_state* s,
-                                            const rgw::auth::StrategyRegistry& auth_registry) {
-  return new RGWHandler_REST_SALWrapperTest();
-}

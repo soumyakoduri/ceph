@@ -17,7 +17,7 @@
  *
  *   Request body (JSON):
  *   {
- *     "test": "all" | "put_get" | "list" | "copy" | "multipart",
+ *     "test": "all" | "put_get" | "list" | "copy",
  *     "iterations": 10,
  *     "object_size": 1024
  *   }
@@ -58,20 +58,3 @@ public:
   void send_response() override;
 };
 
-class RGWHandler_REST_SALWrapperTest : public RGWHandler_REST {
-public:
-  RGWHandler_REST_SALWrapperTest() = default;
-  ~RGWHandler_REST_SALWrapperTest() override = default;
-
-  int init_permissions(RGWOp* op, optional_yield y) override { return 0; }
-  int read_permissions(RGWOp* op, optional_yield y) override { return 0; }
-  int authorize(const DoutPrefixProvider* dpp, optional_yield y) override { return 0; }
-  int postauth_init(optional_yield y) override { return 0; }
-
-  RGWOp* op_post() override;
-  RGWOp* op_get() override;
-};
-
-RGWHandler_REST* make_sal_wrapper_test_handler(rgw::sal::Driver* driver,
-                                                req_state* s,
-                                                const rgw::auth::StrategyRegistry& auth_registry);

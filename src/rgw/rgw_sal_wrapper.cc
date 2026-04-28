@@ -21,6 +21,7 @@
 #include "rgw/rgw_compression_types.h"
 #include "common/dout.h"
 #include "common/errno.h"
+#include "common/ceph_crypto.h"
 #include "global/global_context.h"
 
 #include <cstring>
@@ -844,10 +845,23 @@ int rgw_multipart_put_part(
             return ret;
         }
 
-        // TODO: Get actual ETag from writer
-        // For now, return a placeholder
-        strncpy(etag, "placeholder_etag", etag_len - 1);
-        etag[etag_len - 1] = '\0';
+        // Compute MD5 hash of data for ETag
+        // ETag for a multipart part is the MD5 of the part content
+        unsigned char md5_digest[CEPH_CRYPTO_MD5_DIGESTSIZE];
+        ceph::crypto::MD5 md5_hash;
+        // Allow MD5 in FIPS mode for non-cryptographic purposes (ETag is not security-critical)
+        md5_hash.SetFlags(EVP_MD_CTX_FLAG_NON_FIPS_ALLOW);
+        md5_hash.Update(data, len);
+        md5_hash.Final(md5_digest);
+
+        // Convert to hex string
+        char md5_hex[CEPH_CRYPTO_MD5_DIGESTSIZE * 2 + 1];
+        buf_to_hex(md5_digest, CEPH_CRYPTO_MD5_DIGESTSIZE, md5_hex);
+
+        // Copy to output buffer
+        size_t copy_len = std::min(etag_len - 1, sizeof(md5_hex) - 1);
+        strncpy(etag, md5_hex, copy_len);
+        etag[copy_len] = '\0';
 
         return 0;
 
