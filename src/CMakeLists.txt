@@ -1182,59 +1182,6 @@ if(WITH_RADOSGW)
 
   add_subdirectory(crypto)
   add_subdirectory(libkmip)
-  if(WITH_RADOSGW_LANCEDB)
-    include(ExternalProject)
-
-    set(LANCEDB_BUILD_DIR "${CMAKE_BINARY_DIR}/src/lancedb-c-prefix/src/lancedb-c-build")
-    # Determine the Rust target directory based on build type
-    set(LANCEDB_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/lancedb-c-prefix/src/lancedb-c-build")
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-      set(LANCEDB_RUST_TARGET_DIR "${LANCEDB_BUILD_DIR}/target/debug")
-    else()
-      set(LANCEDB_RUST_TARGET_DIR "${LANCEDB_BUILD_DIR}/target/release")
-    endif()
-
-    ExternalProject_Add(lancedb-c
-      SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lancedb-c
-      CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-                 -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/lancedb-c-install
-      BUILD_ALWAYS OFF
-      BUILD_BYPRODUCTS ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb.so
-      INSTALL_COMMAND ${CMAKE_COMMAND} -E copy
-                      ${LANCEDB_RUST_TARGET_DIR}/liblancedb.so
-                      ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb.so
-                  COMMAND ${CMAKE_COMMAND} -E copy
-                      ${CMAKE_CURRENT_SOURCE_DIR}/lancedb-c/include/lancedb.h
-                      ${CMAKE_BINARY_DIR}/src/include/lancedb.h
-    )
-
-    # Build ceph-lancedb-rgw Rust crate (SAL wrapper for LanceDB)
-    set(CEPH_LANCEDB_RGW_SOURCE_DIR "${CMAKE_SOURCE_DIR}/rust/ceph-lancedb-rgw")
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-      set(CEPH_LANCEDB_RGW_CARGO_PROFILE "debug")
-      set(CEPH_LANCEDB_RGW_CARGO_FLAG "")
-    else()
-      set(CEPH_LANCEDB_RGW_CARGO_PROFILE "release")
-      set(CEPH_LANCEDB_RGW_CARGO_FLAG "--release")
-    endif()
-    set(CEPH_LANCEDB_RGW_TARGET_DIR "${CEPH_LANCEDB_RGW_SOURCE_DIR}/target/${CEPH_LANCEDB_RGW_CARGO_PROFILE}")
-
-    ExternalProject_Add(ceph-lancedb-rgw
-      SOURCE_DIR ${CEPH_LANCEDB_RGW_SOURCE_DIR}
-      CONFIGURE_COMMAND ""
-      BUILD_COMMAND cargo build ${CEPH_LANCEDB_RGW_CARGO_FLAG}
-      BUILD_IN_SOURCE TRUE
-      BUILD_ALWAYS OFF
-      BUILD_BYPRODUCTS ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
-      INSTALL_COMMAND ${CMAKE_COMMAND} -E copy
-                      ${CEPH_LANCEDB_RGW_TARGET_DIR}/libceph_lancedb_rgw.so
-                      ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
-                  COMMAND ${CMAKE_COMMAND} -E copy
-                      ${CEPH_LANCEDB_RGW_SOURCE_DIR}/include/ceph_lancedb_rgw.h
-                      ${CMAKE_BINARY_DIR}/src/include/ceph_lancedb_rgw.h
-    )
-    add_dependencies(ceph-lancedb-rgw lancedb-c)
-  endif(WITH_RADOSGW_LANCEDB)
   add_subdirectory(rgw)
 endif(WITH_RADOSGW)
 

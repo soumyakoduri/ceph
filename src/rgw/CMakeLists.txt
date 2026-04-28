@@ -22,6 +22,60 @@ if(CEPH_HAVE_ISAL)
   add_definitions(-DSPDK_CONFIG_ISAL)
 endif()
 
+# Build LanceDB external projects (must be before rgw_common target)
+if(WITH_RADOSGW_LANCEDB)
+  include(ExternalProject)
+
+  # Build lancedb-c (LanceDB C bindings)
+  set(LANCEDB_BUILD_DIR "${CMAKE_BINARY_DIR}/src/rgw/lancedb-c-prefix/src/lancedb-c-build")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(LANCEDB_RUST_TARGET_DIR "${LANCEDB_BUILD_DIR}/target/debug")
+  else()
+    set(LANCEDB_RUST_TARGET_DIR "${LANCEDB_BUILD_DIR}/target/release")
+  endif()
+
+  ExternalProject_Add(lancedb-c
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/src/lancedb-c
+    CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+               -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/lancedb-c-install
+    BUILD_ALWAYS OFF
+    BUILD_BYPRODUCTS ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb.so
+    INSTALL_COMMAND ${CMAKE_COMMAND} -E copy
+                    ${LANCEDB_RUST_TARGET_DIR}/liblancedb.so
+                    ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb.so
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    ${CMAKE_SOURCE_DIR}/src/lancedb-c/include/lancedb.h
+                    ${CMAKE_BINARY_DIR}/src/include/lancedb.h
+  )
+
+  # Build ceph-lancedb-rgw Rust crate (SAL wrapper for LanceDB)
+  set(CEPH_LANCEDB_RGW_SOURCE_DIR "${CMAKE_SOURCE_DIR}/rust/ceph-lancedb-rgw")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CEPH_LANCEDB_RGW_CARGO_PROFILE "debug")
+    set(CEPH_LANCEDB_RGW_CARGO_FLAG "")
+  else()
+    set(CEPH_LANCEDB_RGW_CARGO_PROFILE "release")
+    set(CEPH_LANCEDB_RGW_CARGO_FLAG "--release")
+  endif()
+  set(CEPH_LANCEDB_RGW_TARGET_DIR "${CEPH_LANCEDB_RGW_SOURCE_DIR}/target/${CEPH_LANCEDB_RGW_CARGO_PROFILE}")
+
+  ExternalProject_Add(ceph-lancedb-rgw
+    SOURCE_DIR ${CEPH_LANCEDB_RGW_SOURCE_DIR}
+    CONFIGURE_COMMAND ""
+    BUILD_COMMAND cargo build ${CEPH_LANCEDB_RGW_CARGO_FLAG}
+    BUILD_IN_SOURCE TRUE
+    BUILD_ALWAYS OFF
+    BUILD_BYPRODUCTS ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
+    INSTALL_COMMAND ${CMAKE_COMMAND} -E copy
+                    ${CEPH_LANCEDB_RGW_TARGET_DIR}/libceph_lancedb_rgw.so
+                    ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    ${CEPH_LANCEDB_RGW_SOURCE_DIR}/include/ceph_lancedb_rgw.h
+                    ${CMAKE_BINARY_DIR}/src/include/ceph_lancedb_rgw.h
+  )
+  add_dependencies(ceph-lancedb-rgw lancedb-c)
+endif()
+
 function(gperf_generate input output)
   add_custom_command(
     OUTPUT ${output}
@@ -148,13 +202,17 @@ set(librgw_common_srcs
   rgw_bucket_sync.cc
   rgw_rest_restore.cc
   rgw_rest_s3vector.cc
-  rgw_s3vector.cc
-  rgw_rest_sal_wrapper_test.cc
-  rgw_sal_wrapper.cc)
+  rgw_s3vector.cc)
 
 list(APPEND librgw_common_srcs
   driver/immutable_config/store.cc
   driver/json_config/store.cc)
+
+if(WITH_RADOSGW_LANCEDB)
+  list(APPEND librgw_common_srcs
+    rgw_rest_sal_wrapper_test.cc
+    rgw_sal_wrapper.cc)
+endif()
 
 if(WITH_RADOSGW_RADOS)
   list(APPEND librgw_common_srcs
