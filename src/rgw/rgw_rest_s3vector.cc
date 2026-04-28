@@ -74,7 +74,7 @@ class RGWS3VectorCreateIndex : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::create_index(configuration, this, y);
+    op_ret = rgw::s3vector::create_index(configuration, driver, this, y);
   }
 
   void send_response() override {
@@ -180,7 +180,8 @@ class RGWS3VectorCreateVectorBucket : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to create s3vector bucket " << bucket_id << ". error: " << ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::create_vector_bucket(configuration, this, y);
+
+    op_ret = rgw::s3vector::create_vector_bucket(configuration, driver, this, y);
     if (op_ret < 0) {
       ldpp_dout(this, 1) << "ERROR: failed to initialize s3vector bucket " << bucket_id << ". error: " << ret << dendl;
       return;
@@ -263,7 +264,7 @@ class RGWS3VectorDeleteIndex : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_index(configuration, this, y);
+    op_ret = rgw::s3vector::delete_index(configuration, driver, this, y);
   }
 };
 
@@ -323,7 +324,7 @@ class RGWS3VectorDeleteVectorBucket : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to delete s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_vector_bucket(configuration, this, y);
+    op_ret = rgw::s3vector::delete_vector_bucket(configuration, driver, this, y);
   }
 };
 
@@ -356,7 +357,7 @@ class RGWS3VectorDeleteVectorBucketPolicy : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_vector_bucket_policy(configuration, this, y);
+    op_ret = rgw::s3vector::delete_vector_bucket_policy(configuration, driver, this, y);
   }
 };
 
@@ -389,7 +390,7 @@ class RGWS3VectorPutVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::put_vectors(configuration, this, y);
+    op_ret = rgw::s3vector::put_vectors(configuration, driver, this, y);
   }
 };
 
@@ -423,7 +424,7 @@ class RGWS3VectorGetVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::get_vectors(configuration, this, y, reply);
+    op_ret = rgw::s3vector::get_vectors(configuration, driver, this, y, reply);
   }
 
   void send_response() override {
@@ -475,7 +476,7 @@ class RGWS3VectorListVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::list_vectors(configuration, this, y, reply);
+    op_ret = rgw::s3vector::list_vectors(configuration, driver, this, y, reply);
   }
 
   void send_response() override {
@@ -683,7 +684,7 @@ class RGWS3VectorGetIndex : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::get_index(configuration, s->zonegroup_name, s->account_name, this, y, reply);
+    op_ret = rgw::s3vector::get_index(configuration, s->zonegroup_name, s->account_name, driver, this, y, reply);
   }
 
   void send_response() override {
@@ -742,7 +743,7 @@ class RGWS3VectorListIndexes : public RGWS3VectorBase {
         configuration.vector_bucket_name
       );
     }
-    op_ret = rgw::s3vector::list_indexes(configuration, this, y, reply);
+    op_ret = rgw::s3vector::list_indexes(configuration, driver, this, y, reply);
   }
 
   void send_response() override {
@@ -859,7 +860,7 @@ class RGWS3VectorDeleteVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_vectors(configuration, this, y);
+    op_ret = rgw::s3vector::delete_vectors(configuration, driver, this, y);
   }
 };
 
@@ -893,7 +894,7 @@ class RGWS3VectorQueryVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::query_vectors(configuration, this, y, reply);
+    op_ret = rgw::s3vector::query_vectors(configuration, driver, this, y, reply);
   }
 
   void send_response() override {
