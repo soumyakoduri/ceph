@@ -43,9 +43,17 @@ BackendType get_backend_type(CephContext* cct);
 // Check if the backend is S3 (requires S3 bucket creation)
 bool is_s3_backend(CephContext* cct);
 
-// Check if using local RGW backend (endpoint contains "localhost" or is empty)
+// Check if using SAL backend (no external S3 endpoint configured)
 // When true, use SAL wrapper instead of direct S3 connection
-bool is_local_rgw_backend(CephContext* cct);
+bool is_sal_backend(CephContext* cct);
+
+// S3 credentials for external S3 backend connections
+// Used when rgw_s3vector_s3_endpoint is configured
+// Note: region is read from config (rgw_s3vector_s3_region), not from user
+struct S3Credentials {
+  std::string access_key;
+  std::string secret_key;
+};
 
 enum class DistanceMetric {
   UNKNOWN,
@@ -500,20 +508,20 @@ inline rgw::ARN vector_bucket_arn(const std::string& zonegroup, const std::strin
     );
 }
 
-int create_index(const create_index_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y);
-int create_vector_bucket(const create_vector_bucket_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y);
-int delete_index(const delete_index_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y);
-int delete_vector_bucket(const delete_vector_bucket_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y);
-int delete_vector_bucket_policy(const delete_vector_bucket_policy_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y);
-int put_vectors(const put_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y);
-int get_vectors(const get_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, get_vectors_reply_t& reply);
-int list_vectors(const list_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, list_vectors_reply_t& reply);
-int get_index(const get_index_t& configuration, const std::string& region, const std::string& account, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, get_index_reply_t& reply);
-int list_indexes(const list_indexes_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, list_indexes_reply_t& reply);
-int put_vector_bucket_policy(const put_vector_bucket_policy_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y);
-int get_vector_bucket_policy(const get_vector_bucket_policy_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y);
-int delete_vectors(const delete_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y);
-int query_vectors(const query_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, query_vectors_reply_t& reply);
+int create_index(const create_index_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, const S3Credentials* user_creds = nullptr);
+int create_vector_bucket(const create_vector_bucket_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, const S3Credentials* user_creds = nullptr);
+int delete_index(const delete_index_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, const S3Credentials* user_creds = nullptr);
+int delete_vector_bucket(const delete_vector_bucket_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, const S3Credentials* user_creds = nullptr);
+int delete_vector_bucket_policy(const delete_vector_bucket_policy_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, const S3Credentials* user_creds = nullptr);
+int put_vectors(const put_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, const S3Credentials* user_creds = nullptr);
+int get_vectors(const get_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, get_vectors_reply_t& reply, const S3Credentials* user_creds = nullptr);
+int list_vectors(const list_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, list_vectors_reply_t& reply, const S3Credentials* user_creds = nullptr);
+int get_index(const get_index_t& configuration, const std::string& region, const std::string& account, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, get_index_reply_t& reply, const S3Credentials* user_creds = nullptr);
+int list_indexes(const list_indexes_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, list_indexes_reply_t& reply, const S3Credentials* user_creds = nullptr);
+int put_vector_bucket_policy(const put_vector_bucket_policy_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, const S3Credentials* user_creds = nullptr);
+int get_vector_bucket_policy(const get_vector_bucket_policy_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, const S3Credentials* user_creds = nullptr);
+int delete_vectors(const delete_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, const S3Credentials* user_creds = nullptr);
+int query_vectors(const query_vectors_t& configuration, rgw::sal::Driver* driver, DoutPrefixProvider* dpp, optional_yield y, query_vectors_reply_t& reply, const S3Credentials* user_creds = nullptr);
 
 }
 
