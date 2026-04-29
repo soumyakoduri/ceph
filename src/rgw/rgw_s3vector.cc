@@ -95,13 +95,9 @@ namespace rgw::s3vector {
 
     if (backend == "s3") {
       // S3 backend configuration
-      // Use configured S3 bucket with vector bucket name as prefix path
-      const std::string s3_bucket = conf.get_val<std::string>("rgw_s3vector_s3_bucket");
-      if (s3_bucket.empty()) {
-        ldpp_dout(dpp, 1) << "ERROR: s3vector rgw_s3vector_s3_bucket not configured" << dendl;
-        return nullptr;
-      }
-      uri = fmt::format("s3://{}/{}/", s3_bucket, vector_bucket_name);
+      // Use vector bucket name directly as the S3 bucket name
+      // A regular S3 bucket with the same name as the vector bucket must exist
+      uri = fmt::format("s3://{}/", vector_bucket_name);
       builder = lancedb_connect(uri.c_str());
       if (!builder) {
         ldpp_dout(dpp, 1) << "ERROR: s3vector failed to create connection builder for: " << uri << dendl;
