@@ -3550,10 +3550,20 @@ class JSONFormatter_PrettyZone : public JSONFormatter {
     }
   } zone_id_type_handler;
 
+  class TierS3Handler : public JSONEncodeFilter::Handler<RGWZoneGroupPlacementTierS3> {
+    void encode_json(const char *name, const void *pval, ceph::Formatter *f) const override {
+      auto tier = static_cast<const RGWZoneGroupPlacementTierS3 *>(pval);
+      f->open_object_section(name);
+      tier->dump_for_display(f);
+      f->close_section();
+    }
+  } tier_s3_type_handler;
+
   JSONEncodeFilter encode_filter;
 public:
   JSONFormatter_PrettyZone(bool pretty_format) : JSONFormatter(pretty_format) {
     encode_filter.register_type(&zone_id_type_handler);
+    encode_filter.register_type(&tier_s3_type_handler);
   }
 
   void *get_external_feature_handler(const std::string& feature) override {
@@ -4917,8 +4927,8 @@ int main(int argc, const char **argv)
 	  cerr << "failed to load period: " << cpp_strerror(-ret) << std::endl;
 	  return -ret;
 	}
-	encode_json("period", period, formatter.get());
-	formatter->flush(cout);
+	encode_json("period", period, zone_formatter.get());
+	zone_formatter->flush(cout);
       }
       break;
     case OPT::PERIOD_GET_CURRENT:
@@ -5712,8 +5722,8 @@ int main(int argc, const char **argv)
 	  return -ret;
 	}
 
-	encode_json("zonegroup", zonegroup, formatter.get());
-	formatter->flush(cout);
+	encode_json("zonegroup", zonegroup, zone_formatter.get());
+	zone_formatter->flush(cout);
       }
       break;
     case OPT::ZONEGROUP_LIST:
