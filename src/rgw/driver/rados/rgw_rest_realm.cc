@@ -3,6 +3,7 @@
 
 #include <optional>
 #include "common/errno.h"
+#include "common/ceph_json.h"
 #include "rgw_rest_realm.h"
 #include "rgw_rest_s3.h"
 #include "rgw_rest_config.h"
@@ -53,10 +54,37 @@ void RGWOp_Period_Base::send_response()
   flusher.flush();
 }
 
+// Helper formatter that masks tier secrets for display
+class JSONFormatter_MaskSecrets : public JSONFormatter {
+  class TierS3Handler : public JSONEncodeFilter::Handler<RGWZoneGroupPlacementTierS3> {
+    void encode_json(const char *name, const void *pval, ceph::Formatter *f) const override {
+      auto tier = static_cast<const RGWZoneGroupPlacementTierS3 *>(pval);
+      f->open_object_section(name);
+      tier->dump_for_display(f);
+      f->close_section();
+    }
+  } tier_s3_handler;
+
+  JSONEncodeFilter encode_filter;
+public:
+  JSONFormatter_MaskSecrets(bool pretty) : JSONFormatter(pretty) {
+    encode_filter.register_type(&tier_s3_handler);
+  }
+  void *get_external_feature_handler(const std::string& feature) override {
+    if (feature != "JSONEncodeFilter") {
+      return nullptr;
+    }
+    return &encode_filter;
+  }
+};
+
 // GET /admin/realm/period
 class RGWOp_Period_Get : public RGWOp_Period_Base {
+  bool mask_secrets = false;
+
  public:
   void execute(optional_yield y) override;
+  void send_response() override;
   int check_caps(const RGWUserCaps& caps) override {
     return caps.check_cap("zone", RGW_CAP_READ);
   }
@@ -73,10 +101,39 @@ void RGWOp_Period_Get::execute(optional_yield y)
   RESTArgs::get_string(s, "realm_id", realm_id, &realm_id);
   RESTArgs::get_string(s, "period_id", period_id, &period_id);
   RESTArgs::get_uint32(s, "epoch", 0, &epoch);
+  RESTArgs::get_bool(s, "mask_secrets", false, &mask_secrets);
 
   op_ret = s->penv.cfgstore->read_period(this, y, period_id, std::nullopt, period);
   if (op_ret < 0)
     ldpp_dout(this, 5) << "failed to read period" << dendl;
+}
+
+void RGWOp_Period_Get::send_response()
+{
+  set_req_state_err(s, op_ret, error_stream.str());
+  dump_errno(s);
+
+  if (op_ret < 0) {
+    if (!s->err.message.empty()) {
+      ldpp_dout(this, 4) << "Request failed with " << op_ret
+          << ": " << s->err.message << dendl;
+    }
+    end_header(s);
+    return;
+  }
+
+  if (mask_secrets) {
+    JSONFormatter_MaskSecrets jf(true);
+    encode_json("period", period, &jf);
+    end_header(s, NULL, "application/json", jf.get_len());
+    std::ostringstream oss;
+    jf.flush(oss);
+    s->cio->write(oss.str().c_str(), oss.str().length());
+  } else {
+    encode_json("period", period, s->formatter);
+    end_header(s, NULL, "application/json", s->formatter->get_len());
+    flusher.flush();
+  }
 }
 
 // POST /admin/realm/period
