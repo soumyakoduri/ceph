@@ -125,11 +125,13 @@ namespace rgw::s3vector {
       } else {
         // External S3 backend - use user credentials for access_key/secret_key
         // Region and endpoint are always read from config
+        // Note: In future, users may be able to pass bucket/credentials as part of
+        // vector operations (e.g., as attributes or tags)
         const std::string s3_endpoint = conf.get_val<std::string>("rgw_s3vector_s3_endpoint");
         const std::string s3_region = conf.get_val<std::string>("rgw_s3vector_s3_region");
         const bool s3_allow_http = conf.get_val<bool>("rgw_s3vector_s3_allow_http");
 
-        // Use user credentials if provided, otherwise fall back to config
+        // User credentials are required for external S3 backend
         std::string s3_access_key;
         std::string s3_secret_key;
 
@@ -138,10 +140,8 @@ namespace rgw::s3vector {
           s3_secret_key = user_creds->secret_key;
           ldpp_dout(dpp, 10) << "INFO: s3vector using user credentials for external S3 backend" << dendl;
         } else {
-          // Fall back to config options
-          s3_access_key = conf.get_val<std::string>("rgw_s3vector_s3_access_key");
-          s3_secret_key = conf.get_val<std::string>("rgw_s3vector_s3_secret_key");
-          ldpp_dout(dpp, 10) << "INFO: s3vector using config credentials for external S3 backend" << dendl;
+          ldpp_dout(dpp, -1) << "ERROR: s3vector external S3 backend without user credentials" << dendl;
+          return nullptr;
         }
 
         if (!s3_endpoint.empty()) {

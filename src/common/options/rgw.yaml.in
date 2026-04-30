@@ -4643,12 +4643,20 @@ options:
   - rgw_enable_usage_log
   with_legacy: true
 # S3 Vector (LanceDB) backend configuration
+# Note: When using "s3" backend:
+#   - The S3 bucket name is the same as the vector bucket name (a regular S3 bucket
+#     with the same name must exist)
+#   - Access key and secret key are read from the authenticated user's credentials
+#   - In future, users may be able to pass bucket/credentials as part of vector
+#     operations (e.g., as attributes or tags)
 - name: rgw_s3vector_backend
   type: str
   level: advanced
   desc: S3 Vector backend type
   long_desc: Specifies the storage backend for S3 Vector (LanceDB). Use "local" for
-    local filesystem storage or "s3" for S3-compatible object storage.
+    local filesystem storage or "s3" for S3-compatible object storage. When using
+    "s3" backend, the vector bucket name is used as the S3 bucket name directly, and
+    user credentials are used for authentication.
   default: local
   services:
   - rgw
@@ -4681,22 +4689,6 @@ options:
   services:
   - rgw
   with_legacy: true
-- name: rgw_s3vector_s3_access_key
-  type: str
-  level: advanced
-  desc: S3 access key for S3 Vector backend
-  long_desc: The AWS access key ID to use for S3 storage when rgw_s3vector_backend is set to "s3".
-  services:
-  - rgw
-  with_legacy: true
-- name: rgw_s3vector_s3_secret_key
-  type: str
-  level: advanced
-  desc: S3 secret key for S3 Vector backend
-  long_desc: The AWS secret access key to use for S3 storage when rgw_s3vector_backend is set to "s3".
-  services:
-  - rgw
-  with_legacy: true
 - name: rgw_s3vector_s3_allow_http
   type: bool
   level: advanced
@@ -4704,16 +4696,6 @@ options:
   long_desc: When set to true, allows connecting to S3 endpoints using HTTP instead of HTTPS.
     This is useful for local development with MinIO or other S3-compatible services.
   default: false
-  services:
-  - rgw
-  with_legacy: true
-- name: rgw_s3vector_s3_bucket
-  type: str
-  level: advanced
-  desc: S3 bucket name for S3 Vector backend storage
-  long_desc: The S3 bucket name to use for storing vector data when rgw_s3vector_backend
-    is set to "s3". All vector buckets will store their data within this bucket using
-    the vector bucket name as a prefix. This bucket must be created beforehand.
   services:
   - rgw
   with_legacy: true
