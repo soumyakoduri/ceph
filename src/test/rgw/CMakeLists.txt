@@ -449,3 +449,15 @@ target_link_libraries(unittest_rgw_async_utils ${rgw_libs} ${UNITTEST_LIBS})
 add_executable(unittest_rgw_tag test_rgw_tag.cc)
 add_ceph_unittest(unittest_rgw_tag)
 target_link_libraries(unittest_rgw_tag ${rgw_libs} ${UNITTEST_LIBS})
+
+# unittest_rgw_sal_wrapper - tests for SAL wrapper C API (LanceDB integration)
+if(WITH_RADOSGW_LANCEDB)
+  add_executable(unittest_rgw_sal_wrapper test_rgw_sal_wrapper.cc)
+  add_ceph_unittest(unittest_rgw_sal_wrapper)
+  target_include_directories(unittest_rgw_sal_wrapper
+    SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
+  target_link_libraries(unittest_rgw_sal_wrapper
+    rgw_common
+    ${rgw_libs}
+    ${UNITTEST_LIBS})
+endif()
