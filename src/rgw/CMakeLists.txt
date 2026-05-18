@@ -154,6 +154,12 @@ list(APPEND librgw_common_srcs
   driver/immutable_config/store.cc
   driver/json_config/store.cc)
 
+if(WITH_RADOSGW_LANCEDB)
+  list(APPEND librgw_common_srcs
+    rgw_rest_sal_wrapper_test.cc
+    rgw_sal_wrapper.cc)
+endif()
+
 if(WITH_RADOSGW_RADOS)
   list(APPEND librgw_common_srcs
           services/svc_bi_rados.cc
@@ -411,6 +417,24 @@ if(WITH_RADOSGW_LANCEDB)
   add_dependencies(rgw_common lancedb-c)
   install(FILES ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb.so
     DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+  # Create imported library target for libceph_lancedb_rgw (SAL wrapper)
+  add_library(ceph_lancedb_rgw SHARED IMPORTED)
+  set_target_properties(ceph_lancedb_rgw PROPERTIES
+    IMPORTED_LOCATION ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
+    IMPORTED_NO_SONAME TRUE
+  )
+  # Note: We do NOT link rgw_common -> ceph_lancedb_rgw here because it creates
+  # a circular dependency (ceph_lancedb_rgw needs rgw_sal_wrapper symbols from
+  # rgw_common). Instead, we link ceph_lancedb_rgw directly to executables
+  # AFTER rgw_common so the linker can resolve all symbols.
+  target_include_directories(rgw_common PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/rgw
+    ${CMAKE_SOURCE_DIR}/rust/ceph-lancedb-rgw/include
+  )
+  add_dependencies(rgw_common ceph-lancedb-rgw)
+  install(FILES ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libceph_lancedb_rgw.so
+    DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 
 set(rgw_a_srcs
@@ -535,6 +559,12 @@ target_link_libraries(radosgw PRIVATE
   kmip
   ${ALLOC_LIBS})
 
+# Link ceph_lancedb_rgw AFTER rgw_libs (which contains rgw_common) to resolve
+# circular dependency - ceph_lancedb_rgw needs symbols from rgw_common
+if(WITH_RADOSGW_LANCEDB)
+  target_link_libraries(radosgw PRIVATE ceph_lancedb_rgw)
+endif()
+
 install(TARGETS radosgw DESTINATION bin)
 
 set(radosgw_admin_srcs
@@ -566,6 +596,11 @@ endif()
 if(WITH_RADOSGW_ARROW_FLIGHT)
   target_link_libraries(radosgw-admin ${ARROW_LIBRARIES} ${ARROW_FLIGHT_LIBRARIES})
 endif(WITH_RADOSGW_ARROW_FLIGHT)
+
+# Link ceph_lancedb_rgw AFTER rgw_libs to resolve circular dependency
+if(WITH_RADOSGW_LANCEDB)
+  target_link_libraries(radosgw-admin ceph_lancedb_rgw)
+endif()
 
 if(WITH_RADOSGW_RADOS)
 install(TARGETS radosgw-admin DESTINATION bin)
