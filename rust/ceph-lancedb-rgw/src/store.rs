@@ -11,13 +11,14 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
 use object_store::{
-    path::Path, Attributes, GetOptions, GetRange, GetResult, GetResultPayload, ListResult,
-    MultipartUpload, ObjectMeta, ObjectStore, PutMultipartOptions, PutOptions, PutPayload, PutResult,
-    Result as ObjectStoreResult,
+    path::Path, Attributes, Error as ObjectStoreError, GetOptions, GetRange, GetResult,
+    GetResultPayload, ListResult, MultipartUpload, ObjectMeta, ObjectStore, PutMode,
+    PutMultipartOptions, PutOptions, PutPayload, PutResult, Result as ObjectStoreResult,
+    UpdateVersion,
 };
 use std::ffi::{CStr, CString};
 use std::ops::Range;
-use std::os::raw::c_void;
+use std::os::raw::{c_int, c_void};
 
 /// Wrapper to make raw pointers Send+Sync+Copy
 /// Safety: The RGW driver and dpp are designed to be thread-safe
@@ -195,12 +196,19 @@ impl ObjectStore for RGWObjectStore {
         self.put_opts(location, payload, PutOptions::default()).await
     }
 
-    /// Write bytes with options
+    /// Write bytes with options (supports conditional writes)
+    ///
+    /// Supports three modes:
+    /// - `PutMode::Overwrite` (default): Unconditional write, overwrites any existing object.
+    /// - `PutMode::Create`: Atomic create-if-not-exists. Returns `AlreadyExists` if the
+    ///   object already exists. Uses SAL's `if_nomatch="*"` precondition.
+    /// - `PutMode::Update(version)`: Compare-and-swap. Only writes if the existing object's
+    ///   ETag matches `version.e_tag`. Returns `Precondition` error otherwise.
     async fn put_opts(
         &self,
         location: &Path,
         payload: PutPayload,
-        _opts: PutOptions,
+        opts: PutOptions,
     ) -> ObjectStoreResult<PutResult> {
         let bucket = self.bucket_cstr();
         let key = self.path_to_cstr(location)?;
@@ -209,25 +217,107 @@ impl ObjectStore for RGWObjectStore {
         // Collect payload into contiguous bytes
         let bytes: Bytes = payload.into();
 
-        let result = unsafe {
-            ffi::rgw_put_object(
-                self.driver,
-                self.dpp,
-                bucket.as_ptr(),
-                key.as_ptr(),
-                bytes.as_ptr(),
-                bytes.len(),
-                content_type.as_ptr(),
-            )
-        };
+        match opts.mode {
+            PutMode::Overwrite => {
+                // Unconditional write - use the simple put API
+                let result = unsafe {
+                    ffi::rgw_put_object(
+                        self.driver,
+                        self.dpp,
+                        bucket.as_ptr(),
+                        key.as_ptr(),
+                        bytes.as_ptr(),
+                        bytes.len(),
+                        content_type.as_ptr(),
+                    )
+                };
 
-        if result == 0 {
-            Ok(PutResult {
-                e_tag: None,
-                version: None,
-            })
-        } else {
-            Err(self.errno_to_error(result, location, "put"))
+                if result == 0 {
+                    Ok(PutResult {
+                        e_tag: None,
+                        version: None,
+                    })
+                } else {
+                    Err(self.errno_to_error(result, location, "put"))
+                }
+            }
+            PutMode::Create => {
+                // Create-if-not-exists: use if_nomatch="*"
+                let if_nomatch = CString::new("*").unwrap();
+                let mut canceled: c_int = 0;
+
+                let result = unsafe {
+                    ffi::rgw_put_object_conditional(
+                        self.driver,
+                        self.dpp,
+                        bucket.as_ptr(),
+                        key.as_ptr(),
+                        bytes.as_ptr(),
+                        bytes.len(),
+                        content_type.as_ptr(),
+                        std::ptr::null(),       // if_match: not used
+                        if_nomatch.as_ptr(),     // if_nomatch: "*"
+                        &mut canceled,
+                    )
+                };
+
+                if result != 0 {
+                    return Err(self.errno_to_error(result, location, "put (create)"));
+                }
+                if canceled != 0 {
+                    return Err(ObjectStoreError::AlreadyExists {
+                        path: location.to_string(),
+                        source: "object already exists (conditional create failed)".into(),
+                    });
+                }
+                Ok(PutResult {
+                    e_tag: None,
+                    version: None,
+                })
+            }
+            PutMode::Update(UpdateVersion { e_tag, .. }) => {
+                // Compare-and-swap: only write if existing ETag matches
+                let etag_str = e_tag.ok_or_else(|| ObjectStoreError::Generic {
+                    store: "rgw",
+                    source: "PutMode::Update requires e_tag".into(),
+                })?;
+                let if_match = CString::new(etag_str.as_str()).map_err(|_| {
+                    ObjectStoreError::Generic {
+                        store: "rgw",
+                        source: "invalid etag string".into(),
+                    }
+                })?;
+                let mut canceled: c_int = 0;
+
+                let result = unsafe {
+                    ffi::rgw_put_object_conditional(
+                        self.driver,
+                        self.dpp,
+                        bucket.as_ptr(),
+                        key.as_ptr(),
+                        bytes.as_ptr(),
+                        bytes.len(),
+                        content_type.as_ptr(),
+                        if_match.as_ptr(),       // if_match: expected ETag
+                        std::ptr::null(),         // if_nomatch: not used
+                        &mut canceled,
+                    )
+                };
+
+                if result != 0 {
+                    return Err(self.errno_to_error(result, location, "put (update)"));
+                }
+                if canceled != 0 {
+                    return Err(ObjectStoreError::Precondition {
+                        path: location.to_string(),
+                        source: "object ETag does not match (conditional update failed)".into(),
+                    });
+                }
+                Ok(PutResult {
+                    e_tag: None,
+                    version: None,
+                })
+            }
         }
     }
 
@@ -664,16 +754,40 @@ impl ObjectStore for RGWObjectStore {
         }
     }
 
-    /// Copy if destination doesn't exist
+    /// Copy if destination doesn't exist (atomic via SAL precondition)
+    ///
+    /// Uses `rgw_copy_object_conditional` with `if_nomatch="*"` so the
+    /// existence check and copy are performed atomically by the SAL backend,
+    /// eliminating the race window of head-then-copy.
     async fn copy_if_not_exists(&self, from: &Path, to: &Path) -> ObjectStoreResult<()> {
-        // Check if target exists
-        match self.head(to).await {
-            Ok(_) => Err(object_store::Error::AlreadyExists {
+        let bucket = self.bucket_cstr();
+        let from_key = self.path_to_cstr(from)?;
+        let to_key = self.path_to_cstr(to)?;
+        let if_nomatch = CString::new("*").unwrap();
+
+        let result = unsafe {
+            ffi::rgw_copy_object_conditional(
+                self.driver,
+                self.dpp,
+                bucket.as_ptr(),
+                from_key.as_ptr(),
+                bucket.as_ptr(),
+                to_key.as_ptr(),
+                std::ptr::null(),       // if_match: not used
+                if_nomatch.as_ptr(),     // if_nomatch: "*" = copy-if-not-exists
+            )
+        };
+
+        if result == 0 {
+            Ok(())
+        } else if result == -17 {
+            // -EEXIST: destination already exists
+            Err(ObjectStoreError::AlreadyExists {
                 path: to.to_string(),
                 source: "destination already exists".into(),
-            }),
-            Err(object_store::Error::NotFound { .. }) => self.copy(from, to).await,
-            Err(e) => Err(e),
+            })
+        } else {
+            Err(self.errno_to_error(result, from, "copy_if_not_exists"))
         }
     }
 

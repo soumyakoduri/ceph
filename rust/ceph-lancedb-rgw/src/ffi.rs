@@ -106,6 +106,24 @@ mod mock_impl {
         0 // Success
     }
 
+    pub unsafe fn rgw_put_object_conditional(
+        _driver: *mut c_void,
+        _dpp: *const c_void,
+        _bucket: *const c_char,
+        _key: *const c_char,
+        _data: *const u8,
+        _len: usize,
+        _content_type: *const c_char,
+        _if_match: *const c_char,
+        _if_nomatch: *const c_char,
+        canceled: *mut c_int,
+    ) -> c_int {
+        if !canceled.is_null() {
+            *canceled = 0;
+        }
+        0 // Success
+    }
+
     pub unsafe fn rgw_get_object(
         _driver: *mut c_void,
         _dpp: *const c_void,
@@ -165,6 +183,19 @@ mod mock_impl {
         _src_key: *const c_char,
         _dst_bucket: *const c_char,
         _dst_key: *const c_char,
+    ) -> c_int {
+        0 // Success
+    }
+
+    pub unsafe fn rgw_copy_object_conditional(
+        _driver: *mut c_void,
+        _dpp: *const c_void,
+        _src_bucket: *const c_char,
+        _src_key: *const c_char,
+        _dst_bucket: *const c_char,
+        _dst_key: *const c_char,
+        _if_match: *const c_char,
+        _if_nomatch: *const c_char,
     ) -> c_int {
         0 // Success
     }
@@ -271,6 +302,28 @@ extern "C" {
         content_type: *const c_char,
     ) -> c_int;
 
+    /// Write an object with conditional preconditions
+    ///
+    /// # Arguments
+    /// * `if_match` - Only write if existing ETag matches (null to skip)
+    /// * `if_nomatch` - Only write if ETag does NOT match (null to skip, "*" for create-only)
+    /// * `canceled` - Output: set to 1 if precondition failed, 0 otherwise (may be null)
+    ///
+    /// # Returns
+    /// 0 on success (check canceled for precondition result), negative errno on failure
+    pub fn rgw_put_object_conditional(
+        driver: *mut c_void,
+        dpp: *const c_void,
+        bucket: *const c_char,
+        key: *const c_char,
+        data: *const u8,
+        len: usize,
+        content_type: *const c_char,
+        if_match: *const c_char,
+        if_nomatch: *const c_char,
+        canceled: *mut c_int,
+    ) -> c_int;
+
     /// Read an object from RGW storage
     ///
     /// # Arguments
@@ -344,6 +397,25 @@ extern "C" {
         src_key: *const c_char,
         dst_bucket: *const c_char,
         dst_key: *const c_char,
+    ) -> c_int;
+
+    /// Copy an object with conditional preconditions
+    ///
+    /// # Arguments
+    /// * `if_match` - Only copy if destination ETag matches (null to skip)
+    /// * `if_nomatch` - Pass "*" for copy-if-not-exists
+    ///
+    /// # Returns
+    /// 0 on success, -EEXIST if precondition failed, negative errno on failure
+    pub fn rgw_copy_object_conditional(
+        driver: *mut c_void,
+        dpp: *const c_void,
+        src_bucket: *const c_char,
+        src_key: *const c_char,
+        dst_bucket: *const c_char,
+        dst_key: *const c_char,
+        if_match: *const c_char,
+        if_nomatch: *const c_char,
     ) -> c_int;
 
     /// Delete multiple objects atomically

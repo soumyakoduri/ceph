@@ -198,6 +198,132 @@ int rgw_put_object(
     }
 }
 
+int rgw_put_object_conditional(
+    void* driver_ptr,
+    const void* dpp_ptr,
+    const char* bucket_name,
+    const char* key,
+    const uint8_t* data,
+    size_t len,
+    const char* content_type,
+    const char* if_match,
+    const char* if_nomatch,
+    int* canceled
+) {
+    auto* driver = get_driver(driver_ptr);
+    auto* dpp = get_dpp(dpp_ptr);
+
+    if (canceled) *canceled = 0;
+
+    if (!driver || !bucket_name || !key || (!data && len > 0)) {
+        return -EINVAL;
+    }
+
+    try {
+        // Get bucket
+        std::unique_ptr<rgw::sal::Bucket> bucket;
+        int ret = get_bucket(driver, dpp, bucket_name, bucket);
+        if (ret < 0) {
+            return ret;
+        }
+
+        // Create object
+        std::unique_ptr<rgw::sal::Object> obj = bucket->get_object(rgw_obj_key(key));
+        if (!obj) {
+            return -ENOMEM;
+        }
+
+        // Get owner from bucket ACL
+        ACLOwner owner = bucket->get_acl_owner();
+
+        std::unique_ptr<rgw::sal::Writer> writer = driver->get_atomic_writer(
+            dpp,
+            null_yield,
+            obj.get(),
+            owner,
+            nullptr,  // ptail_placement_rule
+            0,        // olh_epoch
+            ""        // unique_tag
+        );
+
+        if (!writer) {
+            return -ENOMEM;
+        }
+
+        ret = writer->prepare(null_yield);
+        if (ret < 0) {
+            return ret;
+        }
+
+        // Write data
+        bufferlist bl;
+        bl.append(reinterpret_cast<const char*>(data), len);
+        ret = writer->process(std::move(bl), 0);
+        if (ret < 0) {
+            return ret;
+        }
+
+        // Flush
+        ret = writer->process(bufferlist(), len);
+        if (ret < 0) {
+            return ret;
+        }
+
+        // Set up attrs
+        rgw::sal::Attrs attrs;
+        if (content_type && strlen(content_type) > 0) {
+            bufferlist ct_bl;
+            ct_bl.append(content_type);
+            attrs[RGW_ATTR_CONTENT_TYPE] = ct_bl;
+        }
+
+        ceph::real_time mtime = ceph::real_clock::now();
+        req_context rctx{dpp, null_yield, nullptr};
+
+        // Convert C strings to std::string pointers for SAL interface
+        std::string if_match_str;
+        std::string if_nomatch_str;
+        const std::string* if_match_ptr = nullptr;
+        const std::string* if_nomatch_ptr = nullptr;
+
+        if (if_match) {
+            if_match_str = if_match;
+            if_match_ptr = &if_match_str;
+        }
+        if (if_nomatch) {
+            if_nomatch_str = if_nomatch;
+            if_nomatch_ptr = &if_nomatch_str;
+        }
+
+        bool was_canceled = false;
+
+        ret = writer->complete(
+            len,            // accounted_size
+            "",             // etag
+            &mtime,         // mtime
+            mtime,          // set_mtime
+            attrs,          // attrs
+            std::nullopt,   // cksum
+            ceph::real_time(),  // delete_at
+            if_match_ptr,   // if_match
+            if_nomatch_ptr, // if_nomatch
+            nullptr,        // user_data
+            nullptr,        // zones_trace
+            &was_canceled,  // pcanceled
+            rctx,           // req_context
+            0               // flags
+        );
+
+        if (canceled) *canceled = was_canceled ? 1 : 0;
+        return ret;
+
+    } catch (const std::exception& e) {
+        return -EIO;
+    } catch (...) {
+        return -EIO;
+    }
+}
+
 int rgw_get_object(
     void* driver_ptr,
     const void* dpp_ptr,
@@ -613,6 +739,129 @@ int rgw_copy_object(
             false,          // high_precision_time
             nullptr,        // if_match
             nullptr,        // if_nomatch
+            rgw::sal::ATTRSMOD_NONE,
+            false,          // copy_if_newer
+            attrs,
+            RGWObjCategory::Main,
+            0,              // olh_epoch
+            boost::none,    // delete_at
+            nullptr,        // version_id
+            nullptr,        // tag
+            nullptr,        // etag
+            nullptr,        // progress_cb
+            nullptr,        // progress_data
+            nullptr,        // dp_factory
+            dpp,
+            null_yield
+        );
+
+        return ret;
+
+    } catch (const std::exception& e) {
+        return -EIO;
+    } catch (...) {
+        return -EIO;
+    }
+}
+
+int rgw_copy_object_conditional(
+    void* driver_ptr,
+    const void* dpp_ptr,
+    const char* src_bucket_name,
+    const char* src_key,
+    const char* dst_bucket_name,
+    const char* dst_key,
+    const char* if_match,
+    const char* if_nomatch
+) {
+    auto* driver = get_driver(driver_ptr);
+    auto* dpp = get_dpp(dpp_ptr);
+
+    if (!driver || !src_bucket_name || !src_key || !dst_bucket_name || !dst_key) {
+        return -EINVAL;
+    }
+
+    try {
+        // For copy-if-not-exists (if_nomatch="*"), check if destination exists first.
+        // SAL's copy_object if_match/if_nomatch apply to the SOURCE object, not
+        // the destination, so we need to do the existence check ourselves for the
+        // destination. We use head + copy which has a small race window, but we
+        // also apply if_nomatch on the copy to let the backend reject it if
+        // the destination was created between our head and the copy.
+        if (if_nomatch && std::string(if_nomatch) == "*") {
+            // Check if destination already exists
+            std::unique_ptr<rgw::sal::Bucket> check_bucket;
+            int ret = get_bucket(driver, dpp, dst_bucket_name, check_bucket);
+            if (ret < 0) return ret;
+
+            std::unique_ptr<rgw::sal::Object> check_obj =
+                check_bucket->get_object(rgw_obj_key(dst_key));
+            if (check_obj) {
+                ret = check_obj->load_obj_state(dpp, null_yield);
+                if (ret == 0 && check_obj->exists()) {
+                    return -EEXIST;
+                }
+            }
+        }
+
+        // Get source bucket
+        std::unique_ptr<rgw::sal::Bucket> src_bucket;
+        int ret = get_bucket(driver, dpp, src_bucket_name, src_bucket);
+        if (ret < 0) return ret;
+
+        // Get destination bucket
+        std::unique_ptr<rgw::sal::Bucket> dst_bucket;
+        ret = get_bucket(driver, dpp, dst_bucket_name, dst_bucket);
+        if (ret < 0) return ret;
+
+        std::unique_ptr<rgw::sal::Object> src_obj =
+            src_bucket->get_object(rgw_obj_key(src_key));
+        if (!src_obj) return -ENOMEM;
+
+        std::unique_ptr<rgw::sal::Object> dst_obj =
+            dst_bucket->get_object(rgw_obj_key(dst_key));
+        if (!dst_obj) return -ENOMEM;
+
+        ACLOwner owner = dst_bucket->get_acl_owner();
+        rgw_user remote_user;
+        rgw_zone_id source_zone;
+        rgw_placement_rule dest_placement;
+        rgw::sal::Attrs attrs;
+
+        // Convert precondition strings for the copy call
+        // Note: SAL copy_object if_match/if_nomatch apply to the source object
+        std::string if_match_str;
+        std::string if_nomatch_str;
+        const std::string* if_match_ptr = nullptr;
+        const std::string* if_nomatch_ptr = nullptr;
+
+        if (if_match) {
+            if_match_str = if_match;
+            if_match_ptr = &if_match_str;
+        }
+        // Don't pass if_nomatch="*" to copy_object since it checks
+        // the source, not destination — we already did the dest check above
+        if (if_nomatch && std::string(if_nomatch) != "*") {
+            if_nomatch_str = if_nomatch;
+            if_nomatch_ptr = &if_nomatch_str;
+        }
+
+        ret = src_obj->copy_object(
+            owner,
+            remote_user,
+            nullptr,        // req_info
+            source_zone,
+            dst_obj.get(),
+            dst_bucket.get(),
+            src_bucket.get(),
+            dest_placement,
+            nullptr,        // src_mtime
+            nullptr,        // mtime
+            nullptr,        // mod_ptr
+            nullptr,        // unmod_ptr
+            false,          // high_precision_time
+            if_match_ptr,   // if_match (on source)
+            if_nomatch_ptr, // if_nomatch (on source)
             rgw::sal::ATTRSMOD_NONE,
             false,          // copy_if_newer
             attrs,

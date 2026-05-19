@@ -127,6 +127,43 @@ int rgw_put_object(
 );
 
 /**
+ * Write an object with conditional preconditions
+ *
+ * Supports atomic create-if-not-exists and update-if-match semantics
+ * via the if_match/if_nomatch parameters, which map directly to the
+ * SAL Writer::complete() precondition checks.
+ *
+ * @param driver        RGW driver pointer (rgw::sal::Driver*)
+ * @param dpp           DoutPrefixProvider for logging
+ * @param bucket        Bucket name (null-terminated)
+ * @param key           Object key (null-terminated)
+ * @param data          Pointer to data bytes
+ * @param len           Length of data
+ * @param content_type  MIME type (null-terminated)
+ * @param if_match      Only write if existing ETag matches (NULL to skip).
+ *                      Pass the expected ETag for compare-and-swap updates.
+ * @param if_nomatch    Only write if existing ETag does NOT match (NULL to skip).
+ *                      Pass "*" for create-if-not-exists (fails if object exists).
+ * @param canceled      Output: set to 1 if write was rejected due to precondition
+ *                      failure, 0 otherwise. May be NULL if caller doesn't need it.
+ *
+ * @return 0 on success (including when canceled=1), negative errno on failure.
+ *         When canceled=1 and return is 0, the object was NOT written.
+ */
+int rgw_put_object_conditional(
+    void* driver,
+    const void* dpp,
+    const char* bucket,
+    const char* key,
+    const uint8_t* data,
+    size_t len,
+    const char* content_type,
+    const char* if_match,
+    const char* if_nomatch,
+    int* canceled
+);
+
+/**
  * Read an object from RGW storage
  *
  * @param driver    RGW driver pointer
@@ -230,6 +267,33 @@ int rgw_copy_object(
     const char* src_key,
     const char* dst_bucket,
     const char* dst_key
+);
+
+/**
+ * Copy an object conditionally (atomic copy-if-not-exists)
+ *
+ * @param driver        RGW driver pointer
+ * @param dpp           DoutPrefixProvider for logging
+ * @param src_bucket    Source bucket name
+ * @param src_key       Source object key
+ * @param dst_bucket    Destination bucket name
+ * @param dst_key       Destination object key
+ * @param if_match      Only copy if destination ETag matches (NULL to skip)
+ * @param if_nomatch    Only copy if destination ETag does NOT match (NULL to skip).
+ *                      Pass "*" for copy-if-not-exists.
+ *
+ * @return 0 on success, -EEXIST if precondition failed (object exists when
+ *         if_nomatch="*"), -ENOENT if source not found, other negative errno.
+ */
+int rgw_copy_object_conditional(
+    void* driver,
+    const void* dpp,
+    const char* src_bucket,
+    const char* src_key,
+    const char* dst_bucket,
+    const char* dst_key,
+    const char* if_match,
+    const char* if_nomatch
 );
 
 /**

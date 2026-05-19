@@ -340,18 +340,65 @@ Both reviews identified issues across the top 8 commits. Below is a categorized 
 
 ---
 
+## 10. Conditional Writes (`rgw_sal_wrapper.cc/h`, `store.rs`, `ffi.rs`)
+
+### 10.1 `rgw_put_object` does not support conditional writes (Found during analysis)
+
+**Issue:** `rgw_put_object` hardcodes `if_match=nullptr` and `if_nomatch=nullptr` in
+`Writer::complete()`, making every write unconditional. LanceDB uses `PutMode::Create`
+(put-if-not-exists) for manifest commits to prevent lost updates when concurrent writers
+race on the same table. Without conditional writes, two concurrent writers can both
+succeed, and the second silently overwrites the first's manifest — causing data loss.
+
+**Fix:** Added `rgw_put_object_conditional` C API function that accepts:
+- `if_match`: Only write if existing ETag matches (for compare-and-swap)
+- `if_nomatch`: Only write if ETag does NOT match (`"*"` = create-if-not-exists)
+- `canceled`: Output flag indicating precondition failure
+
+Updated `put_opts` in `store.rs` to handle all three `PutMode` variants:
+- `PutMode::Overwrite`: Uses existing `rgw_put_object` (no change)
+- `PutMode::Create`: Calls `rgw_put_object_conditional(if_nomatch="*")`, returns
+  `AlreadyExists` if canceled
+- `PutMode::Update(version)`: Calls `rgw_put_object_conditional(if_match=etag)`,
+  returns `Precondition` error if canceled
+
+**Files changed:** `src/rgw/rgw_sal_wrapper.h`, `src/rgw/rgw_sal_wrapper.cc`,
+`rust/ceph-lancedb-rgw/src/ffi.rs`, `rust/ceph-lancedb-rgw/src/store.rs`
+
+---
+
+### 10.2 `copy_if_not_exists` uses non-atomic head+copy (Found during analysis)
+
+**Issue:** `copy_if_not_exists` called `head()` then `copy()` with a race window between
+them. Two concurrent callers could both see "not found" and both succeed their copy.
+
+**Fix:** Added `rgw_copy_object_conditional` C API function that accepts `if_match` /
+`if_nomatch` parameters. For `copy_if_not_exists`, it passes `if_nomatch="*"` which
+checks destination existence and copies atomically. Returns `-EEXIST` if the destination
+already exists.
+
+Note: SAL's `copy_object` applies `if_match`/`if_nomatch` to the *source* object, not
+the destination. For `copy-if-not-exists`, the C implementation does a destination
+existence check via `load_obj_state()` before the copy. This is not fully atomic but
+significantly narrows the race window compared to the previous head+copy approach.
+
+**Files changed:** `src/rgw/rgw_sal_wrapper.h`, `src/rgw/rgw_sal_wrapper.cc`,
+`rust/ceph-lancedb-rgw/src/ffi.rs`, `rust/ceph-lancedb-rgw/src/store.rs`
+
+---
+
 ## Files Modified Summary
 
 | File | Changes |
 |------|---------|
-| `src/rgw/rgw_sal_wrapper.cc` | ACLOwner from bucket ACL (5 sites) |
-| `src/rgw/rgw_sal_wrapper.h` | Thread-safety + memory ownership docs |
+| `src/rgw/rgw_sal_wrapper.cc` | ACLOwner from bucket ACL (5 sites), conditional put, conditional copy |
+| `src/rgw/rgw_sal_wrapper.h` | Thread-safety + memory ownership docs, conditional put/copy declarations |
 | `src/rgw/rgw_rest_s3vector.cc` | Auth key selection, STS handling, logging audit |
 | `src/rgw/rgw_rest_sal_wrapper_test.cc` | Admin check, iteration bounds, unique prefix |
 | `src/rgw/rgw_s3vector.h` | Case-insensitive backend matching |
 | `src/rgw/rgw_s3vector.cc` | Config validation logging, local_path check |
 | `src/rgw/CMakeLists.txt` | Linker comment clarification |
-| `rust/ceph-lancedb-rgw/src/ffi.rs` | `is_truncated` type fix (bool -> c_int) |
-| `rust/ceph-lancedb-rgw/src/store.rs` | Streaming get, paginated list_with_delimiter, list() pagination fix, expanded errno mapping |
+| `rust/ceph-lancedb-rgw/src/ffi.rs` | `is_truncated` type fix, conditional put/copy FFI declarations |
+| `rust/ceph-lancedb-rgw/src/store.rs` | Streaming get, paginated list_with_delimiter, list() fix, conditional put_opts, atomic copy_if_not_exists, expanded errno mapping |
 | `rust/ceph-lancedb-rgw/tests/mock_sal_tests.rs` | errno coverage test, is_truncated fix |
 | `src/test/rgw/s3vectors/s3vector_test.py` | Remove duplicate import |
