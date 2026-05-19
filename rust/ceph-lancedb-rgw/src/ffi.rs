@@ -97,6 +97,7 @@ mod mock_impl {
     pub unsafe fn rgw_put_object(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _key: *const c_char,
         _data: *const u8,
@@ -109,6 +110,7 @@ mod mock_impl {
     pub unsafe fn rgw_put_object_conditional(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _key: *const c_char,
         _data: *const u8,
@@ -127,6 +129,7 @@ mod mock_impl {
     pub unsafe fn rgw_get_object(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _key: *const c_char,
         _offset: u64,
@@ -143,6 +146,7 @@ mod mock_impl {
     pub unsafe fn rgw_delete_object(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _key: *const c_char,
     ) -> c_int {
@@ -152,6 +156,7 @@ mod mock_impl {
     pub unsafe fn rgw_head_object(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _key: *const c_char,
         _meta: *mut RGWObjectMeta,
@@ -162,6 +167,7 @@ mod mock_impl {
     pub unsafe fn rgw_list_objects(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _prefix: *const c_char,
         _delimiter: *const c_char,
@@ -179,6 +185,7 @@ mod mock_impl {
     pub unsafe fn rgw_copy_object(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _src_bucket: *const c_char,
         _src_key: *const c_char,
         _dst_bucket: *const c_char,
@@ -190,6 +197,7 @@ mod mock_impl {
     pub unsafe fn rgw_copy_object_conditional(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _src_bucket: *const c_char,
         _src_key: *const c_char,
         _dst_bucket: *const c_char,
@@ -204,6 +212,7 @@ mod mock_impl {
     pub unsafe fn rgw_delete_objects(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _keys: *const *const c_char,
         _count: usize,
@@ -214,6 +223,7 @@ mod mock_impl {
     pub unsafe fn rgw_init_multipart(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _key: *const c_char,
         _upload_id: *mut c_char,
@@ -225,6 +235,7 @@ mod mock_impl {
     pub unsafe fn rgw_multipart_put_part(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _key: *const c_char,
         _upload_id: *const c_char,
@@ -240,6 +251,7 @@ mod mock_impl {
     pub unsafe fn rgw_multipart_complete(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _key: *const c_char,
         _upload_id: *const c_char,
@@ -252,6 +264,7 @@ mod mock_impl {
     pub unsafe fn rgw_multipart_abort(
         _driver: *mut c_void,
         _dpp: *const c_void,
+        _yield_ctx: *mut c_void,
         _bucket: *const c_char,
         _key: *const c_char,
         _upload_id: *const c_char,
@@ -295,6 +308,7 @@ extern "C" {
     pub fn rgw_put_object(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         key: *const c_char,
         data: *const u8,
@@ -305,6 +319,7 @@ extern "C" {
     /// Write an object with conditional preconditions
     ///
     /// # Arguments
+    /// * `yield_ctx` - optional_yield pointer (NULL for null_yield)
     /// * `if_match` - Only write if existing ETag matches (null to skip)
     /// * `if_nomatch` - Only write if ETag does NOT match (null to skip, "*" for create-only)
     /// * `canceled` - Output: set to 1 if precondition failed, 0 otherwise (may be null)
@@ -314,6 +329,7 @@ extern "C" {
     pub fn rgw_put_object_conditional(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         key: *const c_char,
         data: *const u8,
@@ -329,6 +345,7 @@ extern "C" {
     /// # Arguments
     /// * `driver` - RGW driver pointer
     /// * `dpp` - DoutPrefixProvider for logging
+    /// * `yield_ctx` - optional_yield pointer (NULL for null_yield)
     /// * `bucket` - Bucket name
     /// * `key` - Object key
     /// * `offset` - Start offset for range read
@@ -340,6 +357,7 @@ extern "C" {
     pub fn rgw_get_object(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         key: *const c_char,
         offset: u64,
@@ -354,6 +372,7 @@ extern "C" {
     pub fn rgw_delete_object(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         key: *const c_char,
     ) -> c_int;
@@ -365,6 +384,7 @@ extern "C" {
     pub fn rgw_head_object(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         key: *const c_char,
         meta: *mut RGWObjectMeta,
@@ -373,6 +393,7 @@ extern "C" {
     /// List objects in a bucket
     ///
     /// # Arguments
+    /// * `yield_ctx` - optional_yield pointer (NULL for null_yield)
     /// * `prefix` - Filter by prefix (empty string for all)
     /// * `delimiter` - Delimiter for hierarchy (empty for flat listing)
     /// * `marker` - Start after this key (empty for beginning)
@@ -381,6 +402,7 @@ extern "C" {
     pub fn rgw_list_objects(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         prefix: *const c_char,
         delimiter: *const c_char,
@@ -393,6 +415,7 @@ extern "C" {
     pub fn rgw_copy_object(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         src_bucket: *const c_char,
         src_key: *const c_char,
         dst_bucket: *const c_char,
@@ -402,6 +425,7 @@ extern "C" {
     /// Copy an object with conditional preconditions
     ///
     /// # Arguments
+    /// * `yield_ctx` - optional_yield pointer (NULL for null_yield)
     /// * `if_match` - Only copy if destination ETag matches (null to skip)
     /// * `if_nomatch` - Pass "*" for copy-if-not-exists
     ///
@@ -410,6 +434,7 @@ extern "C" {
     pub fn rgw_copy_object_conditional(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         src_bucket: *const c_char,
         src_key: *const c_char,
         dst_bucket: *const c_char,
@@ -422,6 +447,7 @@ extern "C" {
     pub fn rgw_delete_objects(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         keys: *const *const c_char,
         count: usize,
@@ -434,6 +460,7 @@ extern "C" {
     /// Initialize a multipart upload
     ///
     /// # Arguments
+    /// * `yield_ctx` - optional_yield pointer (NULL for null_yield)
     /// * `upload_id` - Output buffer for upload ID (must be at least 64 bytes)
     ///
     /// # Returns
@@ -441,6 +468,7 @@ extern "C" {
     pub fn rgw_init_multipart(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         key: *const c_char,
         upload_id: *mut c_char,
@@ -450,11 +478,13 @@ extern "C" {
     /// Upload a part in a multipart upload
     ///
     /// # Arguments
+    /// * `yield_ctx` - optional_yield pointer (NULL for null_yield)
     /// * `part_num` - Part number (1-10000)
     /// * `etag` - Output buffer for part ETag (must be at least 64 bytes)
     pub fn rgw_multipart_put_part(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         key: *const c_char,
         upload_id: *const c_char,
@@ -468,11 +498,13 @@ extern "C" {
     /// Complete a multipart upload
     ///
     /// # Arguments
+    /// * `yield_ctx` - optional_yield pointer (NULL for null_yield)
     /// * `etags` - Array of part ETags in order
     /// * `count` - Number of parts
     pub fn rgw_multipart_complete(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         key: *const c_char,
         upload_id: *const c_char,
@@ -484,6 +516,7 @@ extern "C" {
     pub fn rgw_multipart_abort(
         driver: *mut c_void,
         dpp: *const c_void,
+        yield_ctx: *mut c_void,
         bucket: *const c_char,
         key: *const c_char,
         upload_id: *const c_char,

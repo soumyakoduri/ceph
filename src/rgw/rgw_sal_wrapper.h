@@ -67,17 +67,33 @@ typedef struct RGWListResult {
 } RGWListResult;
 
 /*==========================================================================
- * Thread Safety
+ * Thread Safety and Yield Context
  *=========================================================================
  * These functions are NOT thread-safe for concurrent operations on the same
  * bucket/object. The caller must serialize operations when multiple threads
  * access the same objects. Different threads may safely operate on different
  * objects/buckets concurrently.
  *
- * Note: All operations use null_yield internally, meaning they block the
- * calling thread. They must not be called from RGW coroutine contexts
- * without yielding first. The SAL wrapper is intended for use from the
- * Rust async runtime, which runs on its own thread pool.
+ * yield_ctx parameter (present on all SAL operations):
+ *
+ *   All functions accept a `void* yield_ctx` parameter, which is an opaque
+ *   pointer to an `optional_yield` (C++) value.
+ *
+ *   - NULL: Uses null_yield, blocking the calling thread until the SAL
+ *     operation completes. This is the correct choice when called from
+ *     Rust/Tokio's thread pool (via spawn_blocking), because Tokio's
+ *     blocking threads are designed to be blocked.
+ *
+ *   - Non-NULL: Cast to `optional_yield*` and dereferenced. The SAL
+ *     operation will yield the calling Boost.ASIO coroutine while waiting
+ *     for I/O, allowing other coroutines to run on the same thread. This
+ *     is the correct choice when called directly from an RGW Beast handler
+ *     or any ASIO coroutine context.
+ *
+ *   IMPORTANT: A yield_context is bound to its ASIO executor thread.
+ *   Never pass a yield_context obtained on one thread to a function
+ *   running on a different thread. The Rust/Tokio path must always
+ *   pass NULL.
  *=========================================================================*/
 
 /*==========================================================================
@@ -108,6 +124,7 @@ typedef struct RGWListResult {
  *
  * @param driver        RGW driver pointer (rgw::sal::Driver*)
  * @param dpp           DoutPrefixProvider for logging
+ * @param yield_ctx     optional_yield pointer (NULL for null_yield)
  * @param bucket        Bucket name (null-terminated)
  * @param key           Object key (null-terminated)
  * @param data          Pointer to data bytes
@@ -119,6 +136,7 @@ typedef struct RGWListResult {
 int rgw_put_object(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* key,
     const uint8_t* data,
@@ -135,6 +153,7 @@ int rgw_put_object(
  *
  * @param driver        RGW driver pointer (rgw::sal::Driver*)
  * @param dpp           DoutPrefixProvider for logging
+ * @param yield_ctx     optional_yield pointer (NULL for null_yield)
  * @param bucket        Bucket name (null-terminated)
  * @param key           Object key (null-terminated)
  * @param data          Pointer to data bytes
@@ -153,6 +172,7 @@ int rgw_put_object(
 int rgw_put_object_conditional(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* key,
     const uint8_t* data,
@@ -168,6 +188,7 @@ int rgw_put_object_conditional(
  *
  * @param driver    RGW driver pointer
  * @param dpp       DoutPrefixProvider for logging
+ * @param yield_ctx optional_yield pointer (NULL for null_yield)
  * @param bucket    Bucket name
  * @param key       Object key
  * @param offset    Start offset for range read
@@ -179,6 +200,7 @@ int rgw_put_object_conditional(
 int rgw_get_object(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* key,
     uint64_t offset,
@@ -191,6 +213,7 @@ int rgw_get_object(
  *
  * @param driver    RGW driver pointer
  * @param dpp       DoutPrefixProvider for logging
+ * @param yield_ctx optional_yield pointer (NULL for null_yield)
  * @param bucket    Bucket name
  * @param key       Object key
  *
@@ -200,6 +223,7 @@ int rgw_get_object(
 int rgw_delete_object(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* key
 );
@@ -209,6 +233,7 @@ int rgw_delete_object(
  *
  * @param driver    RGW driver pointer
  * @param dpp       DoutPrefixProvider for logging
+ * @param yield_ctx optional_yield pointer (NULL for null_yield)
  * @param bucket    Bucket name
  * @param key       Object key
  * @param meta      Output metadata (caller must free with rgw_free_object_meta)
@@ -218,6 +243,7 @@ int rgw_delete_object(
 int rgw_head_object(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* key,
     RGWObjectMeta* meta
@@ -228,6 +254,7 @@ int rgw_head_object(
  *
  * @param driver     RGW driver pointer
  * @param dpp        DoutPrefixProvider for logging
+ * @param yield_ctx  optional_yield pointer (NULL for null_yield)
  * @param bucket     Bucket name
  * @param prefix     Filter by prefix (empty string for all)
  * @param delimiter  Delimiter for hierarchy (empty for flat listing)
@@ -240,6 +267,7 @@ int rgw_head_object(
 int rgw_list_objects(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* prefix,
     const char* delimiter,
@@ -253,6 +281,7 @@ int rgw_list_objects(
  *
  * @param driver        RGW driver pointer
  * @param dpp           DoutPrefixProvider for logging
+ * @param yield_ctx     optional_yield pointer (NULL for null_yield)
  * @param src_bucket    Source bucket name
  * @param src_key       Source object key
  * @param dst_bucket    Destination bucket name
@@ -263,6 +292,7 @@ int rgw_list_objects(
 int rgw_copy_object(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* src_bucket,
     const char* src_key,
     const char* dst_bucket,
@@ -274,6 +304,7 @@ int rgw_copy_object(
  *
  * @param driver        RGW driver pointer
  * @param dpp           DoutPrefixProvider for logging
+ * @param yield_ctx     optional_yield pointer (NULL for null_yield)
  * @param src_bucket    Source bucket name
  * @param src_key       Source object key
  * @param dst_bucket    Destination bucket name
@@ -288,6 +319,7 @@ int rgw_copy_object(
 int rgw_copy_object_conditional(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* src_bucket,
     const char* src_key,
     const char* dst_bucket,
@@ -301,6 +333,7 @@ int rgw_copy_object_conditional(
  *
  * @param driver    RGW driver pointer
  * @param dpp       DoutPrefixProvider for logging
+ * @param yield_ctx optional_yield pointer (NULL for null_yield)
  * @param bucket    Bucket name
  * @param keys      Array of null-terminated key strings
  * @param count     Number of keys
@@ -310,6 +343,7 @@ int rgw_copy_object_conditional(
 int rgw_delete_objects(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* const* keys,
     size_t count
@@ -324,6 +358,7 @@ int rgw_delete_objects(
  *
  * @param driver        RGW driver pointer
  * @param dpp           DoutPrefixProvider for logging
+ * @param yield_ctx     optional_yield pointer (NULL for null_yield)
  * @param bucket        Bucket name
  * @param key           Object key
  * @param upload_id     Output buffer for upload ID (must be at least 64 bytes)
@@ -334,6 +369,7 @@ int rgw_delete_objects(
 int rgw_init_multipart(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* key,
     char* upload_id,
@@ -345,6 +381,7 @@ int rgw_init_multipart(
  *
  * @param driver        RGW driver pointer
  * @param dpp           DoutPrefixProvider for logging
+ * @param yield_ctx     optional_yield pointer (NULL for null_yield)
  * @param bucket        Bucket name
  * @param key           Object key
  * @param upload_id     Upload ID from rgw_init_multipart
@@ -359,6 +396,7 @@ int rgw_init_multipart(
 int rgw_multipart_put_part(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* key,
     const char* upload_id,
@@ -374,6 +412,7 @@ int rgw_multipart_put_part(
  *
  * @param driver    RGW driver pointer
  * @param dpp       DoutPrefixProvider for logging
+ * @param yield_ctx optional_yield pointer (NULL for null_yield)
  * @param bucket    Bucket name
  * @param key       Object key
  * @param upload_id Upload ID from rgw_init_multipart
@@ -385,6 +424,7 @@ int rgw_multipart_put_part(
 int rgw_multipart_complete(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* key,
     const char* upload_id,
@@ -397,6 +437,7 @@ int rgw_multipart_complete(
  *
  * @param driver    RGW driver pointer
  * @param dpp       DoutPrefixProvider for logging
+ * @param yield_ctx optional_yield pointer (NULL for null_yield)
  * @param bucket    Bucket name
  * @param key       Object key
  * @param upload_id Upload ID from rgw_init_multipart
@@ -406,6 +447,7 @@ int rgw_multipart_complete(
 int rgw_multipart_abort(
     void* driver,
     const void* dpp,
+    void* yield_ctx,
     const char* bucket,
     const char* key,
     const char* upload_id

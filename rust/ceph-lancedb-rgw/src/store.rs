@@ -224,6 +224,7 @@ impl ObjectStore for RGWObjectStore {
                     ffi::rgw_put_object(
                         self.driver,
                         self.dpp,
+                        std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                         bucket.as_ptr(),
                         key.as_ptr(),
                         bytes.as_ptr(),
@@ -250,6 +251,7 @@ impl ObjectStore for RGWObjectStore {
                     ffi::rgw_put_object_conditional(
                         self.driver,
                         self.dpp,
+                        std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                         bucket.as_ptr(),
                         key.as_ptr(),
                         bytes.as_ptr(),
@@ -293,6 +295,7 @@ impl ObjectStore for RGWObjectStore {
                     ffi::rgw_put_object_conditional(
                         self.driver,
                         self.dpp,
+                        std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                         bucket.as_ptr(),
                         key.as_ptr(),
                         bytes.as_ptr(),
@@ -373,6 +376,7 @@ impl ObjectStore for RGWObjectStore {
                     ffi::rgw_get_object(
                         self.driver,
                         self.dpp,
+                        std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                         bucket.as_ptr(),
                         key.as_ptr(),
                         range_start,
@@ -422,6 +426,7 @@ impl ObjectStore for RGWObjectStore {
                     ffi::rgw_get_object(
                         driver.as_ptr(),
                         dpp.as_ptr(),
+                        std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                         bucket_c.as_ptr(),
                         key_c.as_ptr(),
                         offset,
@@ -486,7 +491,7 @@ impl ObjectStore for RGWObjectStore {
         let key = self.path_to_cstr(location)?;
 
         let result = unsafe {
-            ffi::rgw_delete_object(self.driver, self.dpp, bucket.as_ptr(), key.as_ptr())
+            ffi::rgw_delete_object(self.driver, self.dpp, std::ptr::null_mut(), bucket.as_ptr(), key.as_ptr())
         };
 
         // Treat "not found" as success for delete operations
@@ -530,6 +535,7 @@ impl ObjectStore for RGWObjectStore {
                         ffi::rgw_list_objects(
                             driver.as_ptr(),
                             dpp.as_ptr(),
+                            std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                             bucket_c.as_ptr(),
                             prefix_c.as_ptr(),
                             delimiter_c.as_ptr(),
@@ -647,6 +653,7 @@ impl ObjectStore for RGWObjectStore {
                 ffi::rgw_list_objects(
                     self.driver,
                     self.dpp,
+                    std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                     bucket_c.as_ptr(),
                     prefix_c.as_ptr(),
                     delimiter_c.as_ptr(),
@@ -740,6 +747,7 @@ impl ObjectStore for RGWObjectStore {
             ffi::rgw_copy_object(
                 self.driver,
                 self.dpp,
+                std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                 bucket.as_ptr(),
                 from_key.as_ptr(),
                 bucket.as_ptr(),
@@ -769,6 +777,7 @@ impl ObjectStore for RGWObjectStore {
             ffi::rgw_copy_object_conditional(
                 self.driver,
                 self.dpp,
+                std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                 bucket.as_ptr(),
                 from_key.as_ptr(),
                 bucket.as_ptr(),
@@ -799,7 +808,7 @@ impl ObjectStore for RGWObjectStore {
         let mut meta = ffi::RGWObjectMeta::default();
 
         let result = unsafe {
-            ffi::rgw_head_object(self.driver, self.dpp, bucket.as_ptr(), key.as_ptr(), &mut meta)
+            ffi::rgw_head_object(self.driver, self.dpp, std::ptr::null_mut(), bucket.as_ptr(), key.as_ptr(), &mut meta)
         };
 
         if result != 0 {
@@ -857,6 +866,7 @@ impl ObjectStore for RGWObjectStore {
             ffi::rgw_init_multipart(
                 self.driver,
                 self.dpp,
+                std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                 bucket.as_ptr(),
                 key.as_ptr(),
                 upload_id.as_mut_ptr(),
@@ -927,6 +937,7 @@ impl MultipartUpload for RGWMultipartUpload {
                 ffi::rgw_multipart_put_part(
                     driver.as_ptr(),
                     dpp.as_ptr(),
+                    std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                     bucket_c.as_ptr(),
                     key_c.as_ptr(),
                     upload_id_c.as_ptr(),
@@ -969,6 +980,7 @@ impl MultipartUpload for RGWMultipartUpload {
             ffi::rgw_multipart_complete(
                 self.driver,
                 self.dpp,
+                std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                 bucket_c.as_ptr(),
                 key_c.as_ptr(),
                 upload_id_c.as_ptr(),
@@ -999,6 +1011,7 @@ impl MultipartUpload for RGWMultipartUpload {
             ffi::rgw_multipart_abort(
                 self.driver,
                 self.dpp,
+                std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
                 bucket_c.as_ptr(),
                 key_c.as_ptr(),
                 upload_id_c.as_ptr(),
