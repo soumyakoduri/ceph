@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <string>
 #include <vector>
 #include "include/encoding.h"
@@ -29,12 +30,24 @@ enum class BackendType {
   S3      // S3 storage backend (local RGW via SAL or external S3 service)
 };
 
-// Convert string to backend type
+// Convert string to backend type (case-insensitive)
 inline BackendType string_to_backend_type(const std::string& str) {
-  if (str == "s3" || str == "S3") {
+  if (str.size() == 2 &&
+      (str[0] == 's' || str[0] == 'S') &&
+      (str[1] == '3' || str[1] == '3')) {
     return BackendType::S3;
   }
-  return BackendType::LOCAL; // default
+  if (str.size() == 5) {
+    // case-insensitive check for "local"
+    std::string lower = str;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower == "local") {
+      return BackendType::LOCAL;
+    }
+  }
+  // For unrecognized values, default to LOCAL but this should be
+  // caught by config validation at startup
+  return BackendType::LOCAL;
 }
 
 // Get the backend type from configuration

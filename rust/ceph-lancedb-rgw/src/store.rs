@@ -51,6 +51,10 @@ impl SendConstPtr {
     }
 }
 
+/// Chunk size for streaming reads (8 MB).
+/// Objects larger than this are read in multiple chunks to bound memory usage.
+const STREAM_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
+
 /// ObjectStore implementation that uses RGW SAL directly
 ///
 /// This store holds raw pointers to Ceph's RGW driver and DoutPrefixProvider.
@@ -113,20 +117,48 @@ impl RGWObjectStore {
         &self.prefix
     }
 
+    /// Convert errno to ObjectStore error (test-only public accessor)
+    #[cfg(any(test, feature = "mock-sal"))]
+    pub fn errno_to_error_for_test(&self, errno: i32, path: &Path, op: &str) -> object_store::Error {
+        self.errno_to_error(errno, path, op)
+    }
+
     /// Convert errno to ObjectStore error
+    ///
+    /// Maps common POSIX errno values to appropriate ObjectStore error types.
+    /// Negative errno values are expected (e.g., -2 for ENOENT).
     fn errno_to_error(&self, errno: i32, path: &Path, op: &str) -> object_store::Error {
         match errno {
-            -2 => object_store::Error::NotFound {
+            -2 => object_store::Error::NotFound { // ENOENT
                 path: path.to_string(),
                 source: format!("{} failed: object not found", op).into(),
             },
-            -17 => object_store::Error::AlreadyExists {
+            -1 => object_store::Error::Generic { // EPERM
+                store: "rgw",
+                source: format!("{} failed: operation not permitted", op).into(),
+            },
+            -13 => object_store::Error::Generic { // EACCES
+                store: "rgw",
+                source: format!("{} failed: permission denied", op).into(),
+            },
+            -17 => object_store::Error::AlreadyExists { // EEXIST
                 path: path.to_string(),
                 source: format!("{} failed: object already exists", op).into(),
             },
-            -28 => object_store::Error::Generic {
+            -22 => object_store::Error::Generic { // EINVAL
                 store: "rgw",
-                source: format!("{} failed: no space left", op).into(),
+                source: format!("{} failed: invalid argument", op).into(),
+            },
+            -28 => object_store::Error::Generic { // ENOSPC
+                store: "rgw",
+                source: format!("{} failed: no space left on device", op).into(),
+            },
+            -36 => object_store::Error::Generic { // ENAMETOOLONG
+                store: "rgw",
+                source: format!("{} failed: object key too long", op).into(),
+            },
+            -38 => object_store::Error::NotSupported { // ENOSYS
+                source: format!("{} not supported by SAL backend", op).into(),
             },
             _ => object_store::Error::Generic {
                 store: "rgw",
@@ -204,71 +236,134 @@ impl ObjectStore for RGWObjectStore {
         self.get_opts(location, GetOptions::default()).await
     }
 
-    /// Read object with options (supports range reads)
+    /// Read object with options (supports range reads and streaming)
+    ///
+    /// For reads larger than STREAM_CHUNK_SIZE (8 MB), data is returned as a
+    /// multi-chunk stream so that only one chunk is held in memory at a time.
+    /// The C API already supports offset+length, so chunked streaming is done
+    /// by issuing multiple bounded reads.
     async fn get_opts(&self, location: &Path, opts: GetOptions) -> ObjectStoreResult<GetResult> {
-        let bucket = self.bucket_cstr();
-        let key = self.path_to_cstr(location)?;
+        // Get metadata first — we need the object size for range calculations
+        // and for the GetResult metadata field
+        let meta = self.head(location).await?;
+        let obj_size = meta.size;
 
-        // Handle suffix range specially - need to get size first
-        let (offset, length) = match &opts.range {
-            Some(GetRange::Bounded(range)) => {
-                (range.start, range.end - range.start)
-            }
-            Some(GetRange::Offset(start)) => (*start, u64::MAX),
+        // Resolve the byte range to read
+        let (range_start, range_end) = match &opts.range {
+            Some(GetRange::Bounded(range)) => (range.start, range.end.min(obj_size)),
+            Some(GetRange::Offset(start)) => (*start, obj_size),
             Some(GetRange::Suffix(len)) => {
-                // For suffix, we need to get size first
-                let meta = self.head(location).await?;
-                let start = meta.size.saturating_sub(*len);
-                (start, *len)
+                let start = obj_size.saturating_sub(*len);
+                (start, obj_size)
             }
-            None => (0, u64::MAX),
+            None => (0, obj_size),
         };
 
-        // Do all the FFI work in a sync block to get Send-able data
-        let bytes = {
-            let mut buffer = ffi::RGWBuffer::default();
+        let total_len = range_end.saturating_sub(range_start);
 
-            let result = unsafe {
-                ffi::rgw_get_object(
-                    self.driver,
-                    self.dpp,
-                    bucket.as_ptr(),
-                    key.as_ptr(),
-                    offset,
-                    length,
-                    &mut buffer,
-                )
+        if total_len == 0 {
+            return Ok(GetResult {
+                payload: GetResultPayload::Stream(
+                    stream::once(async { Ok(Bytes::new()) }).boxed(),
+                ),
+                meta,
+                range: range_start..range_end,
+                attributes: Attributes::new(),
+            });
+        }
+
+        // For small reads (≤ one chunk), use a single FFI call — no overhead
+        if total_len <= STREAM_CHUNK_SIZE {
+            let bucket = self.bucket_cstr();
+            let key = self.path_to_cstr(location)?;
+
+            let bytes = {
+                let mut buffer = ffi::RGWBuffer::default();
+                let result = unsafe {
+                    ffi::rgw_get_object(
+                        self.driver,
+                        self.dpp,
+                        bucket.as_ptr(),
+                        key.as_ptr(),
+                        range_start,
+                        total_len,
+                        &mut buffer,
+                    )
+                };
+                if result != 0 {
+                    return Err(self.errno_to_error(result, location, "get"));
+                }
+                OwnedRGWBuffer(buffer).to_bytes()
             };
 
-            if result != 0 {
-                return Err(self.errno_to_error(result, location, "get"));
+            return Ok(GetResult {
+                payload: GetResultPayload::Stream(
+                    stream::once(async move { Ok(bytes) }).boxed(),
+                ),
+                meta,
+                range: range_start..range_end,
+                attributes: Attributes::new(),
+            });
+        }
+
+        // For large reads, stream in STREAM_CHUNK_SIZE chunks.
+        // Each chunk issues its own rgw_get_object(offset, chunk_len) call,
+        // so only one chunk buffer is live at a time.
+        let bucket_name = self.bucket.clone();
+        let key_str = location.to_string();
+        let driver = SendPtr::new(self.driver);
+        let dpp = SendConstPtr::new(self.dpp);
+
+        let chunk_stream = stream::unfold(range_start, move |offset| {
+            let bucket_name = bucket_name.clone();
+            let key_str = key_str.clone();
+
+            async move {
+                if offset >= range_end {
+                    return None;
+                }
+
+                let chunk_len = STREAM_CHUNK_SIZE.min(range_end - offset);
+                let bucket_c = CString::new(bucket_name.as_str()).unwrap();
+                let key_c = CString::new(key_str.as_str()).unwrap();
+
+                let mut buffer = ffi::RGWBuffer::default();
+                let result = unsafe {
+                    ffi::rgw_get_object(
+                        driver.as_ptr(),
+                        dpp.as_ptr(),
+                        bucket_c.as_ptr(),
+                        key_c.as_ptr(),
+                        offset,
+                        chunk_len,
+                        &mut buffer,
+                    )
+                };
+
+                if result != 0 {
+                    return Some((
+                        Err(object_store::Error::Generic {
+                            store: "rgw",
+                            source: format!(
+                                "get chunk at offset {} failed with errno {}",
+                                offset, result
+                            )
+                            .into(),
+                        }),
+                        range_end, // stop iteration
+                    ));
+                }
+
+                let bytes = OwnedRGWBuffer(buffer).to_bytes();
+                let next_offset = offset + bytes.len() as u64;
+                Some((Ok(bytes), next_offset))
             }
-
-            let owned_buffer = OwnedRGWBuffer(buffer);
-            owned_buffer.to_bytes()
-        };
-
-        let data_len = bytes.len() as u64;
-
-        // Get metadata for the full object (this await is now safe)
-        let meta = self.head(location).await.unwrap_or_else(|_| ObjectMeta {
-            location: location.clone(),
-            last_modified: chrono::Utc::now(),
-            size: data_len,
-            e_tag: None,
-            version: None,
         });
 
-        let range = if offset == 0 && length == u64::MAX {
-            0..data_len
-        } else {
-            offset..(offset + data_len)
-        };
-
         Ok(GetResult {
-            payload: GetResultPayload::Stream(stream::once(async move { Ok(bytes) }).boxed()),
+            payload: GetResultPayload::Stream(chunk_stream.boxed()),
             meta,
-            range,
+            range: range_start..range_end,
             attributes: Attributes::new(),
         })
     }
@@ -395,7 +490,7 @@ impl ObjectStore for RGWObjectStore {
                         }
                     };
 
-                    let next_marker = if owned_result.0.is_truncated
+                    let next_marker = if owned_result.0.is_truncated != 0
                         && !owned_result.0.next_marker.is_null()
                     {
                         unsafe {
@@ -407,7 +502,10 @@ impl ObjectStore for RGWObjectStore {
                         String::new()
                     };
 
-                    let is_done = !owned_result.0.is_truncated;
+                    let is_done = owned_result.0.is_truncated == 0;
+
+                    // If no entries were returned, we're done regardless
+                    let is_done = is_done || entries.is_empty();
 
                     Some((entries, (next_marker, is_done)))
                 }
@@ -417,17 +515,21 @@ impl ObjectStore for RGWObjectStore {
         .boxed()
     }
 
-    /// List objects with delimiter support
-    /// Note: We do NOT prepend our store prefix here because the Lance ObjectStore wrapper
-    /// already handles the base path from the URL. Paths are passed through as-is.
-    /// However, we DO ensure the prefix ends with '/' when listing directory contents,
-    /// because Lance passes the path without trailing slash but S3 listing semantics
-    /// require it to list contents INSIDE a directory rather than the directory itself.
+    /// List objects with delimiter support (paginated)
+    ///
+    /// Fetches all pages using marker-based pagination so that buckets with
+    /// more than 1000 entries are fully enumerated.
+    ///
+    /// Note: We do NOT prepend our store prefix here because the Lance ObjectStore
+    /// wrapper already handles the base path from the URL. Paths are passed through
+    /// as-is. However, we DO ensure the prefix ends with '/' when listing directory
+    /// contents, because Lance passes the path without trailing slash but S3 listing
+    /// semantics require it to list contents INSIDE a directory rather than the
+    /// directory itself.
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> ObjectStoreResult<ListResult> {
         let prefix_str = match prefix {
             Some(p) => {
                 let s = p.to_string();
-                // Ensure prefix ends with '/' to list directory contents
                 if s.is_empty() {
                     s
                 } else if s.ends_with('/') {
@@ -438,67 +540,99 @@ impl ObjectStore for RGWObjectStore {
             }
             None => String::new(),
         };
-        let bucket_c = self.bucket_cstr();
-        let prefix_c = CString::new(prefix_str.as_str()).unwrap();
-        let marker_c = CString::new("").unwrap();
-        let delimiter_c = CString::new("/").unwrap();
-
-        let mut result = ffi::RGWListResult::default();
-
-        let ret = unsafe {
-            ffi::rgw_list_objects(
-                self.driver,
-                self.dpp,
-                bucket_c.as_ptr(),
-                prefix_c.as_ptr(),
-                delimiter_c.as_ptr(),
-                marker_c.as_ptr(),
-                1000,
-                &mut result,
-            )
-        };
-
-        if ret != 0 {
-            return Err(object_store::Error::Generic {
-                store: "rgw",
-                source: format!("list_with_delimiter failed with errno {}", ret).into(),
-            });
-        }
-
-        let owned_result = OwnedRGWListResult(result);
 
         let mut objects: Vec<ObjectMeta> = Vec::new();
         let mut common_prefixes: Vec<Path> = Vec::new();
+        let mut marker = String::new();
 
-        unsafe {
-            if !owned_result.0.entries.is_null() && owned_result.0.count > 0 {
-                let slice =
-                    std::slice::from_raw_parts(owned_result.0.entries, owned_result.0.count);
-                for e in slice.iter() {
-                    let key = CStr::from_ptr(e.key).to_string_lossy().into_owned();
-                    // Keys are returned as-is - no prefix stripping needed
-                    // since Lance ObjectStore wrapper handles base path
+        loop {
+            let bucket_c = self.bucket_cstr();
+            let prefix_c = CString::new(prefix_str.as_str()).unwrap();
+            let marker_c = CString::new(marker.as_str()).unwrap();
+            let delimiter_c = CString::new("/").unwrap();
 
-                    // Entries ending with '/' are common prefixes (directories)
-                    if key.ends_with('/') {
-                        // Remove trailing slash for Path
-                        let prefix_path = key.trim_end_matches('/');
-                        if !prefix_path.is_empty() {
-                            common_prefixes.push(Path::from(prefix_path));
-                        }
-                    } else if !key.is_empty() {
-                        objects.push(ObjectMeta {
-                            location: Path::from(key.clone()),
-                            last_modified: chrono::DateTime::from_timestamp(e.last_modified, 0)
+            let mut result = ffi::RGWListResult::default();
+
+            let ret = unsafe {
+                ffi::rgw_list_objects(
+                    self.driver,
+                    self.dpp,
+                    bucket_c.as_ptr(),
+                    prefix_c.as_ptr(),
+                    delimiter_c.as_ptr(),
+                    marker_c.as_ptr(),
+                    1000,
+                    &mut result,
+                )
+            };
+
+            if ret != 0 {
+                return Err(object_store::Error::Generic {
+                    store: "rgw",
+                    source: format!("list_with_delimiter failed with errno {}", ret).into(),
+                });
+            }
+
+            let owned_result = OwnedRGWListResult(result);
+
+            unsafe {
+                if !owned_result.0.entries.is_null() && owned_result.0.count > 0 {
+                    let slice = std::slice::from_raw_parts(
+                        owned_result.0.entries,
+                        owned_result.0.count,
+                    );
+                    for e in slice.iter() {
+                        let key = CStr::from_ptr(e.key).to_string_lossy().into_owned();
+
+                        // Entries ending with '/' are common prefixes (directories)
+                        if key.ends_with('/') {
+                            let prefix_path = key.trim_end_matches('/');
+                            if !prefix_path.is_empty() {
+                                common_prefixes.push(Path::from(prefix_path));
+                            }
+                        } else if !key.is_empty() {
+                            objects.push(ObjectMeta {
+                                location: Path::from(key.clone()),
+                                last_modified: chrono::DateTime::from_timestamp(
+                                    e.last_modified,
+                                    0,
+                                )
                                 .unwrap_or_else(chrono::Utc::now),
-                            size: e.size,
-                            e_tag: None,
-                            version: None,
-                        });
+                                size: e.size,
+                                e_tag: None,
+                                version: None,
+                            });
+                        }
                     }
                 }
             }
-        };
+
+            // Check if there are more pages
+            if owned_result.0.is_truncated == 0 {
+                break;
+            }
+
+            // Get the next marker for pagination
+            if !owned_result.0.next_marker.is_null() {
+                marker = unsafe {
+                    CStr::from_ptr(owned_result.0.next_marker)
+                        .to_string_lossy()
+                        .into_owned()
+                };
+            } else {
+                // No next_marker means we're done even if is_truncated was set
+                break;
+            }
+
+            // Safety: if we got zero entries, stop to prevent infinite loop
+            if owned_result.0.count == 0 {
+                break;
+            }
+        }
+
+        // Deduplicate common_prefixes (same prefix could appear in multiple pages)
+        common_prefixes.sort();
+        common_prefixes.dedup();
 
         Ok(ListResult {
             common_prefixes,

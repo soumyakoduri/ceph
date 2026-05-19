@@ -26,16 +26,38 @@ std::unique_ptr<rgw::s3vector::S3Credentials> get_user_s3_credentials(req_state*
     return nullptr;
   }
 
+  // STS/assumed-role users may not have direct access keys
+  if (s->auth.identity->get_identity_type() == TYPE_ROLE) {
+    ldpp_dout(s, 5) << "WARNING: STS assumed-role users may not have access "
+                    << "keys suitable for external S3 backend" << dendl;
+  }
+
   const auto& access_keys = s->user->get_info().access_keys;
   if (access_keys.empty()) {
+    ldpp_dout(s, 1) << "ERROR: s3vector external S3 backend requires user "
+                    << "to have access keys, but none found" << dendl;
     return nullptr;
   }
 
-  // Use the first access key from the user
-  const auto& key_pair = *access_keys.begin();
+  // Try to select the key that was used to authenticate this request
+  // for deterministic behavior, rather than the first key from the map
   auto creds = std::make_unique<rgw::s3vector::S3Credentials>();
-  creds->access_key = key_pair.second.id;
-  creds->secret_key = key_pair.second.key;
+
+  const auto& auth_keyid = s->auth.identity->get_access_key_id();
+  auto it = access_keys.find(auth_keyid);
+  if (it != access_keys.end()) {
+    creds->access_key = it->second.id;
+    creds->secret_key = it->second.key;
+  } else {
+    // Fall back to first key if auth key not found in map
+    const auto& key_pair = *access_keys.begin();
+    creds->access_key = key_pair.second.id;
+    creds->secret_key = key_pair.second.key;
+  }
+
+  // NOTE: Never log secret_key - credential logging is a security risk
+  ldpp_dout(s, 20) << "INFO: s3vector using credentials for access_key="
+                   << creds->access_key << dendl;
   return creds;
 }
 

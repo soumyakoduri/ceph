@@ -61,7 +61,15 @@ namespace rgw::s3vector {
   BackendType get_backend_type(CephContext* cct) {
     if (!cct) return BackendType::LOCAL;
     const auto backend = cct->_conf.get_val<std::string>("rgw_s3vector_backend");
-    return string_to_backend_type(backend);
+    const auto type = string_to_backend_type(backend);
+    // Log a warning for unrecognized backend values
+    if (!backend.empty() && backend != "local" && backend != "s3" &&
+        backend != "LOCAL" && backend != "S3") {
+      lderr(cct) << "WARNING: unrecognized rgw_s3vector_backend value '"
+                 << backend << "', defaulting to 'local'. "
+                 << "Valid values are 'local' and 's3'." << dendl;
+    }
+    return type;
   }
 
   bool is_s3_backend(CephContext* cct) {
@@ -197,6 +205,11 @@ namespace rgw::s3vector {
     } else {
       // Local filesystem backend (default)
       const std::string local_path = conf.get_val<std::string>("rgw_s3vector_local_path");
+      if (local_path.empty()) {
+        ldpp_dout(dpp, 1) << "ERROR: s3vector local backend requires "
+                          << "rgw_s3vector_local_path to be configured" << dendl;
+        return nullptr;
+      }
       uri = fmt::format("{}/{}", local_path, vector_bucket_name);
       builder = lancedb_connect(uri.c_str());
       if (!builder) {

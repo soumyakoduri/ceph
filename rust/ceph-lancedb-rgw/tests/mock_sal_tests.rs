@@ -557,6 +557,46 @@ mod error_tests {
             _ => panic!("Expected NotFound error, got: {:?}", err),
         }
     }
+
+    #[test]
+    fn test_errno_mapping_coverage() {
+        // Verify that errno_to_error produces correct error types for all mapped errnos
+        let store = create_test_store("test-bucket");
+        let path = Path::from("test.txt");
+
+        // ENOENT -> NotFound
+        let err = store.errno_to_error_for_test(-2, &path, "get");
+        assert!(matches!(err, object_store::Error::NotFound { .. }));
+
+        // EEXIST -> AlreadyExists
+        let err = store.errno_to_error_for_test(-17, &path, "put");
+        assert!(matches!(err, object_store::Error::AlreadyExists { .. }));
+
+        // EPERM -> Generic
+        let err = store.errno_to_error_for_test(-1, &path, "put");
+        assert!(matches!(err, object_store::Error::Generic { .. }));
+
+        // EACCES -> Generic
+        let err = store.errno_to_error_for_test(-13, &path, "put");
+        assert!(matches!(err, object_store::Error::Generic { .. }));
+
+        // EINVAL -> Generic
+        let err = store.errno_to_error_for_test(-22, &path, "put");
+        assert!(matches!(err, object_store::Error::Generic { .. }));
+
+        // ENOSPC -> Generic
+        let err = store.errno_to_error_for_test(-28, &path, "put");
+        assert!(matches!(err, object_store::Error::Generic { .. }));
+
+        // ENAMETOOLONG -> Generic (with key too long message)
+        let err = store.errno_to_error_for_test(-36, &path, "put");
+        assert!(matches!(err, object_store::Error::Generic { .. }));
+        assert!(err.to_string().contains("key too long"));
+
+        // Unknown errno -> Generic
+        let err = store.errno_to_error_for_test(-999, &path, "put");
+        assert!(matches!(err, object_store::Error::Generic { .. }));
+    }
 }
 
 //=============================================================================
@@ -695,7 +735,7 @@ mod ffi_tests {
         let result = RGWListResult::default();
         assert!(result.entries.is_null());
         assert_eq!(result.count, 0);
-        assert!(!result.is_truncated);
+        assert_eq!(result.is_truncated, 0);
         assert!(result.next_marker.is_null());
     }
 

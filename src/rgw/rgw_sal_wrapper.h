@@ -67,6 +67,39 @@ typedef struct RGWListResult {
 } RGWListResult;
 
 /*==========================================================================
+ * Thread Safety
+ *=========================================================================
+ * These functions are NOT thread-safe for concurrent operations on the same
+ * bucket/object. The caller must serialize operations when multiple threads
+ * access the same objects. Different threads may safely operate on different
+ * objects/buckets concurrently.
+ *
+ * Note: All operations use null_yield internally, meaning they block the
+ * calling thread. They must not be called from RGW coroutine contexts
+ * without yielding first. The SAL wrapper is intended for use from the
+ * Rust async runtime, which runs on its own thread pool.
+ *=========================================================================*/
+
+/*==========================================================================
+ * Memory Ownership Convention
+ *=========================================================================
+ * Input parameters:
+ *   - All string parameters (bucket, key, etc.) are borrowed (caller retains
+ *     ownership). They must remain valid for the duration of the call.
+ *   - data/len in put operations are borrowed (caller retains ownership).
+ *
+ * Output parameters:
+ *   - RGWBuffer: Allocated by rgw_get_object, caller must free with
+ *     rgw_free_buffer().
+ *   - RGWObjectMeta: Allocated by rgw_head_object, caller must free with
+ *     rgw_free_object_meta() (frees etag and content_type strings).
+ *   - RGWListResult: Allocated by rgw_list_objects, caller must free with
+ *     rgw_free_list_result() (frees all entry keys and next_marker).
+ *   - upload_id/etag out-buffers in multipart: Caller provides the buffer,
+ *     function writes into it. No separate free needed.
+ *=========================================================================*/
+
+/*==========================================================================
  * Core Object Operations
  *=========================================================================*/
 

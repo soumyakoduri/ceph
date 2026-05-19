@@ -122,13 +122,14 @@ int rgw_put_object(
             return -ENOMEM;
         }
 
-        // Create writer
-        ACLOwner owner;
+        // Get owner from bucket ACL for correct quota tracking and policy evaluation
+        ACLOwner owner = bucket->get_acl_owner();
+
         std::unique_ptr<rgw::sal::Writer> writer = driver->get_atomic_writer(
             dpp,
             null_yield,
             obj.get(),
-            owner,    // owner (empty ACLOwner)
+            owner,
             nullptr,  // ptail_placement_rule
             0,        // olh_epoch
             ""        // unique_tag
@@ -589,8 +590,8 @@ int rgw_copy_object(
             return -ENOMEM;
         }
 
-        // Copy object
-        ACLOwner owner;
+        // Copy object - get owner from destination bucket for correct ACL
+        ACLOwner owner = dst_bucket->get_acl_owner();
         rgw_user remote_user;
         rgw_zone_id source_zone;
         rgw_placement_rule dest_placement;
@@ -719,7 +720,8 @@ int rgw_init_multipart(
             return -ENOMEM;
         }
 
-        ACLOwner owner;
+        // Get owner from bucket ACL for correct quota/policy handling
+        ACLOwner owner = bucket->get_acl_owner();
         rgw_placement_rule placement;
         rgw::sal::Attrs attrs;
 
@@ -782,8 +784,8 @@ int rgw_multipart_put_part(
             return -ENOMEM;
         }
 
-        // Get writer for part
-        ACLOwner owner;
+        // Get writer for part - use bucket owner for correct accounting
+        ACLOwner owner = bucket->get_acl_owner();
         std::unique_ptr<rgw::sal::Writer> writer = upload->get_writer(
             dpp,
             null_yield,
@@ -918,7 +920,7 @@ int rgw_multipart_complete(
         RGWCompressionInfo cs_info;
         off_t ofs = 0;
         std::string tag;
-        ACLOwner owner;
+        ACLOwner owner = bucket->get_acl_owner();
         rgw::sal::MultipartUpload::prefix_map_t processed_prefixes;
 
         // Get target object

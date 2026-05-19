@@ -559,8 +559,10 @@ target_link_libraries(radosgw PRIVATE
   kmip
   ${ALLOC_LIBS})
 
-# Link ceph_lancedb_rgw AFTER rgw_libs (which contains rgw_common) to resolve
-# circular dependency - ceph_lancedb_rgw needs symbols from rgw_common
+# ceph_lancedb_rgw must be linked AFTER rgw_libs because:
+# - rgw_common provides rgw_sal_wrapper.cc symbols consumed by the Rust crate's FFI
+# - ceph_lancedb_rgw provides ceph_lancedb_create_session() consumed by rgw_s3vector.cc
+# The linker resolves symbols left-to-right, so ceph_lancedb_rgw must come last.
 if(WITH_RADOSGW_LANCEDB)
   target_link_libraries(radosgw PRIVATE ceph_lancedb_rgw)
 endif()
@@ -597,7 +599,7 @@ if(WITH_RADOSGW_ARROW_FLIGHT)
   target_link_libraries(radosgw-admin ${ARROW_LIBRARIES} ${ARROW_FLIGHT_LIBRARIES})
 endif(WITH_RADOSGW_ARROW_FLIGHT)
 
-# Link ceph_lancedb_rgw AFTER rgw_libs to resolve circular dependency
+# Same link-order reasoning as radosgw above (see comment there)
 if(WITH_RADOSGW_LANCEDB)
   target_link_libraries(radosgw-admin ceph_lancedb_rgw)
 endif()

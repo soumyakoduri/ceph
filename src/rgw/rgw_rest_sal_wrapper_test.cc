@@ -27,6 +27,10 @@
 
 namespace {
 
+// Limits to prevent abuse
+static constexpr int MAX_TEST_ITERATIONS = 1000;
+static constexpr size_t MAX_TEST_OBJECT_SIZE = 64 * 1024 * 1024; // 64MB
+
 // Test configuration from request
 struct TestConfig {
   std::string test_type = "all";  // "all", "put_get", "list", "copy"
@@ -39,6 +43,11 @@ struct TestConfig {
     int64_t size = object_size;
     JSONDecoder::decode_json("object_size", size, obj);
     object_size = static_cast<size_t>(size);
+
+    // Clamp to safe bounds
+    if (iterations < 1) iterations = 1;
+    if (iterations > MAX_TEST_ITERATIONS) iterations = MAX_TEST_ITERATIONS;
+    if (object_size > MAX_TEST_OBJECT_SIZE) object_size = MAX_TEST_OBJECT_SIZE;
   }
 };
 
@@ -108,10 +117,11 @@ std::vector<uint8_t> generate_random_data(size_t size) {
   return data;
 }
 
-// Helper to generate unique key
+// Helper to generate unique key under a dedicated test namespace
+// Uses __sal_test__/ prefix to avoid collisions with real objects
 std::string generate_unique_key(const std::string& prefix) {
   static std::atomic<int> counter{0};
-  return prefix + "_" + std::to_string(counter++) + "_" +
+  return "__sal_test__/" + prefix + "_" + std::to_string(counter++) + "_" +
          std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
 }
 
@@ -510,7 +520,12 @@ RGWSALWrapperTest::RGWSALWrapperTest() : impl_(new RGWSALWrapperTestImpl()) {}
 RGWSALWrapperTest::~RGWSALWrapperTest() { delete impl_; }
 
 int RGWSALWrapperTest::verify_permission(optional_yield y) {
-  // Allow access for testing - in production you'd want proper auth
+  // Only allow admin/system users to run SAL wrapper tests
+  // since tests write/delete objects in the bucket
+  if (!s->auth.identity->is_admin_of(s->user->get_id())) {
+    ldpp_dout(this, 1) << "ERROR: SAL wrapper test requires admin privileges" << dendl;
+    return -EACCES;
+  }
   return 0;
 }
 

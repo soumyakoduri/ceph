@@ -10,7 +10,6 @@ import os
 import stat
 import string
 from datetime import datetime, timedelta, timezone
-from datetime import datetime, timezone
 import pytest
 import boto3
 from botocore.config import Config

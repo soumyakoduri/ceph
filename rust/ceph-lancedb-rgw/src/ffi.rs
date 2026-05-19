@@ -65,14 +65,15 @@ pub struct RGWListEntry {
 }
 
 /// Result of a list objects operation
+/// Note: is_truncated is c_int (not bool) to match the C struct exactly
 #[repr(C)]
 pub struct RGWListResult {
     /// Array of list entries
     pub entries: *mut RGWListEntry,
     /// Number of entries
     pub count: usize,
-    /// True if there are more results
-    pub is_truncated: bool,
+    /// True (1) if there are more results, 0 otherwise
+    pub is_truncated: c_int,
     /// Marker for next page, null-terminated string
     pub next_marker: *mut c_char,
 }
@@ -82,7 +83,7 @@ impl Default for RGWListResult {
         Self {
             entries: std::ptr::null_mut(),
             count: 0,
-            is_truncated: false,
+            is_truncated: 0,
             next_marker: std::ptr::null_mut(),
         }
     }
@@ -152,7 +153,7 @@ mod mock_impl {
     ) -> c_int {
         (*result).entries = std::ptr::null_mut();
         (*result).count = 0;
-        (*result).is_truncated = false;
+        (*result).is_truncated = 0;
         (*result).next_marker = std::ptr::null_mut();
         0 // Success with empty result
     }
@@ -531,7 +532,7 @@ mod tests {
         let result = RGWListResult::default();
         assert!(result.entries.is_null());
         assert_eq!(result.count, 0);
-        assert!(!result.is_truncated);
+        assert_eq!(result.is_truncated, 0);
         assert!(result.next_marker.is_null());
     }
 
