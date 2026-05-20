@@ -1,0 +1,51 @@
+[package]
+name = "ceph-lancedb-rgw"
+version = "0.1.0"
+edition = "2021"
+description = "LanceDB RGW backend integration for Ceph - Zero upstream changes"
+license = "Apache-2.0"
+repository = "https://github.com/ceph/ceph"
+keywords = ["ceph", "rgw", "lancedb", "vector", "storage"]
+categories = ["database", "api-bindings"]
+
+[lib]
+name = "ceph_lancedb_rgw"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+# LanceDB ecosystem - versions matching lancedb-c
+lancedb = { version = "0.22", default-features = false }
+lance = { version = "0.39", default-features = false }
+lance-io = { version = "0.39", default-features = false }
+lance-core = { version = "0.39", default-features = false }
+
+# ObjectStore trait from Apache Arrow
+object_store = "0.12"
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# Data types
+bytes = "1"
+url = "2"
+chrono = "0.4"
+snafu = "0.8"
+
+# For C strings and FFI
+libc = "0.2"
+
+[build-dependencies]
+# For linking to Ceph libraries
+cc = "1.0"
+pkg-config = "0.3"
+
+[features]
+default = []
+# Enable mock SAL for testing without full Ceph
+mock-sal = []
+
+[dev-dependencies]
+tokio-test = "0.4"
+lazy_static = "1.4"
