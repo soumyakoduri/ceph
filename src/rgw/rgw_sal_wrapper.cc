@@ -137,7 +137,7 @@ int rgw_put_object(
         }
 
         // Get owner from bucket ACL for correct quota tracking and policy evaluation
-        ACLOwner owner = bucket->get_acl_owner();
+        ACLOwner owner = bucket->get_acl().get_owner();
 
         std::unique_ptr<rgw::sal::Writer> writer = driver->get_atomic_writer(
             dpp,
@@ -250,7 +250,7 @@ int rgw_put_object_conditional(
         }
 
         // Get owner from bucket ACL
-        ACLOwner owner = bucket->get_acl_owner();
+        ACLOwner owner = bucket->get_acl().get_owner();
 
         std::unique_ptr<rgw::sal::Writer> writer = driver->get_atomic_writer(
             dpp,
@@ -296,21 +296,6 @@ int rgw_put_object_conditional(
         ceph::real_time mtime = ceph::real_clock::now();
         req_context rctx{dpp, y, nullptr};
 
-        // Convert C strings to std::string pointers for SAL interface
-        std::string if_match_str;
-        std::string if_nomatch_str;
-        const std::string* if_match_ptr = nullptr;
-        const std::string* if_nomatch_ptr = nullptr;
-
-        if (if_match) {
-            if_match_str = if_match;
-            if_match_ptr = &if_match_str;
-        }
-        if (if_nomatch) {
-            if_nomatch_str = if_nomatch;
-            if_nomatch_ptr = &if_nomatch_str;
-        }
-
         bool was_canceled = false;
 
         ret = writer->complete(
@@ -321,8 +306,8 @@ int rgw_put_object_conditional(
             attrs,          // attrs
             std::nullopt,   // cksum
             ceph::real_time(),  // delete_at
-            if_match_ptr,   // if_match
-            if_nomatch_ptr, // if_nomatch
+            if_match,       // if_match (already const char*)
+            if_nomatch,     // if_nomatch (already const char*)
             nullptr,        // user_data
             nullptr,        // zones_trace
             &was_canceled,  // pcanceled
@@ -743,7 +728,7 @@ int rgw_copy_object(
         }
 
         // Copy object - get owner from destination bucket for correct ACL
-        ACLOwner owner = dst_bucket->get_acl_owner();
+        ACLOwner owner = dst_bucket->get_acl().get_owner();
         rgw_user remote_user;
         rgw_zone_id source_zone;
         rgw_placement_rule dest_placement;
@@ -850,28 +835,17 @@ int rgw_copy_object_conditional(
             dst_bucket->get_object(rgw_obj_key(dst_key));
         if (!dst_obj) return -ENOMEM;
 
-        ACLOwner owner = dst_bucket->get_acl_owner();
+        ACLOwner owner = dst_bucket->get_acl().get_owner();
         rgw_user remote_user;
         rgw_zone_id source_zone;
         rgw_placement_rule dest_placement;
         rgw::sal::Attrs attrs;
 
-        // Convert precondition strings for the copy call
-        // Note: SAL copy_object if_match/if_nomatch apply to the source object
-        std::string if_match_str;
-        std::string if_nomatch_str;
-        const std::string* if_match_ptr = nullptr;
-        const std::string* if_nomatch_ptr = nullptr;
-
-        if (if_match) {
-            if_match_str = if_match;
-            if_match_ptr = &if_match_str;
-        }
         // Don't pass if_nomatch="*" to copy_object since it checks
         // the source, not destination — we already did the dest check above
+        const char* copy_if_nomatch = nullptr;
         if (if_nomatch && std::string(if_nomatch) != "*") {
-            if_nomatch_str = if_nomatch;
-            if_nomatch_ptr = &if_nomatch_str;
+            copy_if_nomatch = if_nomatch;
         }
 
         ret = src_obj->copy_object(
@@ -888,8 +862,8 @@ int rgw_copy_object_conditional(
             nullptr,        // mod_ptr
             nullptr,        // unmod_ptr
             false,          // high_precision_time
-            if_match_ptr,   // if_match (on source)
-            if_nomatch_ptr, // if_nomatch (on source)
+            if_match,       // if_match (on source, already const char*)
+            copy_if_nomatch, // if_nomatch (on source)
             rgw::sal::ATTRSMOD_NONE,
             false,          // copy_if_newer
             attrs,
@@ -1002,7 +976,7 @@ int rgw_init_multipart(
         }
 
         // Get owner from bucket ACL for correct quota/policy handling
-        ACLOwner owner = bucket->get_acl_owner();
+        ACLOwner owner = bucket->get_acl().get_owner();
         rgw_placement_rule placement;
         rgw::sal::Attrs attrs;
 
@@ -1068,7 +1042,7 @@ int rgw_multipart_put_part(
         }
 
         // Get writer for part - use bucket owner for correct accounting
-        ACLOwner owner = bucket->get_acl_owner();
+        ACLOwner owner = bucket->get_acl().get_owner();
         std::unique_ptr<rgw::sal::Writer> writer = upload->get_writer(
             dpp,
             y,
@@ -1205,7 +1179,7 @@ int rgw_multipart_complete(
         RGWCompressionInfo cs_info;
         off_t ofs = 0;
         std::string tag;
-        ACLOwner owner = bucket->get_acl_owner();
+        ACLOwner owner = bucket->get_acl().get_owner();
         rgw::sal::MultipartUpload::prefix_map_t processed_prefixes;
 
         // Get target object

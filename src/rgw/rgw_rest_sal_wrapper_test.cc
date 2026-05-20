@@ -522,7 +522,7 @@ RGWSALWrapperTest::~RGWSALWrapperTest() { delete impl_; }
 int RGWSALWrapperTest::verify_permission(optional_yield y) {
   // Only allow admin/system users to run SAL wrapper tests
   // since tests write/delete objects in the bucket
-  if (!s->auth.identity->is_admin_of(s->user->get_id())) {
+  if (!s->auth.identity->is_admin()) {
     ldpp_dout(this, 1) << "ERROR: SAL wrapper test requires admin privileges" << dendl;
     return -EACCES;
   }
