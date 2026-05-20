@@ -11,3 +11,41 @@ s3vectors Tests
   `S3VTESTS_CONF=s3vtests.conf.SAMPLE tox -- s3vector_test.py -m "<marker name>"`
 * In case of multisite environment, you can set a "secondary" site in the conf file. See: `s3vtests.conf.multisite`
 
+Configuration Options
+=====================
+
+The following options can be set in the config file under the `[DEFAULT]` section:
+
++-------------------+----------+---------+---------------------------------------------------+
+| Option            | Required | Default | Description                                       |
++===================+==========+=========+===================================================+
+| host              | Yes      | -       | RGW endpoint hostname                             |
++-------------------+----------+---------+---------------------------------------------------+
+| port              | Yes      | -       | RGW endpoint port                                 |
++-------------------+----------+---------+---------------------------------------------------+
+| zonegroup         | Yes      | -       | RGW zonegroup name                                |
++-------------------+----------+---------+---------------------------------------------------+
+| s3vector_backend  | No       | local   | Storage backend for s3vector data.                |
+|                   |          |         | Options: ``local`` or ``s3``                      |
++-------------------+----------+---------+---------------------------------------------------+
+
+S3 Backend Mode
+---------------
+
+When ``s3vector_backend`` is set to ``s3``, the tests will automatically create
+a regular S3 bucket with the same name as the vector bucket before performing
+vector operations. This is required because the S3 backend stores LanceDB data
+directly in an S3 bucket with the vector bucket name.
+
+Example configuration for S3 backend::
+
+    [DEFAULT]
+    port = 8000
+    host = localhost
+    zonegroup = default
+    s3vector_backend = s3
+
+    [s3 main]
+    access_key = 0555b35654ad1656d804
+    secret_key = h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q==
+
