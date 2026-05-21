@@ -10,7 +10,9 @@
 #include <arrow/type_fwd.h>
 #include <fmt/format.h>
 #include "lancedb.h"
+#ifdef WITH_RADOSGW_LANCEDB
 #include "ceph_lancedb_rgw.h"
+#endif
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <boost/algorithm/string/predicate.hpp>
@@ -102,7 +104,9 @@ namespace rgw::s3vector {
     const std::string backend = conf.get_val<std::string>("rgw_s3vector_backend");
     std::string uri;
     LanceDBConnectBuilder* builder = nullptr;
+#ifdef WITH_RADOSGW_LANCEDB
     CephLanceDBSession* sal_session = nullptr;
+#endif
 
     if (boost::iequals(backend, "s3")) {
       // S3 backend configuration
@@ -117,6 +121,7 @@ namespace rgw::s3vector {
 
       // Check if using SAL backend (no endpoint configured) or external S3 backend
       if (is_sal_backend(cct)) {
+#ifdef WITH_RADOSGW_LANCEDB
         ldpp_dout(dpp, 10) << "INFO: s3vector using SAL backend for: " << uri << dendl;
 
         // Create SAL session that routes S3 URLs through RGW SAL API
@@ -134,6 +139,11 @@ namespace rgw::s3vector {
           ceph_lancedb_session_free(sal_session);
           return nullptr;
         }
+#else
+        ldpp_dout(dpp, 1) << "ERROR: s3vector SAL backend requires WITH_RADOSGW_LANCEDB" << dendl;
+        lancedb_connect_builder_free(builder);
+        return nullptr;
+#endif
       } else {
         // External S3 backend - use user credentials for access_key/secret_key
         // Region and endpoint are always read from config
@@ -226,9 +236,11 @@ namespace rgw::s3vector {
     LanceDBConnection* conn = lancedb_connect_builder_execute(builder);
     if (!conn) {
       ldpp_dout(dpp, 1) << "ERROR: s3vector failed to connect to: " << uri << dendl;
+#ifdef WITH_RADOSGW_LANCEDB
       if (sal_session) {
         ceph_lancedb_session_free(sal_session);
       }
+#endif
     }
     // Note: sal_session is intentionally not freed here - it's owned by the connection
     // and will be freed when the connection is closed

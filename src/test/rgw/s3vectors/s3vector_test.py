@@ -331,7 +331,9 @@ def _ensure_s3_bucket_for_vector_bucket(bucket_name):
         s3conn.head_bucket(Bucket=bucket_name)
         log.info("S3 bucket '%s' already exists", bucket_name)
     except s3conn.exceptions.ClientError as err:
-        if err.response['Error']['Code'] == '404':
+        error_code = err.response['Error']['Code']
+        # Handle both '404' and 'NoSuchBucket' as bucket-not-found
+        if error_code in ('404', 'NoSuchBucket'):
             # Bucket doesn't exist, create it
             log.info("Creating S3 bucket '%s' for S3 backend", bucket_name)
             _create_s3bucket(s3conn, bucket_name)
