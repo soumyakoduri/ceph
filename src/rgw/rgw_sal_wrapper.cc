@@ -559,12 +559,21 @@ int rgw_head_object(
         auto etag_iter = attrs.find(RGW_ATTR_ETAG);
         if (etag_iter != attrs.end()) {
             meta->etag = strdup_safe(etag_iter->second.to_str());
+            if (!meta->etag) {
+                return -ENOMEM;
+            }
         }
 
         // Get content type from attributes
         auto ct_iter = attrs.find(RGW_ATTR_CONTENT_TYPE);
         if (ct_iter != attrs.end()) {
             meta->content_type = strdup_safe(ct_iter->second.to_str());
+            if (!meta->content_type) {
+                // Free already-allocated etag before returning
+                free(meta->etag);
+                meta->etag = nullptr;
+                return -ENOMEM;
+            }
         }
 
         return 0;
@@ -659,6 +668,12 @@ int rgw_list_objects(
             size_t i = 0;
             for (const auto& obj : results.objs) {
                 result->entries[i].key = strdup_safe(obj.key.name);
+                if (!result->entries[i].key) {
+                    // Free all previously allocated keys
+                    result->count = i;  // Set count for proper cleanup
+                    rgw_free_list_result(result);
+                    return -ENOMEM;
+                }
                 result->entries[i].size = obj.meta.size;
                 result->entries[i].last_modified =
                     ceph::real_clock::to_time_t(obj.meta.mtime);
@@ -669,6 +684,12 @@ int rgw_list_objects(
             // common_prefixes is a map<string, bool>
             for (const auto& [prefix_name, _] : results.common_prefixes) {
                 result->entries[i].key = strdup_safe(prefix_name);
+                if (!result->entries[i].key) {
+                    // Free all previously allocated keys
+                    result->count = i;  // Set count for proper cleanup
+                    rgw_free_list_result(result);
+                    return -ENOMEM;
+                }
                 result->entries[i].size = 0;
                 result->entries[i].last_modified = time(nullptr);
                 i++;
@@ -680,6 +701,10 @@ int rgw_list_objects(
 
         if (results.is_truncated && !results.next_marker.name.empty()) {
             result->next_marker = strdup_safe(results.next_marker.name);
+            if (!result->next_marker) {
+                rgw_free_list_result(result);
+                return -ENOMEM;
+            }
         }
 
         return 0;
