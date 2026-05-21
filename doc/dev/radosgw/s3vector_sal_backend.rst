@@ -164,9 +164,17 @@ The following C structures are used for FFI communication::
 
     typedef struct RGWBuffer {
         uint8_t* data;      /* Pointer to data (allocated by RGW) */
-        size_t len;         /* Length of valid data */
-        size_t capacity;    /* Allocated capacity */
+        size_t len;         /* Length of valid data in buffer */
+        size_t capacity;    /* Total allocated size of buffer */
     } RGWBuffer;
+
+.. note::
+
+   ``len`` and ``capacity`` differ in range read scenarios. For example, when
+   requesting 1000 bytes but the object only contains 500 bytes, ``capacity``
+   will be 1000 (allocated size) while ``len`` will be 500 (actual valid data).
+   This allows callers to know both the usable data length and the allocated
+   memory size for proper cleanup.
 
     typedef struct RGWObjectMeta {
         uint64_t size;          /* Object size in bytes */
