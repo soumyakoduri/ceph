@@ -133,12 +133,15 @@ namespace rgw::s3vector {
         }
 
         // Attach the SAL session to the connection builder
-        builder = lancedb_connect_builder_session_ptr(builder, sal_session);
-        if (!builder) {
+        // Use temp variable to avoid losing builder pointer on failure
+        LanceDBConnectBuilder* new_builder = lancedb_connect_builder_session_ptr(builder, sal_session);
+        if (!new_builder) {
           ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set SAL session" << dendl;
+          lancedb_connect_builder_free(builder);
           ceph_lancedb_session_free(sal_session);
           return nullptr;
         }
+        builder = new_builder;
 #else
         ldpp_dout(dpp, 1) << "ERROR: s3vector SAL backend requires WITH_RADOSGW_LANCEDB" << dendl;
         lancedb_connect_builder_free(builder);
@@ -166,50 +169,53 @@ namespace rgw::s3vector {
           ldpp_dout(dpp, 10) << "INFO: s3vector using config credentials for external S3 backend" << dendl;
         }
 
+        // Helper to set storage options with proper error handling
+        // lancedb_connect_builder_storage_option may not consume the builder on failure,
+        // so we use a temp variable and free the old builder if needed
+        auto set_storage_option = [&](const char* key, const char* value) -> bool {
+          LanceDBConnectBuilder* new_builder = lancedb_connect_builder_storage_option(builder, key, value);
+          if (!new_builder) {
+            ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set storage option: " << key << dendl;
+            lancedb_connect_builder_free(builder);
+            builder = nullptr;
+            return false;
+          }
+          builder = new_builder;
+          return true;
+        };
+
         if (!s3_endpoint.empty()) {
-          builder = lancedb_connect_builder_storage_option(builder, "endpoint", s3_endpoint.c_str());
-          if (!builder) {
-            ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 endpoint" << dendl;
+          if (!set_storage_option("endpoint", s3_endpoint.c_str())) {
             return nullptr;
           }
         }
 
         if (!s3_region.empty()) {
-          builder = lancedb_connect_builder_storage_option(builder, "aws_region", s3_region.c_str());
-          if (!builder) {
-            ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 region" << dendl;
+          if (!set_storage_option("aws_region", s3_region.c_str())) {
             return nullptr;
           }
         }
 
         if (!s3_access_key.empty()) {
-          builder = lancedb_connect_builder_storage_option(builder, "aws_access_key_id", s3_access_key.c_str());
-          if (!builder) {
-            ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 access key" << dendl;
+          if (!set_storage_option("aws_access_key_id", s3_access_key.c_str())) {
             return nullptr;
           }
         }
 
         if (!s3_secret_key.empty()) {
-          builder = lancedb_connect_builder_storage_option(builder, "aws_secret_access_key", s3_secret_key.c_str());
-          if (!builder) {
-            ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 secret key" << dendl;
+          if (!set_storage_option("aws_secret_access_key", s3_secret_key.c_str())) {
             return nullptr;
           }
         }
 
         if (s3_allow_http) {
-          builder = lancedb_connect_builder_storage_option(builder, "allow_http", "true");
-          if (!builder) {
-            ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set allow_http option" << dendl;
+          if (!set_storage_option("allow_http", "true")) {
             return nullptr;
           }
         }
 
         // Use path-style addressing for S3-compatible services
-        builder = lancedb_connect_builder_storage_option(builder, "aws_s3_addressing_style", "path");
-        if (!builder) {
-          ldpp_dout(dpp, 1) << "ERROR: s3vector failed to set S3 addressing style" << dendl;
+        if (!set_storage_option("aws_s3_addressing_style", "path")) {
           return nullptr;
         }
 
