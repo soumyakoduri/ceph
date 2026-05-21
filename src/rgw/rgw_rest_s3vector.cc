@@ -34,8 +34,10 @@ std::unique_ptr<rgw::s3vector::S3Credentials> get_user_s3_credentials(req_state*
 
   const auto& access_keys = s->user->get_info().access_keys;
   if (access_keys.empty()) {
-    ldpp_dout(s, 1) << "ERROR: s3vector external S3 backend requires user "
-                    << "to have access keys, but none found" << dendl;
+    // User has no access keys - will fall back to config credentials
+    // (rgw_s3vector_s3_access_key/secret_key) for external S3 backend
+    ldpp_dout(s, 10) << "INFO: s3vector user has no access keys, "
+                     << "will use config credentials for external S3" << dendl;
     return nullptr;
   }
 

@@ -326,6 +326,22 @@ For external S3 backend::
     rgw_s3vector_s3_access_key = AKIAIOSFODNN7EXAMPLE
     rgw_s3vector_s3_secret_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 
+External S3 Credential Priority
+-------------------------------
+
+When using the external S3 backend (``rgw_s3vector_s3_endpoint`` is set), credentials
+are selected in the following order:
+
+1. **User credentials**: If the authenticated RGW user has access keys, those are used
+   for external S3 requests. This allows per-user access control on the external S3.
+
+2. **Config credentials**: If the user has no access keys (e.g., LDAP users, STS assumed
+   roles without keys), the system falls back to ``rgw_s3vector_s3_access_key`` and
+   ``rgw_s3vector_s3_secret_key`` from the configuration.
+
+This fallback behavior allows S3 Vector operations to work for all authenticated users
+while still supporting per-user credentials when available.
+
 For local filesystem backend::
 
     rgw_s3vector_backend = local
