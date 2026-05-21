@@ -180,6 +180,8 @@ public:
           result.passed = false;
           result.error = "Get failed with errno: " + std::to_string(ret);
           rgw_free_buffer(&buffer);
+          // Best-effort cleanup of the created test object
+          rgw_delete_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str());
           break;
         }
 
@@ -190,6 +192,8 @@ public:
           result.error = "Data mismatch: expected " + std::to_string(data.size()) +
                         " bytes, got " + std::to_string(buffer.len);
           rgw_free_buffer(&buffer);
+          // Best-effort cleanup of the created test object
+          rgw_delete_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str());
           break;
         }
 

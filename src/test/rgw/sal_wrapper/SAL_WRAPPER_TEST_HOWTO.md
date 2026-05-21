@@ -45,16 +45,11 @@ The SAL wrapper test endpoint requires admin privileges because it writes and de
 
 ### Step 4: Run tests
 
-**Note:** All POST requests to the test endpoint require admin user credentials. GET requests (info endpoint) are open.
+**Note:** POST requests to run tests require admin user credentials. GET requests for endpoint info do not require authentication.
 
 ```bash
-# Get endpoint info (no auth required)
+# Get endpoint info (no auth required) - note: must include bucket name in path
 curl http://localhost:8000/sal-wrapper-test?sal-wrapper-test
-
-# Run all tests (requires admin credentials via AWS signature)
-AWS_ACCESS_KEY_ID=testkey AWS_SECRET_ACCESS_KEY=testsecret \
-  aws --endpoint-url http://localhost:8000 \
-  s3api put-object --bucket sal-wrapper-test --key __dummy__ --body /dev/null
 
 # Use the Python test script for proper presigned URL authentication:
 python3 src/test/rgw/sal_wrapper/test_sal_wrapper_endpoint.py
