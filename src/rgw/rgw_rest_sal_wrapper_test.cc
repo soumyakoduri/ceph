@@ -18,7 +18,9 @@
 #include "rgw_rest_s3.h"
 #include "common/errno.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstring>
 #include <random>
 #include <sstream>
 
@@ -459,51 +461,44 @@ public:
   }
 };
 
-// Info endpoint
-class RGWSALWrapperTestInfo : public RGWOp {
-public:
-  RGWSALWrapperTestInfo() = default;
-  ~RGWSALWrapperTestInfo() override = default;
-
-  int verify_permission(optional_yield y) override { return 0; }
-  void pre_exec() override {}
-  const char* name() const override { return "sal_wrapper_test_info"; }
-  RGWOpType get_type() override { return RGW_OP_UNKNOWN; }
-  uint32_t op_mask() override { return RGW_OP_TYPE_READ; }
-
-  void execute(optional_yield y) override {
-    op_ret = 0;
-  }
-
-  void send_response() override {
-    dump_errno(s);
-    end_header(s, this, "application/json");
-
-    dump_start(s);
-    Formatter* f = s->formatter;
-
-    f->open_object_section("sal_wrapper_test");
-    encode_json("version", "1.0", f);
-    encode_json("description", "SAL Wrapper Test Endpoint", f);
-
-    f->open_object_section("usage");
-    encode_json("method", "POST", f);
-    encode_json("path", "/{bucket}?sal-wrapper-test", f);
-    f->close_section();
-
-    f->open_object_section("config_options");
-    encode_json("test", "all | put_get | list | copy | multipart", f);
-    encode_json("iterations", "number of iterations (default: 10)", f);
-    encode_json("object_size", "size of test objects in bytes (default: 1024)", f);
-    f->close_section();
-
-    f->close_section();
-
-    rgw_flush_formatter_and_reset(s, f);
-  }
-};
-
 } // anonymous namespace
+
+//=============================================================================
+// RGWSALWrapperTestInfo implementation (declared in header)
+//=============================================================================
+
+void RGWSALWrapperTestInfo::execute(optional_yield y) {
+  op_ret = 0;
+}
+
+void RGWSALWrapperTestInfo::send_response() {
+  dump_errno(s);
+  end_header(s, this, "application/json");
+
+  dump_start(s);
+  Formatter* f = s->formatter;
+
+  f->open_object_section("sal_wrapper_test");
+  encode_json("version", "1.0", f);
+  encode_json("description", "SAL Wrapper Test Endpoint", f);
+
+  f->open_object_section("usage");
+  encode_json("method", "POST", f);
+  encode_json("path", "/{bucket}?sal-wrapper-test", f);
+  f->close_section();
+
+  f->open_object_section("config_options");
+  encode_json("test", "all | put_get | list | copy | multipart", f);
+  encode_json("iterations", "number of iterations (default: 10)", f);
+  encode_json("object_size", "size of test objects in bytes (default: 1024)", f);
+  f->close_section();
+
+  encode_json("note", "Requires admin privileges", f);
+
+  f->close_section();
+
+  rgw_flush_formatter_and_reset(s, f);
+}
 
 //=============================================================================
 // RGWSALWrapperTest implementation (declared in header)

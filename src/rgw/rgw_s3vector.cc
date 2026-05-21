@@ -13,6 +13,7 @@
 #include "ceph_lancedb_rgw.h"
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
+#include <boost/algorithm/string/predicate.hpp>
 #include <charconv>
 
 #define dout_subsys ceph_subsys_rgw
@@ -100,7 +101,7 @@ namespace rgw::s3vector {
     LanceDBConnectBuilder* builder = nullptr;
     CephLanceDBSession* sal_session = nullptr;
 
-    if (backend == "s3") {
+    if (boost::iequals(backend, "s3")) {
       // S3 backend configuration
       // Use vector bucket name directly as the S3 bucket name
       // A regular S3 bucket with the same name as the vector bucket must exist

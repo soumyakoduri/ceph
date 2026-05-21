@@ -1055,10 +1055,13 @@ mod tests {
 
     #[test]
     fn test_path_to_cstr_with_prefix() {
+        // Note: path_to_cstr does NOT prepend the prefix because the Lance ObjectStore
+        // wrapper already handles the base path from the URL. Our inner store receives
+        // paths that are already relative to the bucket root.
         let store = unsafe { RGWObjectStore::new(std::ptr::null_mut(), std::ptr::null(), "test-bucket", "my-prefix/") };
         let path = Path::from("some/path.txt");
         let cstr = store.path_to_cstr(&path).unwrap();
-        assert_eq!(cstr.to_str().unwrap(), "my-prefix/some/path.txt");
+        assert_eq!(cstr.to_str().unwrap(), "some/path.txt");
     }
 
     #[test]

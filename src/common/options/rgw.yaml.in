@@ -4707,13 +4707,3 @@ options:
   services:
   - rgw
   with_legacy: true
-- name: rgw_s3vector_s3_bucket
-  type: str
-  level: advanced
-  desc: S3 bucket name for S3 Vector backend storage
-  long_desc: The S3 bucket name to use for storing vector data when rgw_s3vector_backend
-    is set to "s3". All vector buckets will store their data within this bucket using
-    the vector bucket name as a prefix. This bucket must be created beforehand.
-  services:
-  - rgw
-  with_legacy: true

@@ -139,7 +139,7 @@ TEST_F(RGWSALWrapperTest, PutObjectNullDriver) {
     const uint8_t data[] = "test data";
     const char* content_type = "application/octet-stream";
 
-    int result = rgw_put_object(driver, dpp, bucket, key, data, sizeof(data), content_type);
+    int result = rgw_put_object(driver, dpp, nullptr, bucket, key, data, sizeof(data), content_type);
     // Should return an error (negative errno) for null driver
     EXPECT_LT(result, 0);
 }
@@ -150,7 +150,7 @@ TEST_F(RGWSALWrapperTest, GetObjectNullDriver) {
     const char* key = "test-key";
     RGWBuffer buffer = {nullptr, 0, 0};
 
-    int result = rgw_get_object(driver, dpp, bucket, key, 0, UINT64_MAX, &buffer);
+    int result = rgw_get_object(driver, dpp, nullptr, bucket, key, 0, UINT64_MAX, &buffer);
     EXPECT_LT(result, 0);
 
     rgw_free_buffer(&buffer);
@@ -161,7 +161,7 @@ TEST_F(RGWSALWrapperTest, DeleteObjectNullDriver) {
     const char* bucket = "test-bucket";
     const char* key = "test-key";
 
-    int result = rgw_delete_object(driver, dpp, bucket, key);
+    int result = rgw_delete_object(driver, dpp, nullptr, bucket, key);
     EXPECT_LT(result, 0);
 }
 
@@ -171,7 +171,7 @@ TEST_F(RGWSALWrapperTest, HeadObjectNullDriver) {
     const char* key = "test-key";
     RGWObjectMeta meta = {0, nullptr, nullptr, 0};
 
-    int result = rgw_head_object(driver, dpp, bucket, key, &meta);
+    int result = rgw_head_object(driver, dpp, nullptr, bucket, key, &meta);
     EXPECT_LT(result, 0);
 
     rgw_free_object_meta(&meta);
@@ -185,7 +185,7 @@ TEST_F(RGWSALWrapperTest, ListObjectsNullDriver) {
     const char* marker = "";
     RGWListResult result_struct = {nullptr, 0, 0, nullptr};
 
-    int result = rgw_list_objects(driver, dpp, bucket, prefix, delimiter, marker, 1000, &result_struct);
+    int result = rgw_list_objects(driver, dpp, nullptr, bucket, prefix, delimiter, marker, 1000, &result_struct);
     EXPECT_LT(result, 0);
 
     rgw_free_list_result(&result_struct);
@@ -198,7 +198,7 @@ TEST_F(RGWSALWrapperTest, CopyObjectNullDriver) {
     const char* dst_bucket = "dst-bucket";
     const char* dst_key = "dst-key";
 
-    int result = rgw_copy_object(driver, dpp, src_bucket, src_key, dst_bucket, dst_key);
+    int result = rgw_copy_object(driver, dpp, nullptr, src_bucket, src_key, dst_bucket, dst_key);
     EXPECT_LT(result, 0);
 }
 
@@ -209,7 +209,7 @@ TEST_F(RGWSALWrapperTest, InitMultipartNullDriver) {
     char upload_id[128];
     memset(upload_id, 0, sizeof(upload_id));
 
-    int result = rgw_init_multipart(driver, dpp, bucket, key, upload_id, sizeof(upload_id));
+    int result = rgw_init_multipart(driver, dpp, nullptr, bucket, key, upload_id, sizeof(upload_id));
     EXPECT_LT(result, 0);
 }
 
@@ -223,7 +223,7 @@ TEST_F(RGWSALWrapperTest, MultipartPutPartNullDriver) {
     memset(etag, 0, sizeof(etag));
 
     int result = rgw_multipart_put_part(
-        driver, dpp, bucket, key, upload_id, 1,
+        driver, dpp, nullptr, bucket, key, upload_id, 1,
         data, sizeof(data), etag, sizeof(etag)
     );
     EXPECT_LT(result, 0);
@@ -236,7 +236,7 @@ TEST_F(RGWSALWrapperTest, MultipartCompleteNullDriver) {
     const char* upload_id = "fake-upload-id";
     const char* etags[] = {"etag1", "etag2"};
 
-    int result = rgw_multipart_complete(driver, dpp, bucket, key, upload_id, etags, 2);
+    int result = rgw_multipart_complete(driver, dpp, nullptr, bucket, key, upload_id, etags, 2);
     EXPECT_LT(result, 0);
 }
 
@@ -246,7 +246,7 @@ TEST_F(RGWSALWrapperTest, MultipartAbortNullDriver) {
     const char* key = "test-key";
     const char* upload_id = "fake-upload-id";
 
-    int result = rgw_multipart_abort(driver, dpp, bucket, key, upload_id);
+    int result = rgw_multipart_abort(driver, dpp, nullptr, bucket, key, upload_id);
     EXPECT_LT(result, 0);
 }
 
@@ -263,31 +263,31 @@ protected:
 
 TEST_F(ParameterValidationTest, PutObjectNullBucket) {
     const uint8_t data[] = "test";
-    int result = rgw_put_object(fake_driver, fake_dpp, nullptr, "key",
+    int result = rgw_put_object(fake_driver, fake_dpp, nullptr, nullptr, "key",
                                 data, sizeof(data), "text/plain");
     EXPECT_LT(result, 0);
 }
 
 TEST_F(ParameterValidationTest, PutObjectNullKey) {
     const uint8_t data[] = "test";
-    int result = rgw_put_object(fake_driver, fake_dpp, "bucket", nullptr,
+    int result = rgw_put_object(fake_driver, fake_dpp, nullptr, "bucket", nullptr,
                                 data, sizeof(data), "text/plain");
     EXPECT_LT(result, 0);
 }
 
 TEST_F(ParameterValidationTest, GetObjectNullBuffer) {
-    int result = rgw_get_object(fake_driver, fake_dpp, "bucket", "key",
+    int result = rgw_get_object(fake_driver, fake_dpp, nullptr, "bucket", "key",
                                 0, UINT64_MAX, nullptr);
     EXPECT_LT(result, 0);
 }
 
 TEST_F(ParameterValidationTest, HeadObjectNullMeta) {
-    int result = rgw_head_object(fake_driver, fake_dpp, "bucket", "key", nullptr);
+    int result = rgw_head_object(fake_driver, fake_dpp, nullptr, "bucket", "key", nullptr);
     EXPECT_LT(result, 0);
 }
 
 TEST_F(ParameterValidationTest, ListObjectsNullResult) {
-    int result = rgw_list_objects(fake_driver, fake_dpp, "bucket", "", "", "", 1000, nullptr);
+    int result = rgw_list_objects(fake_driver, fake_dpp, nullptr, "bucket", "", "", "", 1000, nullptr);
     EXPECT_LT(result, 0);
 }
 
@@ -340,7 +340,7 @@ protected:
 
 TEST_F(BoundaryTest, PutObjectZeroLength) {
     const uint8_t data[] = "";
-    int result = rgw_put_object(fake_driver, fake_dpp, "bucket", "key",
+    int result = rgw_put_object(fake_driver, fake_dpp, nullptr, "bucket", "key",
                                 data, 0, "application/octet-stream");
     // Should handle zero-length data (may succeed or fail depending on impl)
     // Just ensure it doesn't crash
@@ -351,7 +351,7 @@ TEST_F(BoundaryTest, PutObjectZeroLength) {
 TEST_F(BoundaryTest, PutObjectMaxLength) {
     // Test with a large but reasonable size
     std::vector<uint8_t> large_data(1024 * 1024); // 1MB
-    int result = rgw_put_object(fake_driver, fake_dpp, "bucket", "key",
+    int result = rgw_put_object(fake_driver, fake_dpp, nullptr, "bucket", "key",
                                 large_data.data(), large_data.size(),
                                 "application/octet-stream");
     (void)result;
@@ -362,7 +362,7 @@ TEST_F(BoundaryTest, GetObjectRangeRead) {
     RGWBuffer buffer = {nullptr, 0, 0};
 
     // Test range read with offset and length
-    int result = rgw_get_object(fake_driver, fake_dpp, "bucket", "key",
+    int result = rgw_get_object(fake_driver, fake_dpp, nullptr, "bucket", "key",
                                 100, 50, &buffer);
     (void)result;
     rgw_free_buffer(&buffer);
@@ -373,12 +373,12 @@ TEST_F(BoundaryTest, ListObjectsMaxKeys) {
     RGWListResult result_struct = {nullptr, 0, 0, nullptr};
 
     // Test with max_keys = 0
-    int result = rgw_list_objects(fake_driver, fake_dpp, "bucket", "", "", "", 0, &result_struct);
+    int result = rgw_list_objects(fake_driver, fake_dpp, nullptr, "bucket", "", "", "", 0, &result_struct);
     (void)result;
     rgw_free_list_result(&result_struct);
 
     // Test with max_keys = UINT32_MAX
-    result = rgw_list_objects(fake_driver, fake_dpp, "bucket", "", "", "", UINT32_MAX, &result_struct);
+    result = rgw_list_objects(fake_driver, fake_dpp, nullptr, "bucket", "", "", "", UINT32_MAX, &result_struct);
     (void)result;
     rgw_free_list_result(&result_struct);
 
@@ -394,25 +394,25 @@ TEST_F(BoundaryTest, MultipartPartNumberBoundary) {
     int result;
 
     // Part number 0 (invalid)
-    result = rgw_multipart_put_part(fake_driver, fake_dpp, "bucket", "key",
+    result = rgw_multipart_put_part(fake_driver, fake_dpp, nullptr, "bucket", "key",
                                     "upload-id", 0, data, sizeof(data),
                                     etag, sizeof(etag));
     (void)result;
 
     // Part number 1 (valid minimum)
-    result = rgw_multipart_put_part(fake_driver, fake_dpp, "bucket", "key",
+    result = rgw_multipart_put_part(fake_driver, fake_dpp, nullptr, "bucket", "key",
                                     "upload-id", 1, data, sizeof(data),
                                     etag, sizeof(etag));
     (void)result;
 
     // Part number 10000 (valid maximum)
-    result = rgw_multipart_put_part(fake_driver, fake_dpp, "bucket", "key",
+    result = rgw_multipart_put_part(fake_driver, fake_dpp, nullptr, "bucket", "key",
                                     "upload-id", 10000, data, sizeof(data),
                                     etag, sizeof(etag));
     (void)result;
 
     // Part number 10001 (invalid)
-    result = rgw_multipart_put_part(fake_driver, fake_dpp, "bucket", "key",
+    result = rgw_multipart_put_part(fake_driver, fake_dpp, nullptr, "bucket", "key",
                                     "upload-id", 10001, data, sizeof(data),
                                     etag, sizeof(etag));
     (void)result;
@@ -426,7 +426,7 @@ TEST_F(BoundaryTest, MultipartPartNumberBoundary) {
 
 TEST_F(BoundaryTest, PutObjectUnicodeKey) {
     const uint8_t data[] = "test";
-    int result = rgw_put_object(fake_driver, fake_dpp, "bucket",
+    int result = rgw_put_object(fake_driver, fake_dpp, nullptr, "bucket",
                                 "données/fichier-测试.txt",
                                 data, sizeof(data), "text/plain");
     (void)result;
@@ -435,7 +435,7 @@ TEST_F(BoundaryTest, PutObjectUnicodeKey) {
 
 TEST_F(BoundaryTest, PutObjectSpecialCharsKey) {
     const uint8_t data[] = "test";
-    int result = rgw_put_object(fake_driver, fake_dpp, "bucket",
+    int result = rgw_put_object(fake_driver, fake_dpp, nullptr, "bucket",
                                 "path/with spaces/and+plus/file.txt",
                                 data, sizeof(data), "text/plain");
     (void)result;
@@ -445,7 +445,7 @@ TEST_F(BoundaryTest, PutObjectSpecialCharsKey) {
 TEST_F(BoundaryTest, ListObjectsUnicodePrefix) {
     RGWListResult result_struct = {nullptr, 0, 0, nullptr};
 
-    int result = rgw_list_objects(fake_driver, fake_dpp, "bucket",
+    int result = rgw_list_objects(fake_driver, fake_dpp, nullptr, "bucket",
                                   "données/", "", "", 1000, &result_struct);
     (void)result;
     rgw_free_list_result(&result_struct);
@@ -453,9 +453,3 @@ TEST_F(BoundaryTest, ListObjectsUnicodePrefix) {
 }
 
 } // namespace
-
-// Main test runner
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

@@ -40,7 +40,7 @@
 // Forward declaration
 struct RGWSALWrapperTestImpl;
 
-// SAL wrapper test operation
+// SAL wrapper test operation (POST - runs tests)
 class RGWSALWrapperTest : public RGWOp {
   RGWSALWrapperTestImpl* impl_;
 
@@ -54,6 +54,21 @@ public:
   RGWOpType get_type() override;
   uint32_t op_mask() override;
   int init_processing(optional_yield y) override;
+  void execute(optional_yield y) override;
+  void send_response() override;
+};
+
+// SAL wrapper test info endpoint (GET - returns usage info)
+class RGWSALWrapperTestInfo : public RGWOp {
+public:
+  RGWSALWrapperTestInfo() = default;
+  ~RGWSALWrapperTestInfo() override = default;
+
+  int verify_permission(optional_yield y) override { return 0; }
+  void pre_exec() override {}
+  const char* name() const override { return "sal_wrapper_test_info"; }
+  RGWOpType get_type() override { return RGW_OP_UNKNOWN; }
+  uint32_t op_mask() override { return RGW_OP_TYPE_READ; }
   void execute(optional_yield y) override;
   void send_response() override;
 };

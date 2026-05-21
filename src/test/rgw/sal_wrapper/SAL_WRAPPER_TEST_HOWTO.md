@@ -35,16 +35,28 @@ AWS_ACCESS_KEY_ID=testkey AWS_SECRET_ACCESS_KEY=testsecret \
   aws --endpoint-url http://localhost:8000 s3 mb s3://sal-wrapper-test
 ```
 
-### Step 3: Run tests
+### Step 3: Make user an admin
+
+The SAL wrapper test endpoint requires admin privileges because it writes and deletes test objects:
 
 ```bash
-# Get endpoint info
+./bin/radosgw-admin user modify --uid=testuser --admin
+```
+
+### Step 4: Run tests
+
+**Note:** All POST requests to the test endpoint require admin user credentials. GET requests (info endpoint) are open.
+
+```bash
+# Get endpoint info (no auth required)
 curl http://localhost:8000/sal-wrapper-test?sal-wrapper-test
 
-# Run all tests (default config)
-curl -X POST http://localhost:8000/sal-wrapper-test?sal-wrapper-test \
-  -H "Content-Type: application/json" \
-  -d '{}'
+# Run all tests (requires admin credentials via AWS signature)
+AWS_ACCESS_KEY_ID=testkey AWS_SECRET_ACCESS_KEY=testsecret \
+  aws --endpoint-url http://localhost:8000 \
+  s3api put-object --bucket sal-wrapper-test --key __dummy__ --body /dev/null
+
+# Or use presigned URLs - see Python test script below
 
 # Run specific test type with custom config
 curl -X POST http://localhost:8000/sal-wrapper-test?sal-wrapper-test \

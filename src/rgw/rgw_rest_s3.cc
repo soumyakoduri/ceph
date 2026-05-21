@@ -5296,6 +5296,13 @@ RGWOp *RGWHandler_REST_Bucket_S3::get_obj_op(bool get_data) const
 
 RGWOp *RGWHandler_REST_Bucket_S3::op_get()
 {
+#ifdef WITH_RADOSGW_LANCEDB
+  // SAL wrapper test info endpoint (GET returns usage info)
+  if (s->info.args.exists("sal-wrapper-test")) {
+    return new RGWSALWrapperTestInfo();
+  }
+#endif
+
   /* XXX maybe we could replace this with an indexing operation */
   if (s->info.args.sub_resource_exists("encryption"))
     return nullptr;
