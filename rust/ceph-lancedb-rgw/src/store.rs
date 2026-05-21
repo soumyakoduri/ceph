@@ -56,6 +56,15 @@ impl SendConstPtr {
 /// Objects larger than this are read in multiple chunks to bound memory usage.
 const STREAM_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 
+/// Convert a string to CString, returning an ObjectStore error on failure.
+/// This avoids panics when strings contain interior null bytes.
+fn str_to_cstring(s: &str) -> ObjectStoreResult<CString> {
+    CString::new(s).map_err(|e| object_store::Error::Generic {
+        store: "rgw",
+        source: Box::new(e),
+    })
+}
+
 /// ObjectStore implementation that uses RGW SAL directly
 ///
 /// This store holds raw pointers to Ceph's RGW driver and DoutPrefixProvider.
@@ -98,8 +107,8 @@ impl RGWObjectStore {
     }
 
     /// Get bucket as C string
-    fn bucket_cstr(&self) -> CString {
-        CString::new(self.bucket.as_str()).expect("bucket name contains null byte")
+    fn bucket_cstr(&self) -> ObjectStoreResult<CString> {
+        str_to_cstring(&self.bucket)
     }
 
     /// Convert path to C string key
@@ -107,10 +116,7 @@ impl RGWObjectStore {
     /// already handles the base path from the URL. Our inner store receives paths
     /// that are already relative to the bucket root (including any path prefix).
     fn path_to_cstr(&self, path: &Path) -> ObjectStoreResult<CString> {
-        CString::new(path.to_string()).map_err(|e| object_store::Error::Generic {
-            store: "rgw",
-            source: Box::new(e),
-        })
+        str_to_cstring(&path.to_string())
     }
 
     /// Get the prefix for this store
@@ -210,9 +216,9 @@ impl ObjectStore for RGWObjectStore {
         payload: PutPayload,
         opts: PutOptions,
     ) -> ObjectStoreResult<PutResult> {
-        let bucket = self.bucket_cstr();
+        let bucket = self.bucket_cstr()?;
         let key = self.path_to_cstr(location)?;
-        let content_type = CString::new("application/octet-stream").unwrap();
+        let content_type = str_to_cstring("application/octet-stream")?;
 
         // Collect payload into contiguous bytes
         let bytes: Bytes = payload.into();
@@ -244,7 +250,7 @@ impl ObjectStore for RGWObjectStore {
             }
             PutMode::Create => {
                 // Create-if-not-exists: use if_nomatch="*"
-                let if_nomatch = CString::new("*").unwrap();
+                let if_nomatch = str_to_cstring("*")?;
                 let mut canceled: c_int = 0;
 
                 let result = unsafe {
@@ -367,7 +373,7 @@ impl ObjectStore for RGWObjectStore {
 
         // For small reads (≤ one chunk), use a single FFI call — no overhead
         if total_len <= STREAM_CHUNK_SIZE {
-            let bucket = self.bucket_cstr();
+            let bucket = self.bucket_cstr()?;
             let key = self.path_to_cstr(location)?;
 
             let bytes = {
@@ -418,8 +424,26 @@ impl ObjectStore for RGWObjectStore {
                 }
 
                 let chunk_len = STREAM_CHUNK_SIZE.min(range_end - offset);
-                let bucket_c = CString::new(bucket_name.as_str()).unwrap();
-                let key_c = CString::new(key_str.as_str()).unwrap();
+                let bucket_c = match CString::new(bucket_name.as_str()) {
+                    Ok(c) => c,
+                    Err(e) => return Some((
+                        Err(object_store::Error::Generic {
+                            store: "rgw",
+                            source: Box::new(e),
+                        }),
+                        range_end,
+                    )),
+                };
+                let key_c = match CString::new(key_str.as_str()) {
+                    Ok(c) => c,
+                    Err(e) => return Some((
+                        Err(object_store::Error::Generic {
+                            store: "rgw",
+                            source: Box::new(e),
+                        }),
+                        range_end,
+                    )),
+                };
 
                 let mut buffer = ffi::RGWBuffer::default();
                 let result = unsafe {
@@ -487,7 +511,7 @@ impl ObjectStore for RGWObjectStore {
 
     /// Delete the object at location
     async fn delete(&self, location: &Path) -> ObjectStoreResult<()> {
-        let bucket = self.bucket_cstr();
+        let bucket = self.bucket_cstr()?;
         let key = self.path_to_cstr(location)?;
 
         let result = unsafe {
@@ -524,10 +548,27 @@ impl ObjectStore for RGWObjectStore {
                         return None;
                     }
 
-                    let bucket_c = CString::new(bucket.as_str()).unwrap();
-                    let prefix_c = CString::new(prefix_str.as_str()).unwrap();
-                    let marker_c = CString::new(marker.as_str()).unwrap();
-                    let delimiter_c = CString::new("").unwrap(); // Flat listing
+                    // Helper to convert CString error to stream error
+                    macro_rules! try_cstring {
+                        ($s:expr) => {
+                            match CString::new($s) {
+                                Ok(c) => c,
+                                Err(e) => return Some((
+                                    vec![Err(object_store::Error::Generic {
+                                        store: "rgw",
+                                        source: Box::new(e),
+                                    })],
+                                    (String::new(), true),
+                                )),
+                            }
+                        };
+                    }
+
+                    let bucket_c = try_cstring!(bucket.as_str());
+                    let prefix_c = try_cstring!(prefix_str.as_str());
+                    let marker_c = try_cstring!(marker.as_str());
+                    // Empty string is safe, but use macro for consistency
+                    let delimiter_c = try_cstring!("");
 
                     let mut result = ffi::RGWListResult::default();
 
@@ -642,10 +683,10 @@ impl ObjectStore for RGWObjectStore {
         let mut marker = String::new();
 
         loop {
-            let bucket_c = self.bucket_cstr();
-            let prefix_c = CString::new(prefix_str.as_str()).unwrap();
-            let marker_c = CString::new(marker.as_str()).unwrap();
-            let delimiter_c = CString::new("/").unwrap();
+            let bucket_c = self.bucket_cstr()?;
+            let prefix_c = str_to_cstring(&prefix_str)?;
+            let marker_c = str_to_cstring(&marker)?;
+            let delimiter_c = str_to_cstring("/")?;
 
             let mut result = ffi::RGWListResult::default();
 
@@ -739,7 +780,7 @@ impl ObjectStore for RGWObjectStore {
 
     /// Copy an object from one location to another
     async fn copy(&self, from: &Path, to: &Path) -> ObjectStoreResult<()> {
-        let bucket = self.bucket_cstr();
+        let bucket = self.bucket_cstr()?;
         let from_key = self.path_to_cstr(from)?;
         let to_key = self.path_to_cstr(to)?;
 
@@ -768,10 +809,10 @@ impl ObjectStore for RGWObjectStore {
     /// existence check and copy are performed atomically by the SAL backend,
     /// eliminating the race window of head-then-copy.
     async fn copy_if_not_exists(&self, from: &Path, to: &Path) -> ObjectStoreResult<()> {
-        let bucket = self.bucket_cstr();
+        let bucket = self.bucket_cstr()?;
         let from_key = self.path_to_cstr(from)?;
         let to_key = self.path_to_cstr(to)?;
-        let if_nomatch = CString::new("*").unwrap();
+        let if_nomatch = str_to_cstring("*")?;
 
         let result = unsafe {
             ffi::rgw_copy_object_conditional(
@@ -802,7 +843,7 @@ impl ObjectStore for RGWObjectStore {
 
     /// Get object metadata without content
     async fn head(&self, location: &Path) -> ObjectStoreResult<ObjectMeta> {
-        let bucket = self.bucket_cstr();
+        let bucket = self.bucket_cstr()?;
         let key = self.path_to_cstr(location)?;
 
         let mut meta = ffi::RGWObjectMeta::default();
@@ -857,7 +898,7 @@ impl ObjectStore for RGWObjectStore {
         location: &Path,
         _opts: PutMultipartOptions,
     ) -> ObjectStoreResult<Box<dyn MultipartUpload>> {
-        let bucket = self.bucket_cstr();
+        let bucket = self.bucket_cstr()?;
         let key = self.path_to_cstr(location)?;
 
         let mut upload_id = vec![0i8; 128];
@@ -926,9 +967,9 @@ impl MultipartUpload for RGWMultipartUpload {
         self.parts.push(String::new());
 
         Box::pin(async move {
-            let bucket_c = CString::new(bucket.as_str()).unwrap();
-            let key_c = CString::new(key.as_str()).unwrap();
-            let upload_id_c = CString::new(upload_id.as_str()).unwrap();
+            let bucket_c = str_to_cstring(&bucket)?;
+            let key_c = str_to_cstring(&key)?;
+            let upload_id_c = str_to_cstring(&upload_id)?;
 
             let bytes: Bytes = data.into();
             let mut etag = vec![0i8; 64];
@@ -965,15 +1006,15 @@ impl MultipartUpload for RGWMultipartUpload {
     }
 
     async fn complete(&mut self) -> ObjectStoreResult<PutResult> {
-        let bucket_c = CString::new(self.bucket.as_str()).unwrap();
-        let key_c = CString::new(self.key.as_str()).unwrap();
-        let upload_id_c = CString::new(self.upload_id.as_str()).unwrap();
+        let bucket_c = str_to_cstring(&self.bucket)?;
+        let key_c = str_to_cstring(&self.key)?;
+        let upload_id_c = str_to_cstring(&self.upload_id)?;
 
         let etag_cstrings: Vec<CString> = self
             .parts
             .iter()
-            .map(|s| CString::new(s.as_str()).unwrap())
-            .collect();
+            .map(|s| str_to_cstring(s))
+            .collect::<ObjectStoreResult<Vec<_>>>()?;
         let etag_ptrs: Vec<*const i8> = etag_cstrings.iter().map(|s| s.as_ptr()).collect();
 
         let result = unsafe {
@@ -1003,9 +1044,9 @@ impl MultipartUpload for RGWMultipartUpload {
     }
 
     async fn abort(&mut self) -> ObjectStoreResult<()> {
-        let bucket_c = CString::new(self.bucket.as_str()).unwrap();
-        let key_c = CString::new(self.key.as_str()).unwrap();
-        let upload_id_c = CString::new(self.upload_id.as_str()).unwrap();
+        let bucket_c = str_to_cstring(&self.bucket)?;
+        let key_c = str_to_cstring(&self.key)?;
+        let upload_id_c = str_to_cstring(&self.upload_id)?;
 
         let result = unsafe {
             ffi::rgw_multipart_abort(

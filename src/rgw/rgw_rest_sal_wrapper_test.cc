@@ -133,12 +133,15 @@ std::string generate_unique_key(const std::string& prefix) {
 class SALWrapperTester {
   void* driver_;
   const void* dpp_;
+  void* yield_ctx_;
   const char* bucket_;
   TestResults& results_;
 
 public:
-  SALWrapperTester(void* driver, const void* dpp, const char* bucket, TestResults& results)
-    : driver_(driver), dpp_(dpp), bucket_(bucket), results_(results) {}
+  SALWrapperTester(void* driver, const void* dpp, void* yield_ctx,
+                   const char* bucket, TestResults& results)
+    : driver_(driver), dpp_(dpp), yield_ctx_(yield_ctx),
+      bucket_(bucket), results_(results) {}
 
   void run_all_tests(const TestConfig& config) {
     run_put_get_tests(config);
@@ -161,7 +164,7 @@ public:
         auto data = generate_random_data(config.object_size);
 
         // Put object
-        int ret = rgw_put_object(driver_, dpp_, nullptr, bucket_, key.c_str(),
+        int ret = rgw_put_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str(),
                                  data.data(), data.size(), "application/octet-stream");
         if (ret != 0) {
           result.passed = false;
@@ -171,7 +174,7 @@ public:
 
         // Get object
         RGWBuffer buffer = {nullptr, 0, 0};
-        ret = rgw_get_object(driver_, dpp_, nullptr, bucket_, key.c_str(),
+        ret = rgw_get_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str(),
                              0, UINT64_MAX, &buffer);
         if (ret != 0) {
           result.passed = false;
@@ -193,7 +196,7 @@ public:
         rgw_free_buffer(&buffer);
 
         // Cleanup
-        rgw_delete_object(driver_, dpp_, nullptr, bucket_, key.c_str());
+        rgw_delete_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str());
 
         result.passed = true;
       }
@@ -219,21 +222,21 @@ public:
       auto data = generate_random_data(100);
 
       // Create object
-      int ret = rgw_put_object(driver_, dpp_, nullptr, bucket_, key.c_str(),
+      int ret = rgw_put_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str(),
                                data.data(), data.size(), "text/plain");
       if (ret != 0) {
         result.passed = false;
         result.error = "Put failed: " + std::to_string(ret);
       } else {
         // Delete object
-        ret = rgw_delete_object(driver_, dpp_, nullptr, bucket_, key.c_str());
+        ret = rgw_delete_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str());
         if (ret != 0) {
           result.passed = false;
           result.error = "Delete failed: " + std::to_string(ret);
         } else {
           // Verify deleted
           RGWObjectMeta meta = {0, nullptr, nullptr, 0};
-          ret = rgw_head_object(driver_, dpp_, nullptr, bucket_, key.c_str(), &meta);
+          ret = rgw_head_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str(), &meta);
           rgw_free_object_meta(&meta);
 
           if (ret != -ENOENT) {
@@ -266,7 +269,7 @@ public:
       auto data = generate_random_data(config.object_size);
 
       // Create object
-      int ret = rgw_put_object(driver_, dpp_, nullptr, bucket_, key.c_str(),
+      int ret = rgw_put_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str(),
                                data.data(), data.size(), "application/json");
       if (ret != 0) {
         result.passed = false;
@@ -274,7 +277,7 @@ public:
       } else {
         // Head object
         RGWObjectMeta meta = {0, nullptr, nullptr, 0};
-        ret = rgw_head_object(driver_, dpp_, nullptr, bucket_, key.c_str(), &meta);
+        ret = rgw_head_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str(), &meta);
 
         if (ret != 0) {
           result.passed = false;
@@ -288,7 +291,7 @@ public:
         }
 
         rgw_free_object_meta(&meta);
-        rgw_delete_object(driver_, dpp_, nullptr, bucket_, key.c_str());
+        rgw_delete_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str());
       }
     } catch (const std::exception& e) {
       result.passed = false;
@@ -316,14 +319,14 @@ public:
         std::string key = prefix + "/obj_" + std::to_string(i);
         keys.push_back(key);
         auto data = generate_random_data(100);
-        rgw_put_object(driver_, dpp_, nullptr, bucket_, key.c_str(),
+        rgw_put_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str(),
                        data.data(), data.size(), "text/plain");
       }
 
       // List objects
       RGWListResult list_result = {nullptr, 0, 0, nullptr};
       std::string list_prefix = prefix + "/";
-      int ret = rgw_list_objects(driver_, dpp_, nullptr, bucket_,
+      int ret = rgw_list_objects(driver_, dpp_, yield_ctx_, bucket_,
                                   list_prefix.c_str(), "", "", 100, &list_result);
 
       if (ret != 0) {
@@ -340,7 +343,7 @@ public:
 
       // Cleanup
       for (const auto& key : keys) {
-        rgw_delete_object(driver_, dpp_, nullptr, bucket_, key.c_str());
+        rgw_delete_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str());
       }
     } catch (const std::exception& e) {
       result.passed = false;
@@ -365,14 +368,14 @@ public:
       auto data = generate_random_data(config.object_size);
 
       // Create source
-      int ret = rgw_put_object(driver_, dpp_, nullptr, bucket_, src_key.c_str(),
+      int ret = rgw_put_object(driver_, dpp_, yield_ctx_, bucket_, src_key.c_str(),
                                data.data(), data.size(), "application/octet-stream");
       if (ret != 0) {
         result.passed = false;
         result.error = "Put source failed: " + std::to_string(ret);
       } else {
         // Copy
-        ret = rgw_copy_object(driver_, dpp_, nullptr, bucket_, src_key.c_str(),
+        ret = rgw_copy_object(driver_, dpp_, yield_ctx_, bucket_, src_key.c_str(),
                               bucket_, dst_key.c_str());
         if (ret != 0) {
           result.passed = false;
@@ -380,7 +383,7 @@ public:
         } else {
           // Verify destination
           RGWBuffer buffer = {nullptr, 0, 0};
-          ret = rgw_get_object(driver_, dpp_, nullptr, bucket_, dst_key.c_str(),
+          ret = rgw_get_object(driver_, dpp_, yield_ctx_, bucket_, dst_key.c_str(),
                                0, UINT64_MAX, &buffer);
 
           if (ret != 0) {
@@ -398,8 +401,8 @@ public:
         }
 
         // Cleanup
-        rgw_delete_object(driver_, dpp_, nullptr, bucket_, src_key.c_str());
-        rgw_delete_object(driver_, dpp_, nullptr, bucket_, dst_key.c_str());
+        rgw_delete_object(driver_, dpp_, yield_ctx_, bucket_, src_key.c_str());
+        rgw_delete_object(driver_, dpp_, yield_ctx_, bucket_, dst_key.c_str());
       }
     } catch (const std::exception& e) {
       result.passed = false;
@@ -423,7 +426,7 @@ public:
       auto data = generate_random_data(10 * 1024);  // 10KB
 
       // Create object
-      int ret = rgw_put_object(driver_, dpp_, nullptr, bucket_, key.c_str(),
+      int ret = rgw_put_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str(),
                                data.data(), data.size(), "application/octet-stream");
       if (ret != 0) {
         result.passed = false;
@@ -431,7 +434,7 @@ public:
       } else {
         // Read range [1024, 3072)
         RGWBuffer buffer = {nullptr, 0, 0};
-        ret = rgw_get_object(driver_, dpp_, nullptr, bucket_, key.c_str(),
+        ret = rgw_get_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str(),
                              1024, 2048, &buffer);
 
         if (ret != 0) {
@@ -449,7 +452,7 @@ public:
         }
 
         rgw_free_buffer(&buffer);
-        rgw_delete_object(driver_, dpp_, nullptr, bucket_, key.c_str());
+        rgw_delete_object(driver_, dpp_, yield_ctx_, bucket_, key.c_str());
       }
     } catch (const std::exception& e) {
       result.passed = false;
@@ -564,9 +567,11 @@ void RGWSALWrapperTest::execute(optional_yield y) {
   ldpp_dout(this, 10) << "Running SAL wrapper tests on bucket: "
                       << s->bucket->get_name() << dendl;
 
+  // Pass yield context to allow SAL operations to yield instead of blocking
   SALWrapperTester tester(
     driver,
     this,
+    &y,
     s->bucket->get_name().c_str(),
     impl_->results
   );
