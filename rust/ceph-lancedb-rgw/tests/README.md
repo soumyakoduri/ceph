@@ -155,7 +155,7 @@ test:
 ## Related C++ Tests
 
 C++ unit tests for the SAL wrapper are located at:
-`src/test/rgw/test_rgw_sal_lancedb_wrapper.cc`
+`src/test/rgw/test_rgw_sal_wrapper.cc`
 
 These tests verify:
 - Structure layout compatibility with Rust

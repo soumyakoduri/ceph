@@ -17,7 +17,7 @@
  *
  *   Request body (JSON):
  *   {
- *     "test": "all" | "put_get" | "list" | "copy",
+ *     "test": "all" | "put_get" | "delete" | "head" | "list" | "copy" | "range_read",
  *     "iterations": 10,
  *     "object_size": 1024
  *   }
@@ -25,8 +25,8 @@
  *   Response (JSON):
  *   {
  *     "success": true,
- *     "tests_run": 5,
- *     "tests_passed": 5,
+ *     "tests_run": 6,
+ *     "tests_passed": 6,
  *     "tests_failed": 0,
  *     "results": [...]
  *   }

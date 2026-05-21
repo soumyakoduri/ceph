@@ -488,7 +488,7 @@ void RGWSALWrapperTestInfo::send_response() {
   f->close_section();
 
   f->open_object_section("config_options");
-  encode_json("test", "all | put_get | list | copy | multipart", f);
+  encode_json("test", "all | put_get | delete | head | list | copy | range_read", f);
   encode_json("iterations", "number of iterations (default: 10)", f);
   encode_json("object_size", "size of test objects in bytes (default: 1024)", f);
   f->close_section();
@@ -569,7 +569,7 @@ void RGWSALWrapperTest::execute(optional_yield y) {
     impl_->results
   );
 
-  if (impl_->config.test_type == "all") {
+  if (impl_->config.test_type == "all" || impl_->config.test_type.empty()) {
     tester.run_all_tests(impl_->config);
   } else if (impl_->config.test_type == "put_get") {
     tester.run_put_get_tests(impl_->config);
@@ -577,8 +577,18 @@ void RGWSALWrapperTest::execute(optional_yield y) {
     tester.run_list_tests(impl_->config);
   } else if (impl_->config.test_type == "copy") {
     tester.run_copy_tests(impl_->config);
+  } else if (impl_->config.test_type == "delete") {
+    tester.run_delete_tests(impl_->config);
+  } else if (impl_->config.test_type == "head") {
+    tester.run_head_tests(impl_->config);
+  } else if (impl_->config.test_type == "range_read") {
+    tester.run_range_read_tests(impl_->config);
   } else {
-    tester.run_all_tests(impl_->config);
+    // Unknown test type - return error instead of silently running all tests
+    ldpp_dout(this, 1) << "ERROR: Unknown test type: " << impl_->config.test_type
+                       << ". Valid types: all, put_get, list, copy, delete, head, range_read" << dendl;
+    op_ret = -EINVAL;
+    return;
   }
 
   op_ret = impl_->results.success ? 0 : -EIO;

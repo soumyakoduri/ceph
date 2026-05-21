@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <vector>
 #include "include/encoding.h"
@@ -40,7 +41,8 @@ inline BackendType string_to_backend_type(const std::string& str) {
   if (str.size() == 5) {
     // case-insensitive check for "local"
     std::string lower = str;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
     if (lower == "local") {
       return BackendType::LOCAL;
     }
