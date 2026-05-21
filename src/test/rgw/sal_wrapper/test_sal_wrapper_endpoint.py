@@ -13,7 +13,7 @@ import os
 import hashlib
 import hmac
 import datetime
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode, quote, urlparse
 import requests
 
 # Configuration - uses vstart demo user credentials, can be overridden via environment variables
@@ -40,7 +40,9 @@ def get_signature_key(key, date_stamp, region_name, service_name):
 def make_presigned_request(method, path, query_params=None, payload=None):
     """Make a request using query string authentication (presigned URL style)."""
 
-    host = 'localhost:8000'
+    # Derive host from ENDPOINT to ensure signature matches the actual request
+    parsed_endpoint = urlparse(ENDPOINT)
+    host = parsed_endpoint.netloc  # e.g., 'localhost:8000' or 's3.amazonaws.com'
     canonical_uri = path
 
     # Timestamps
