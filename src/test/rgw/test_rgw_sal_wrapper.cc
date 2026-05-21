@@ -14,7 +14,7 @@
  */
 
 #include "gtest/gtest.h"
-#include "rgw/rgw_sal_wrapper.h"
+#include "rgw_sal_wrapper.h"
 #include <cstring>
 #include <vector>
 

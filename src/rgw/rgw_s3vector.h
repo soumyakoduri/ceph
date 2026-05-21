@@ -33,9 +33,10 @@ enum class BackendType {
 
 // Convert string to backend type (case-insensitive)
 inline BackendType string_to_backend_type(const std::string& str) {
+  // Check for "s3" or "S3" (case-insensitive)
   if (str.size() == 2 &&
       (str[0] == 's' || str[0] == 'S') &&
-      (str[1] == '3' || str[1] == '3')) {
+      str[1] == '3') {
     return BackendType::S3;
   }
   if (str.size() == 5) {
