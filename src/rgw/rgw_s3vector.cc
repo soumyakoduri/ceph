@@ -63,13 +63,16 @@ namespace rgw::s3vector {
     if (!cct) return BackendType::LOCAL;
     const auto backend = cct->_conf.get_val<std::string>("rgw_s3vector_backend");
     const auto type = string_to_backend_type(backend);
-    // Log a warning for unrecognized backend values
-    if (!backend.empty() && backend != "local" && backend != "s3" &&
-        backend != "LOCAL" && backend != "S3") {
-      lderr(cct) << "WARNING: unrecognized rgw_s3vector_backend value '"
-                 << backend << "', defaulting to 'local'. "
-                 << "Valid values are 'local' and 's3'." << dendl;
+
+    // Warn about non-canonical case variants
+    if (type == BackendType::S3 && backend != "s3") {
+      ldout(cct, 1) << "rgw_s3vector_backend: '" << backend
+                    << "' accepted as 's3'. Consider using lowercase 's3'." << dendl;
+    } else if (type == BackendType::LOCAL && !backend.empty() && backend != "local") {
+      ldout(cct, 1) << "rgw_s3vector_backend: '" << backend
+                    << "' accepted as 'local'. Consider using lowercase 'local'." << dendl;
     }
+
     return type;
   }
 

@@ -43,7 +43,7 @@
 //! ceph_lancedb_session_free(session);
 //! ```
 
-/// FFI bindings to Ceph's rgw_sal_c_wrapper.cc
+/// FFI bindings to Ceph's rgw_sal_wrapper.cc
 pub mod ffi;
 mod provider;
 mod session;

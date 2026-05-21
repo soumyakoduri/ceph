@@ -47,9 +47,8 @@ std::unique_ptr<rgw::s3vector::S3Credentials> get_user_s3_credentials(req_state*
   creds->access_key = key_pair.second.id;
   creds->secret_key = key_pair.second.key;
 
-  // NOTE: Never log secret_key - credential logging is a security risk
-  ldpp_dout(s, 20) << "INFO: s3vector using credentials for access_key="
-                   << creds->access_key << dendl;
+  // NOTE: Never log credentials (access_key or secret_key) - security risk
+  ldpp_dout(s, 20) << "INFO: s3vector using user credentials for external S3" << dendl;
   return creds;
 }
 

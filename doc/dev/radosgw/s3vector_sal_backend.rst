@@ -231,8 +231,8 @@ Backend Selection Logic::
 
     rgw_s3vector_backend = "local"  -> Filesystem storage at local_path
     rgw_s3vector_backend = "s3"     -> S3 storage
-        |-- endpoint empty/"localhost"/"127.0.0.1" -> SAL backend (direct)
-        +-- endpoint = external URL                 -> HTTP S3 protocol
+        |-- endpoint empty                         -> SAL backend (direct)
+        +-- endpoint = any URL                     -> HTTP S3 protocol
 
 ---------
 Data Flow

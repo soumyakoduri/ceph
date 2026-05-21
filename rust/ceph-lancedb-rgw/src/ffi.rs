@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright The Ceph Authors
 
-//! FFI bindings to Ceph's rgw_sal_c_wrapper.cc
+//! FFI bindings to Ceph's rgw_sal_wrapper.cc
 //!
 //! These functions are implemented in Ceph's C++ code and linked at build time.
 //! The Rust code calls these functions to perform actual storage operations.

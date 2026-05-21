@@ -13,7 +13,7 @@ import os
 import hashlib
 import hmac
 import datetime
-from urllib.parse import urlencode, quote, urlparse
+from urllib.parse import quote, urlparse
 import requests
 
 # Configuration - uses vstart demo user credentials, can be overridden via environment variables
@@ -164,7 +164,7 @@ def run_sal_wrapper_test(test_type="all", iterations=5, object_size=1024):
     print(f"\nStatus: {response.status_code}")
     try:
         print(f"Response:\n{json.dumps(response.json(), indent=2)}")
-    except:
+    except (json.JSONDecodeError, ValueError):
         print(f"Response:\n{response.text}")
 
     return response
@@ -183,7 +183,7 @@ def get_endpoint_info():
     print(f"Status: {response.status_code}")
     try:
         print(f"Response:\n{json.dumps(response.json(), indent=2)}")
-    except:
+    except (json.JSONDecodeError, ValueError):
         print(f"Response:\n{response.text}")
 
     return response

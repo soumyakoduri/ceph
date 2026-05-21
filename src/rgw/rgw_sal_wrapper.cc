@@ -374,13 +374,16 @@ int rgw_get_object(
 
         // Calculate actual read length
         uint64_t obj_size = obj->get_size();
-        uint64_t read_len = length;
 
-        if (length == UINT64_MAX || offset + length > obj_size) {
-            if (offset >= obj_size) {
-                // Offset past end of object
-                return 0;
-            }
+        // Check offset bounds first to avoid overflow in offset + length
+        if (offset >= obj_size) {
+            // Offset past end of object - return empty buffer
+            return 0;
+        }
+
+        uint64_t read_len = length;
+        // Use subtraction to avoid potential overflow: length > obj_size - offset
+        if (length == UINT64_MAX || length > obj_size - offset) {
             read_len = obj_size - offset;
         }
 
@@ -402,6 +405,8 @@ int rgw_get_object(
         if (ret < 0) {
             free(buffer->data);
             buffer->data = nullptr;
+            buffer->len = 0;
+            buffer->capacity = 0;
             return ret;
         }
 
@@ -413,6 +418,8 @@ int rgw_get_object(
         if (ret < 0) {
             free(buffer->data);
             buffer->data = nullptr;
+            buffer->len = 0;
+            buffer->capacity = 0;
             return ret;
         }
 
@@ -432,12 +439,16 @@ int rgw_get_object(
         if (buffer->data) {
             free(buffer->data);
             buffer->data = nullptr;
+            buffer->len = 0;
+            buffer->capacity = 0;
         }
         return -EIO;
     } catch (...) {
         if (buffer->data) {
             free(buffer->data);
             buffer->data = nullptr;
+            buffer->len = 0;
+            buffer->capacity = 0;
         }
         return -EIO;
     }
