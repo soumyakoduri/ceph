@@ -489,17 +489,17 @@ HTTP endpoint for testing SAL wrapper from a running RGW instance::
     # Get endpoint info (no auth required)
     curl http://localhost:8000/test-bucket?sal-wrapper-test
 
-    # Run tests (requires admin privileges)
-    curl -X POST "http://localhost:8000/test-bucket?sal-wrapper-test" \
-      -H "Content-Type: application/json" \
-      -d '{"test": "all", "iterations": 10}'
+    # Run tests (requires admin privileges and AWS SigV4 authentication)
+    # Use the Python script below for proper authentication:
+    python3 src/test/rgw/sal_wrapper/test_sal_wrapper_endpoint.py
 
-Python Integration Tests
-------------------------
+Python Test Script
+------------------
 
 **Location:** ``src/test/rgw/sal_wrapper/test_sal_wrapper_endpoint.py``
 
-End-to-end tests using pytest with presigned URL authentication.
+Standalone Python script with presigned URL (AWS SigV4) authentication.
+Runs SAL wrapper tests against a live RGW instance.
 
 -----------------
 Build Integration

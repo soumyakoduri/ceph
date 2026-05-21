@@ -56,25 +56,15 @@ AWS_ACCESS_KEY_ID=testkey AWS_SECRET_ACCESS_KEY=testsecret \
   aws --endpoint-url http://localhost:8000 \
   s3api put-object --bucket sal-wrapper-test --key __dummy__ --body /dev/null
 
-# Or use presigned URLs - see Python test script below
+# Use the Python test script for proper presigned URL authentication:
+python3 src/test/rgw/sal_wrapper/test_sal_wrapper_endpoint.py
 
-# Run specific test type with custom config
-curl -X POST http://localhost:8000/sal-wrapper-test?sal-wrapper-test \
-  -H "Content-Type: application/json" \
-  -d '{
-    "test": "put_get",
-    "iterations": 100,
-    "object_size": 4096
-  }'
-
-# Run all tests with AWS credentials
-AWS_ACCESS_KEY_ID=testkey AWS_SECRET_ACCESS_KEY=testsecret \
-  aws --endpoint-url http://localhost:8000 \
-  s3api put-object --bucket sal-wrapper-test --key dummy --body /dev/null
-
-curl -X POST "http://localhost:8000/sal-wrapper-test?sal-wrapper-test" \
-  -H "Content-Type: application/json" \
-  -d '{"test": "all", "iterations": 10}'
+# The script supports environment variable overrides:
+RGW_ENDPOINT=http://localhost:8000 \
+  AWS_ACCESS_KEY_ID=testkey \
+  AWS_SECRET_ACCESS_KEY=testsecret \
+  RGW_TEST_BUCKET=sal-wrapper-test \
+  python3 src/test/rgw/sal_wrapper/test_sal_wrapper_endpoint.py
 ```
 
 ## Test Types

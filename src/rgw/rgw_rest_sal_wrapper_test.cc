@@ -44,6 +44,8 @@ struct TestConfig {
     JSONDecoder::decode_json("iterations", iterations, obj);
     int64_t size = object_size;
     JSONDecoder::decode_json("object_size", size, obj);
+    // Reject negative values before casting to size_t to avoid wrap-around
+    if (size < 0) size = 0;
     object_size = static_cast<size_t>(size);
 
     // Clamp to safe bounds
@@ -493,7 +495,7 @@ void RGWSALWrapperTestInfo::send_response() {
   encode_json("object_size", "size of test objects in bytes (default: 1024)", f);
   f->close_section();
 
-  encode_json("note", "Requires admin privileges", f);
+  encode_json("note", "POST requires admin privileges; GET info is public", f);
 
   f->close_section();
 
