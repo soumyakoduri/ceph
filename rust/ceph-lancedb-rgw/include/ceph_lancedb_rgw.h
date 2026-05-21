@@ -9,7 +9,7 @@
  *
  * Usage:
  *   1. Create a session with ceph_lancedb_create_session()
- *   2. Pass the session to lancedb_connect_builder_session()
+ *   2. Pass the session to lancedb_connect_builder_session_ptr()
  *   3. Use standard LanceDB C API for all operations
  *   4. Free the session with ceph_lancedb_session_free()
  *
@@ -29,7 +29,7 @@ extern "C" {
 /**
  * Opaque handle to a Lance Session configured for RGW.
  *
- * This session can be passed to lancedb_connect_builder_session() to make
+ * This session can be passed to lancedb_connect_builder_session_ptr() to make
  * all s3:// URLs route through RGW's native SAL API.
  */
 typedef void CephLanceDBSession;
@@ -62,7 +62,7 @@ typedef void CephLanceDBSession;
  *   );
  *
  *   LanceDBConnectBuilder* builder = lancedb_connect("s3://mybucket/vectors");
- *   lancedb_connect_builder_session(builder, session);
+ *   builder = lancedb_connect_builder_session_ptr(builder, session);
  *   LanceDBConnection* db = lancedb_connect_builder_execute(builder);
  *
  *   // ... use db ...
@@ -121,11 +121,11 @@ void ceph_lancedb_session_free(CephLanceDBSession* session);
  * Get the raw session pointer for use with lancedb-c.
  *
  * This function returns the session pointer in a form suitable for
- * passing to lancedb_connect_builder_session().
+ * passing to lancedb_connect_builder_session_ptr().
  *
  * @param session  Session created by ceph_lancedb_create_session
  *
- * @return Pointer suitable for lancedb_connect_builder_session()
+ * @return Pointer suitable for lancedb_connect_builder_session_ptr()
  */
 const void* ceph_lancedb_session_as_ptr(const CephLanceDBSession* session);
 

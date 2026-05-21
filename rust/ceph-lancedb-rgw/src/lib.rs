@@ -33,7 +33,7 @@
 //!
 //! // Use with LanceDB C API
 //! auto* builder = lancedb_connect("s3://mybucket/vectors");
-//! lancedb_connect_builder_session(builder, session);
+//! builder = lancedb_connect_builder_session_ptr(builder, session);
 //! auto* db = lancedb_connect_builder_execute(builder);
 //!
 //! // ... use db ...
@@ -69,7 +69,7 @@ pub type CephLanceDBSession = c_void;
 
 /// Create a LanceDB session configured to use RGW as the S3 backend
 ///
-/// This session should be passed to lancedb_connect_builder_session() when
+/// This session should be passed to lancedb_connect_builder_session_ptr() when
 /// connecting to a database. All s3:// URLs will be routed through RGW SAL.
 ///
 /// # Safety
@@ -154,7 +154,7 @@ pub extern "C" fn ceph_lancedb_default_metadata_cache_size() -> usize {
 /// Get the raw session pointer for use with lancedb-c
 ///
 /// This returns the same pointer that was passed to the C API,
-/// but cast to the type expected by lancedb_connect_builder_session().
+/// but cast to the type expected by lancedb_connect_builder_session_ptr().
 ///
 /// # Safety
 /// - `session` must be a valid pointer returned by ceph_lancedb_create_session
