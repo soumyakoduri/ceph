@@ -685,8 +685,12 @@ int rgw_list_objects(
         return 0;
 
     } catch (const std::exception& e) {
+        // Clean up any partially allocated memory
+        rgw_free_list_result(result);
         return -EIO;
     } catch (...) {
+        // Clean up any partially allocated memory
+        rgw_free_list_result(result);
         return -EIO;
     }
 }

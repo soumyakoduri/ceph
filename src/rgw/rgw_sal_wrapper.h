@@ -14,8 +14,7 @@
  * defined in the corresponding Rust code.
  */
 
-#ifndef RGW_SAL_WRAPPER_H
-#define RGW_SAL_WRAPPER_H
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -475,5 +474,3 @@ void rgw_free_list_result(RGWListResult* result);
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* RGW_SAL_WRAPPER_H */

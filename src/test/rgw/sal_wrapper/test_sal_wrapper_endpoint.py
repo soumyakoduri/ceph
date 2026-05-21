@@ -23,6 +23,8 @@ SECRET_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', 'h7GhxuBLTrlhVUyxSPUKUV8r/2
 BUCKET = os.environ.get('RGW_TEST_BUCKET', 'sal-wrapper-test')
 REGION = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
 SERVICE = 's3'
+# Request timeout in seconds (can be overridden via environment)
+REQUEST_TIMEOUT = int(os.environ.get('RGW_REQUEST_TIMEOUT', '30'))
 
 
 def sign(key, msg):
@@ -109,9 +111,9 @@ def make_presigned_request(method, path, query_params=None, payload=None):
         body = None
 
     if method == 'GET':
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
     elif method == 'POST':
-        response = requests.post(url, headers=headers, data=body)
+        response = requests.post(url, headers=headers, data=body, timeout=REQUEST_TIMEOUT)
     else:
         raise ValueError(f"Unsupported method: {method}")
 
