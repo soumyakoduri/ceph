@@ -543,6 +543,10 @@ if(WITH_RADOSGW_ARROW_FLIGHT)
   # target_include_directories(radosgw PUBLIC Arrow::Arrow)
 endif(WITH_RADOSGW_ARROW_FLIGHT)
 
+if(WITH_RADOSGW_LANCEDB)
+  target_compile_definitions(rgw_common PUBLIC WITH_RADOSGW_LANCEDB)
+endif()
+
 target_compile_definitions(radosgw PUBLIC "-DCLS_CLIENT_HIDE_IOCTX")
 target_include_directories(radosgw
   PUBLIC "${CMAKE_SOURCE_DIR}/src/dmclock/support/src"
