@@ -442,46 +442,28 @@ mod session_tests {
 mod c_api_tests {
     use super::*;
     use ceph_lancedb_rgw::{
-        ceph_lancedb_create_session, ceph_lancedb_create_session_with_cache,
+        ceph_lancedb_create_registry, ceph_lancedb_registry_free,
         ceph_lancedb_default_index_cache_size, ceph_lancedb_default_metadata_cache_size,
-        ceph_lancedb_session_as_ptr, ceph_lancedb_session_free, ceph_lancedb_version,
+        ceph_lancedb_version,
     };
     use std::ffi::CStr;
 
     #[test]
     fn test_c_api_null_driver() {
-        let session = unsafe { ceph_lancedb_create_session(std::ptr::null_mut(), std::ptr::null()) };
-        assert!(session.is_null());
+        let registry = unsafe { ceph_lancedb_create_registry(std::ptr::null_mut(), std::ptr::null()) };
+        assert!(registry.is_null());
     }
 
     #[test]
-    fn test_c_api_session_lifecycle() {
+    fn test_c_api_registry_lifecycle() {
         let fake_driver = 0x1234usize as *mut c_void;
         let fake_dpp = 0x5678usize as *const c_void;
 
-        let session = unsafe { ceph_lancedb_create_session(fake_driver, fake_dpp) };
-        assert!(!session.is_null());
+        let registry = unsafe { ceph_lancedb_create_registry(fake_driver, fake_dpp) };
+        assert!(!registry.is_null());
 
         // Free should not crash
-        unsafe { ceph_lancedb_session_free(session) };
-    }
-
-    #[test]
-    fn test_c_api_session_with_cache() {
-        let fake_driver = 0x1234usize as *mut c_void;
-        let fake_dpp = 0x5678usize as *const c_void;
-
-        let session = unsafe {
-            ceph_lancedb_create_session_with_cache(
-                fake_driver,
-                fake_dpp,
-                128 * 1024 * 1024,
-                64 * 1024 * 1024,
-            )
-        };
-        assert!(!session.is_null());
-
-        unsafe { ceph_lancedb_session_free(session) };
+        unsafe { ceph_lancedb_registry_free(registry) };
     }
 
     #[test]
@@ -503,23 +485,9 @@ mod c_api_tests {
     }
 
     #[test]
-    fn test_c_api_session_as_ptr() {
-        let fake_driver = 0x1234usize as *mut c_void;
-        let fake_dpp = 0x5678usize as *const c_void;
-
-        let session = unsafe { ceph_lancedb_create_session(fake_driver, fake_dpp) };
-        assert!(!session.is_null());
-
-        let ptr = unsafe { ceph_lancedb_session_as_ptr(session) };
-        assert_eq!(ptr, session as *const c_void);
-
-        unsafe { ceph_lancedb_session_free(session) };
-    }
-
-    #[test]
-    fn test_c_api_free_null_session() {
+    fn test_c_api_free_null_registry() {
         // Freeing null should not crash
-        unsafe { ceph_lancedb_session_free(std::ptr::null_mut()) };
+        unsafe { ceph_lancedb_registry_free(std::ptr::null_mut()) };
     }
 }
 

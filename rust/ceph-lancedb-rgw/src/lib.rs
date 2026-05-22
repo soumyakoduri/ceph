@@ -20,27 +20,36 @@
 //! This crate requires NO modifications to lancedb, lance, or lance-io.
 //! It uses the existing extension points:
 //! - `ObjectStoreRegistry::insert()` to override the "s3" scheme
-//! - `Session::new()` to create sessions with custom registries
-//! - `connect().session()` to pass custom sessions
+//! - `lancedb_session_new_with_registry()` to create sessions with custom registries
+//! - `lancedb_connect_builder_session()` to pass sessions to connections
 //!
 //! # Usage from C++
 //!
 //! ```cpp
 //! #include "ceph_lancedb_rgw.h"
+//! #include "lancedb.h"
 //!
-//! // Create session during RGW initialization
-//! void* session = ceph_lancedb_create_session(driver, dpp);
+//! // Create registry with RGW backend
+//! CephLanceDBRegistry* registry = ceph_lancedb_create_registry(driver, dpp);
 //!
-//! // Use with LanceDB C API
-//! auto* builder = lancedb_connect("s3://mybucket/vectors");
-//! builder = lancedb_connect_builder_session_ptr(builder, session);
-//! auto* db = lancedb_connect_builder_execute(builder);
+//! // Create session with custom cache sizes using lancedb-c API
+//! LanceDBSessionOptions options = {
+//!     .index_cache_bytes = 512 * 1024 * 1024,    // 512 MB
+//!     .metadata_cache_bytes = 256 * 1024 * 1024  // 256 MB
+//! };
+//! LanceDBSession* session = lancedb_session_new_with_registry(&options, registry);
+//! // Note: registry ownership transferred to session
+//!
+//! // Use session with connection
+//! LanceDBConnectBuilder* builder = lancedb_connect("s3://mybucket/vectors");
+//! builder = lancedb_connect_builder_session(builder, session);
+//! LanceDBConnection* db = lancedb_connect_builder_execute(builder);
 //!
 //! // ... use db ...
 //!
 //! // Cleanup
 //! lancedb_connection_free(db);
-//! ceph_lancedb_session_free(session);
+//! lancedb_session_free(session);
 //! ```
 
 /// FFI bindings to Ceph's rgw_sal_wrapper.cc
@@ -61,83 +70,87 @@ use std::os::raw::c_void;
 use std::sync::Arc;
 
 //=============================================================================
-// C API - For calling from RGW C++ code
+// C API - Registry for use with lancedb_session_new_with_registry()
 //=============================================================================
 
-/// Opaque handle to a Lance Session
-pub type CephLanceDBSession = c_void;
+/// Opaque handle to an ObjectStoreRegistry
+pub type CephLanceDBRegistry = c_void;
 
-/// Create a LanceDB session configured to use RGW as the S3 backend
+/// Create an ObjectStoreRegistry configured to route S3 URLs through RGW SAL
 ///
-/// This session should be passed to lancedb_connect_builder_session_ptr() when
-/// connecting to a database. All s3:// URLs will be routed through RGW SAL.
-///
-/// # Safety
-/// - `driver` must be a valid pointer to rgw::sal::Driver
-/// - `dpp` must be a valid pointer to DoutPrefixProvider
-/// - Both pointers must remain valid for the lifetime of the session
-///
-/// # Returns
-/// Opaque pointer to session, or NULL on failure.
-/// Caller must free with ceph_lancedb_session_free().
-#[no_mangle]
-pub unsafe extern "C" fn ceph_lancedb_create_session(
-    driver: *mut c_void,
-    dpp: *const c_void,
-) -> *mut CephLanceDBSession {
-    if driver.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let session = create_rgw_session(driver, dpp);
-
-    // Convert Arc to raw pointer
-    Arc::into_raw(session) as *mut CephLanceDBSession
-}
-
-/// Create a LanceDB session with custom cache sizes
+/// This registry can be passed to lancedb_session_new_with_registry() to create
+/// a LanceDB session with full control over session options (cache sizes, etc.)
+/// while still routing all s3:// URLs through RGW SAL.
 ///
 /// # Safety
 /// - `driver` must be a valid pointer to rgw::sal::Driver
 /// - `dpp` must be a valid pointer to DoutPrefixProvider (can be NULL)
-/// - Both pointers must remain valid for the lifetime of the session
-///
-/// # Arguments
-/// * `driver` - Pointer to RGW driver
-/// * `dpp` - Pointer to DoutPrefixProvider
-/// * `index_cache_size` - Size of index cache in bytes (0 to disable)
-/// * `metadata_cache_size` - Size of metadata cache in bytes (0 to disable)
+/// - Both pointers must remain valid for the lifetime of the registry
 ///
 /// # Returns
-/// Opaque pointer to session, or NULL on failure.
+/// Opaque pointer to registry, or NULL on failure.
+/// Caller must either:
+/// - Pass to lancedb_session_new_with_registry() (transfers ownership)
+/// - Free with ceph_lancedb_registry_free()
+///
+/// # Example (from C++)
+/// ```cpp
+/// // Create registry with RGW backend
+/// void* registry = ceph_lancedb_create_registry(driver, dpp);
+///
+/// // Create session with custom cache sizes using lancedb-c API
+/// LanceDBSessionOptions options = {
+///     .index_cache_bytes = 512 * 1024 * 1024,    // 512 MB
+///     .metadata_cache_bytes = 256 * 1024 * 1024  // 256 MB
+/// };
+/// LanceDBSession* session = lancedb_session_new_with_registry(&options, registry);
+/// // Note: registry ownership transferred to session
+///
+/// // Use session with connection
+/// auto* builder = lancedb_connect("s3://mybucket/vectors");
+/// builder = lancedb_connect_builder_session(builder, session);
+/// auto* db = lancedb_connect_builder_execute(builder);
+///
+/// // Cleanup
+/// lancedb_connection_free(db);
+/// lancedb_session_free(session);
+/// ```
 #[no_mangle]
-pub unsafe extern "C" fn ceph_lancedb_create_session_with_cache(
+pub unsafe extern "C" fn ceph_lancedb_create_registry(
     driver: *mut c_void,
     dpp: *const c_void,
-    index_cache_size: usize,
-    metadata_cache_size: usize,
-) -> *mut CephLanceDBSession {
+) -> *mut CephLanceDBRegistry {
     if driver.is_null() {
         return std::ptr::null_mut();
     }
 
-    let session = create_rgw_session_with_cache(driver, dpp, index_cache_size, metadata_cache_size);
-    Arc::into_raw(session) as *mut CephLanceDBSession
+    let registry = create_rgw_registry(driver, dpp);
+
+    // Convert Arc to raw pointer - transfers ownership to caller
+    Arc::into_raw(registry) as *mut CephLanceDBRegistry
 }
 
-/// Free a session created by ceph_lancedb_create_session
+/// Free a registry created by ceph_lancedb_create_registry
+///
+/// Only call this if the registry was NOT passed to lancedb_session_new_with_registry().
+/// If it was passed to that function, ownership was transferred and you must NOT
+/// call this function.
 ///
 /// # Safety
-/// - `session` must be a valid pointer returned by ceph_lancedb_create_session
-/// - Must not be called more than once for the same session
-/// - Session must not be in use when freed
+/// - `registry` must be a valid pointer returned by ceph_lancedb_create_registry
+/// - Must not be called if registry was passed to lancedb_session_new_with_registry()
+/// - Must not be called more than once for the same registry
 #[no_mangle]
-pub unsafe extern "C" fn ceph_lancedb_session_free(session: *mut CephLanceDBSession) {
-    if !session.is_null() {
+pub unsafe extern "C" fn ceph_lancedb_registry_free(registry: *mut CephLanceDBRegistry) {
+    if !registry.is_null() {
         // Reconstruct Arc and let it drop
-        let _ = Arc::from_raw(session as *const lance::session::Session);
+        let _ = Arc::from_raw(registry as *const lance_io::object_store::ObjectStoreRegistry);
     }
 }
+
+//=============================================================================
+// Cache size defaults
+//=============================================================================
 
 /// Get the default index cache size in bytes
 #[no_mangle]
@@ -149,21 +162,6 @@ pub extern "C" fn ceph_lancedb_default_index_cache_size() -> usize {
 #[no_mangle]
 pub extern "C" fn ceph_lancedb_default_metadata_cache_size() -> usize {
     DEFAULT_METADATA_CACHE_SIZE
-}
-
-/// Get the raw session pointer for use with lancedb-c
-///
-/// This returns the same pointer that was passed to the C API,
-/// but cast to the type expected by lancedb_connect_builder_session_ptr().
-///
-/// # Safety
-/// - `session` must be a valid pointer returned by ceph_lancedb_create_session
-/// - The returned pointer is only valid as long as the session is alive
-#[no_mangle]
-pub unsafe extern "C" fn ceph_lancedb_session_as_ptr(
-    session: *const CephLanceDBSession,
-) -> *const c_void {
-    session as *const c_void
 }
 
 //=============================================================================
@@ -183,26 +181,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_session_null_driver() {
-        let session =
-            unsafe { ceph_lancedb_create_session(std::ptr::null_mut(), std::ptr::null()) };
-        assert!(session.is_null());
-    }
-
-    #[test]
-    fn test_session_lifecycle() {
-        // Use a dummy non-null pointer for testing
-        let fake_driver = 0x1234usize as *mut c_void;
-        let fake_dpp = 0x5678usize as *const c_void;
-
-        let session = unsafe { ceph_lancedb_create_session(fake_driver, fake_dpp) };
-        assert!(!session.is_null());
-
-        // Free should not crash
-        unsafe { ceph_lancedb_session_free(session) };
-    }
-
-    #[test]
     fn test_cache_size_defaults() {
         assert_eq!(ceph_lancedb_default_index_cache_size(), 256 * 1024 * 1024);
         assert_eq!(ceph_lancedb_default_metadata_cache_size(), 128 * 1024 * 1024);
@@ -214,5 +192,31 @@ mod tests {
         assert!(!version.is_null());
         let version_str = unsafe { std::ffi::CStr::from_ptr(version).to_str().unwrap() };
         assert_eq!(version_str, "0.1.0");
+    }
+
+    #[test]
+    fn test_create_registry_null_driver() {
+        let registry =
+            unsafe { ceph_lancedb_create_registry(std::ptr::null_mut(), std::ptr::null()) };
+        assert!(registry.is_null());
+    }
+
+    #[test]
+    fn test_registry_lifecycle() {
+        // Use a dummy non-null pointer for testing
+        let fake_driver = 0x1234usize as *mut c_void;
+        let fake_dpp = 0x5678usize as *const c_void;
+
+        let registry = unsafe { ceph_lancedb_create_registry(fake_driver, fake_dpp) };
+        assert!(!registry.is_null());
+
+        // Free should not crash
+        unsafe { ceph_lancedb_registry_free(registry) };
+    }
+
+    #[test]
+    fn test_registry_free_null_safe() {
+        // Should not crash when passed NULL
+        unsafe { ceph_lancedb_registry_free(std::ptr::null_mut()) };
     }
 }

@@ -8,10 +8,11 @@
  * Ceph RGW's native SAL API instead of the S3 HTTP protocol.
  *
  * Usage:
- *   1. Create a session with ceph_lancedb_create_session()
- *   2. Pass the session to lancedb_connect_builder_session_ptr()
- *   3. Use standard LanceDB C API for all operations
- *   4. Free the session with ceph_lancedb_session_free()
+ *   1. Create a registry with ceph_lancedb_create_registry()
+ *   2. Create a session with lancedb_session_new_with_registry() (from lancedb.h)
+ *   3. Pass the session to lancedb_connect_builder_session()
+ *   4. Use standard LanceDB C API for all operations
+ *   5. Free the session with lancedb_session_free()
  *
  * All s3:// URLs will automatically be routed through RGW SAL.
  */
@@ -26,108 +27,83 @@
 extern "C" {
 #endif
 
-/**
- * Opaque handle to a Lance Session configured for RGW.
+/*===========================================================================
+ * Registry API - For use with lancedb_session_new_with_registry()
  *
- * This session can be passed to lancedb_connect_builder_session_ptr() to make
- * all s3:// URLs route through RGW's native SAL API.
- */
-typedef void CephLanceDBSession;
+ * This API provides flexibility by separating registry creation from
+ * session creation. This allows using standard lancedb-c session options
+ * (cache sizes, etc.) while still routing S3 URLs through RGW SAL.
+ *===========================================================================*/
 
 /**
- * Create a LanceDB session configured to use RGW as the S3 backend.
+ * Opaque handle to an ObjectStoreRegistry configured for RGW.
+ */
+typedef void CephLanceDBRegistry;
+
+/**
+ * Create an ObjectStoreRegistry configured to route S3 URLs through RGW SAL.
  *
- * This function creates a Lance Session with the ObjectStoreRegistry
- * configured to route all s3:// URLs through RGW's SAL API instead of
- * making HTTP requests to S3.
- *
- * The session uses default cache sizes:
- *   - Index cache: 256 MB
- *   - Metadata cache: 128 MB
+ * This registry can be passed to lancedb_session_new_with_registry() to create
+ * a LanceDB session with full control over session options (cache sizes, etc.)
+ * while still routing all s3:// URLs through RGW SAL.
  *
  * @param driver  Pointer to rgw::sal::Driver (env.driver in RGW handlers)
  * @param dpp     Pointer to DoutPrefixProvider for logging (can be NULL)
  *
- * @return Opaque session pointer on success, NULL on failure
+ * @return Opaque registry pointer on success, NULL on failure
  *
- * @note Caller must free with ceph_lancedb_session_free()
- * @note Both driver and dpp must remain valid for session lifetime
+ * @note Caller must either:
+ *   - Pass to lancedb_session_new_with_registry() (transfers ownership), OR
+ *   - Free with ceph_lancedb_registry_free()
+ * @note Both driver and dpp must remain valid for registry lifetime
  *
  * Example:
  * @code
- *   // In RGW operation handler
- *   CephLanceDBSession* session = ceph_lancedb_create_session(
- *       env.driver,
- *       this  // RGWOp is a DoutPrefixProvider
- *   );
+ *   #include "ceph_lancedb_rgw.h"
+ *   #include "lancedb.h"
  *
+ *   // Create registry with RGW backend
+ *   CephLanceDBRegistry* registry = ceph_lancedb_create_registry(driver, dpp);
+ *
+ *   // Create session with custom cache sizes using lancedb-c API
+ *   LanceDBSessionOptions options = {
+ *       .index_cache_bytes = 512 * 1024 * 1024,    // 512 MB
+ *       .metadata_cache_bytes = 256 * 1024 * 1024  // 256 MB
+ *   };
+ *   LanceDBSession* session = lancedb_session_new_with_registry(&options, registry);
+ *   // Note: registry ownership transferred to session
+ *
+ *   // Use session with connection
  *   LanceDBConnectBuilder* builder = lancedb_connect("s3://mybucket/vectors");
- *   builder = lancedb_connect_builder_session_ptr(builder, session);
+ *   builder = lancedb_connect_builder_session(builder, session);
  *   LanceDBConnection* db = lancedb_connect_builder_execute(builder);
  *
  *   // ... use db ...
  *
+ *   // Cleanup
  *   lancedb_connection_free(db);
- *   ceph_lancedb_session_free(session);
+ *   lancedb_session_free(session);
  * @endcode
  */
-CephLanceDBSession* ceph_lancedb_create_session(void* driver, const void* dpp);
+CephLanceDBRegistry* ceph_lancedb_create_registry(void* driver, const void* dpp);
 
 /**
- * Create a LanceDB session with custom cache sizes.
+ * Free a registry created by ceph_lancedb_create_registry.
  *
- * This function allows fine-grained control over cache sizes for
- * memory-constrained environments or high-performance scenarios.
+ * Only call this if the registry was NOT passed to lancedb_session_new_with_registry().
+ * If it was passed to that function, ownership was transferred and you must NOT
+ * call this function.
  *
- * @param driver              Pointer to rgw::sal::Driver
- * @param dpp                 Pointer to DoutPrefixProvider (can be NULL)
- * @param index_cache_size    Size of index cache in bytes (0 to disable)
- * @param metadata_cache_size Size of metadata cache in bytes (0 to disable)
+ * @param registry  Registry pointer to free (safe to pass NULL)
  *
- * @return Opaque session pointer on success, NULL on failure
- *
- * Example:
- * @code
- *   // Create session with 512MB index cache, 256MB metadata cache
- *   CephLanceDBSession* session = ceph_lancedb_create_session_with_cache(
- *       driver,
- *       dpp,
- *       512 * 1024 * 1024,  // 512 MB
- *       256 * 1024 * 1024   // 256 MB
- *   );
- * @endcode
+ * @warning Must not be called if registry was passed to lancedb_session_new_with_registry()
+ * @warning Must not be called more than once for the same registry
  */
-CephLanceDBSession* ceph_lancedb_create_session_with_cache(
-    void* driver,
-    const void* dpp,
-    size_t index_cache_size,
-    size_t metadata_cache_size
-);
+void ceph_lancedb_registry_free(CephLanceDBRegistry* registry);
 
-/**
- * Free a session created by ceph_lancedb_create_session.
- *
- * This function releases all resources associated with the session,
- * including cached indices and metadata.
- *
- * @param session  Session pointer to free (safe to pass NULL)
- *
- * @warning Must not be called while session is in use by any connection
- * @warning Must not be called more than once for the same session
- */
-void ceph_lancedb_session_free(CephLanceDBSession* session);
-
-/**
- * Get the raw session pointer for use with lancedb-c.
- *
- * This function returns the session pointer in a form suitable for
- * passing to lancedb_connect_builder_session_ptr().
- *
- * @param session  Session created by ceph_lancedb_create_session
- *
- * @return Pointer suitable for lancedb_connect_builder_session_ptr()
- */
-const void* ceph_lancedb_session_as_ptr(const CephLanceDBSession* session);
+/*===========================================================================
+ * Cache Size Defaults
+ *===========================================================================*/
 
 /**
  * Get the default index cache size in bytes.
@@ -142,6 +118,10 @@ size_t ceph_lancedb_default_index_cache_size(void);
  * @return Default metadata cache size (128 MB)
  */
 size_t ceph_lancedb_default_metadata_cache_size(void);
+
+/*===========================================================================
+ * Version Information
+ *===========================================================================*/
 
 /**
  * Get the version string for this library.
