@@ -13,9 +13,51 @@
 
 namespace {
 
+// Helper to extract S3 credentials from the authenticated user
+// Returns nullptr if not using external S3 backend (i.e., for local or SAL backend)
+std::unique_ptr<rgw::s3vector::S3Credentials> get_user_s3_credentials(req_state* s) {
+  if (!s || !s->user) {
+    return nullptr;
+  }
+
+  // Only fetch credentials for external S3 backend (endpoint configured)
+  // For local filesystem or SAL backend, we don't need user credentials
+  if (!rgw::s3vector::is_s3_backend(s->cct) || rgw::s3vector::is_sal_backend(s->cct)) {
+    return nullptr;
+  }
+
+  // STS/assumed-role users may not have direct access keys
+  if (s->auth.identity->get_identity_type() == TYPE_ROLE) {
+    ldpp_dout(s, 5) << "WARNING: STS assumed-role users may not have access "
+                    << "keys suitable for external S3 backend" << dendl;
+  }
+
+  const auto& access_keys = s->user->get_info().access_keys;
+  if (access_keys.empty()) {
+    // User has no access keys - will fall back to config credentials
+    // (rgw_s3vector_s3_access_key/secret_key) for external S3 backend
+    ldpp_dout(s, 10) << "INFO: s3vector user has no access keys, "
+                     << "will use config credentials for external S3" << dendl;
+    return nullptr;
+  }
+
+  // Use the first available access key for the external S3 backend
+  // Note: We cannot reliably determine which key was used for authentication
+  // as the Identity interface does not expose this information
+  auto creds = std::make_unique<rgw::s3vector::S3Credentials>();
+  const auto& key_pair = *access_keys.begin();
+  creds->access_key = key_pair.second.id;
+  creds->secret_key = key_pair.second.key;
+
+  // NOTE: Never log credentials (access_key or secret_key) - security risk
+  ldpp_dout(s, 20) << "INFO: s3vector using user credentials for external S3" << dendl;
+  return creds;
+}
+
 class RGWS3VectorBase : public RGWDefaultResponseOp {
 protected:
   bufferlist in_data;
+  std::unique_ptr<rgw::s3vector::S3Credentials> user_creds;
   template<typename T>
   int do_init_processing(T& configuration, optional_yield y) {
     const auto max_size = s->cct->_conf->rgw_max_put_param_size;
@@ -40,6 +82,9 @@ protected:
       ldpp_dout(this, 1) << "ERROR: failed to decode JSON s3vector payload: " << e.what() << dendl;
       return -EINVAL;
     }
+
+    // Extract user credentials for external S3 backend
+    user_creds = get_user_s3_credentials(s);
 
     return 0;
   }
@@ -74,7 +119,7 @@ class RGWS3VectorCreateIndex : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::create_index(configuration, this, y);
+    op_ret = rgw::s3vector::create_index(configuration, driver, this, y, user_creds.get());
   }
 
   void send_response() override {
@@ -180,7 +225,8 @@ class RGWS3VectorCreateVectorBucket : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to create s3vector bucket " << bucket_id << ". error: " << ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::create_vector_bucket(configuration, this, y);
+
+    op_ret = rgw::s3vector::create_vector_bucket(configuration, driver, this, y, user_creds.get());
     if (op_ret < 0) {
       ldpp_dout(this, 1) << "ERROR: failed to initialize s3vector bucket " << bucket_id << ". error: " << ret << dendl;
       return;
@@ -263,7 +309,7 @@ class RGWS3VectorDeleteIndex : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_index(configuration, this, y);
+    op_ret = rgw::s3vector::delete_index(configuration, driver, this, y, user_creds.get());
   }
 };
 
@@ -323,7 +369,7 @@ class RGWS3VectorDeleteVectorBucket : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to delete s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_vector_bucket(configuration, this, y);
+    op_ret = rgw::s3vector::delete_vector_bucket(configuration, driver, this, y, user_creds.get());
   }
 };
 
@@ -356,7 +402,7 @@ class RGWS3VectorDeleteVectorBucketPolicy : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_vector_bucket_policy(configuration, this, y);
+    op_ret = rgw::s3vector::delete_vector_bucket_policy(configuration, driver, this, y, user_creds.get());
   }
 };
 
@@ -389,7 +435,7 @@ class RGWS3VectorPutVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::put_vectors(configuration, this, y);
+    op_ret = rgw::s3vector::put_vectors(configuration, driver, this, y, user_creds.get());
   }
 };
 
@@ -423,7 +469,7 @@ class RGWS3VectorGetVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::get_vectors(configuration, this, y, reply);
+    op_ret = rgw::s3vector::get_vectors(configuration, driver, this, y, reply, user_creds.get());
   }
 
   void send_response() override {
@@ -475,7 +521,7 @@ class RGWS3VectorListVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::list_vectors(configuration, this, y, reply);
+    op_ret = rgw::s3vector::list_vectors(configuration, driver, this, y, reply, user_creds.get());
   }
 
   void send_response() override {
@@ -683,7 +729,7 @@ class RGWS3VectorGetIndex : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::get_index(configuration, s->zonegroup_name, s->account_name, this, y, reply);
+    op_ret = rgw::s3vector::get_index(configuration, s->zonegroup_name, s->account_name, driver, this, y, reply, user_creds.get());
   }
 
   void send_response() override {
@@ -742,7 +788,7 @@ class RGWS3VectorListIndexes : public RGWS3VectorBase {
         configuration.vector_bucket_name
       );
     }
-    op_ret = rgw::s3vector::list_indexes(configuration, this, y, reply);
+    op_ret = rgw::s3vector::list_indexes(configuration, driver, this, y, reply, user_creds.get());
   }
 
   void send_response() override {
@@ -859,7 +905,7 @@ class RGWS3VectorDeleteVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_vectors(configuration, this, y);
+    op_ret = rgw::s3vector::delete_vectors(configuration, driver, this, y, user_creds.get());
   }
 };
 
@@ -893,7 +939,7 @@ class RGWS3VectorQueryVectors : public RGWS3VectorBase {
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::query_vectors(configuration, this, y, reply);
+    op_ret = rgw::s3vector::query_vectors(configuration, driver, this, y, reply, user_creds.get());
   }
 
   void send_response() override {

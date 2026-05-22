@@ -1,0 +1,75 @@
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:nil -*-
+// vim: ts=8 sw=2 sts=2 expandtab
+
+/*
+ * Ceph - scalable distributed file system
+ *
+ * Copyright 2026 IBM
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright The Ceph Authors
+ *
+ * REST endpoint for testing the SAL wrapper.
+ * This allows testing the SAL wrapper from within RGW with real driver/dpp.
+ *
+ * Usage:
+ *   POST /{bucket}?sal-wrapper-test
+ *
+ *   Request body (JSON):
+ *   {
+ *     "test": "all" | "put_get" | "delete" | "head" | "list" | "copy" | "range_read",
+ *     "iterations": 10,
+ *     "object_size": 1024
+ *   }
+ *
+ *   Response (JSON):
+ *   {
+ *     "success": true,
+ *     "tests_run": 6,
+ *     "tests_passed": 6,
+ *     "tests_failed": 0,
+ *     "results": [...]
+ *   }
+ */
+
+#pragma once
+
+#include "rgw_op.h"
+#include "rgw_rest.h"
+
+// Forward declaration
+struct RGWSALWrapperTestImpl;
+
+// SAL wrapper test operation (POST - runs tests)
+class RGWSALWrapperTest : public RGWOp {
+  RGWSALWrapperTestImpl* impl_;
+
+public:
+  RGWSALWrapperTest();
+  ~RGWSALWrapperTest() override;
+
+  int verify_permission(optional_yield y) override;
+  void pre_exec() override;
+  const char* name() const override;
+  RGWOpType get_type() override;
+  uint32_t op_mask() override;
+  int init_processing(optional_yield y) override;
+  void execute(optional_yield y) override;
+  void send_response() override;
+};
+
+// SAL wrapper test info endpoint (GET - returns usage info)
+class RGWSALWrapperTestInfo : public RGWOp {
+public:
+  RGWSALWrapperTestInfo() = default;
+  ~RGWSALWrapperTestInfo() override = default;
+
+  int verify_permission(optional_yield y) override { return 0; }
+  void pre_exec() override {}
+  const char* name() const override { return "sal_wrapper_test_info"; }
+  RGWOpType get_type() override { return RGW_OP_UNKNOWN; }
+  uint32_t op_mask() override { return RGW_OP_TYPE_READ; }
+  void execute(optional_yield y) override;
+  void send_response() override;
+};
+
