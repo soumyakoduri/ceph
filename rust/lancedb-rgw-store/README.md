@@ -25,6 +25,9 @@ When making changes to this crate during development:
 # Option 1: Use ninja to rebuild and copy the library
 cd ceph/build
 ninja lancedb-rgw-store
+# NOTE: Option 1 may not rebuild if BUILD_ALWAYS is set to "OFF" in
+# src/CMakeLists.txt. Ensure BUILD_ALWAYS is "ON" for the lancedb-rgw-store
+# ExternalProject_Add target, or use Option 2 instead.
 
 # Option 2: Build with cargo directly (faster iteration)
 cd ceph/rust/lancedb-rgw-store
