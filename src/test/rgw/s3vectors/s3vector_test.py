@@ -18,7 +18,8 @@ from . import(
     get_access_key,
     get_secret_key,
     get_config_host2,
-    get_config_port2
+    get_config_port2,
+    is_s3_backend
     )
 
 
@@ -128,13 +129,22 @@ def _delete_all_vector_buckets(conn):
     result = conn.list_vector_buckets()
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     for bucket in result['vectorBuckets']:
-        _ = conn.delete_vector_bucket(vectorBucketName=bucket['vectorBucketName'])
+        bucket_name = bucket['vectorBucketName']
+        # Ensure S3 bucket exists before deleting vector bucket (required for S3 backend)
+        _ensure_s3_bucket_for_vector_bucket(bucket_name)
+        try:
+            _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+        except conn.exceptions.ClientError as err:
+            log.warning("Failed to delete vector bucket '%s': %s", bucket_name, str(err))
+        # Clean up the S3 bucket after deleting the vector bucket
+        _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_bucket_test
 def test_create_vector_bucket():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     log.info('create_vector_bucket result: %s', result)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
@@ -161,6 +171,7 @@ def test_create_vector_bucket_bad_path():
 def test_get_vector_bucket():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     bucket_arn = result['vectorBucketArn']
@@ -180,12 +191,14 @@ def test_get_vector_bucket():
 def test_delete_vector_bucket():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     result = conn.get_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     result = conn.delete_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
     pytest.raises(conn.exceptions.ClientError, conn.get_vector_bucket, vectorBucketName=bucket_name)
     pytest.raises(conn.exceptions.ClientError, conn.delete_vector_bucket, vectorBucketName=bucket_name)
     result = conn.list_vector_buckets()
@@ -200,8 +213,10 @@ def test_list_vector_buckets():
     conn = connection()
     bucket_name1 = gen_bucket_name()
     bucket_name2 = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name1)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name1)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+    _ensure_s3_bucket_for_vector_bucket(bucket_name2)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name2)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     result = conn.list_vector_buckets()
@@ -225,8 +240,10 @@ def test_vector_buckets_sync():
     # create buckets from the first connection
     bucket_name1 = gen_bucket_name()
     bucket_name2 = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name1)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name1)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+    _ensure_s3_bucket_for_vector_bucket(bucket_name2)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name2)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     result = conn.list_vector_buckets()
@@ -248,8 +265,10 @@ def test_vector_buckets_sync():
     # create buckets from the 2nd connection
     bucket_name3 = gen_bucket_name()
     bucket_name4 = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name3)
     result = conn2.create_vector_bucket(vectorBucketName=bucket_name3)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+    _ensure_s3_bucket_for_vector_bucket(bucket_name4)
     result = conn2.create_vector_bucket(vectorBucketName=bucket_name4)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     result = conn2.list_vector_buckets()
@@ -279,6 +298,56 @@ def _create_s3bucket(s3conn, bucket_name):
     except s3conn.exceptions.ClientError as err:
         log.warning("s3 bucket creation failed with: %s", str(err))
         assert err.response['ResponseMetadata']['HTTPStatusCode'] == 500
+
+
+def _ensure_s3_bucket_for_vector_bucket(bucket_name):
+    """
+    When using S3 backend, create a regular S3 bucket with the same name
+    as the vector bucket. This is required because the S3 backend stores
+    LanceDB data directly in an S3 bucket with the vector bucket name.
+    """
+    if not is_s3_backend():
+        return
+    s3conn = connection('s3')
+    try:
+        # Check if bucket already exists
+        s3conn.head_bucket(Bucket=bucket_name)
+        log.info("S3 bucket '%s' already exists", bucket_name)
+    except s3conn.exceptions.ClientError as err:
+        error_code = err.response['Error']['Code']
+        # Handle both '404' and 'NoSuchBucket' as bucket-not-found
+        if error_code in ('404', 'NoSuchBucket'):
+            # Bucket doesn't exist, create it
+            log.info("Creating S3 bucket '%s' for S3 backend", bucket_name)
+            _create_s3bucket(s3conn, bucket_name)
+        else:
+            raise
+
+
+def _delete_s3_bucket_for_vector_bucket(bucket_name):
+    """
+    When using S3 backend, delete the regular S3 bucket that was created
+    for the vector bucket. This cleans up the S3 bucket after vector bucket deletion.
+    """
+    if not is_s3_backend():
+        return
+    s3conn = connection('s3')
+    try:
+        # First, delete all objects in the bucket
+        paginator = s3conn.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=bucket_name):
+            if 'Contents' in page:
+                objects = [{'Key': obj['Key']} for obj in page['Contents']]
+                if objects:
+                    s3conn.delete_objects(Bucket=bucket_name, Delete={'Objects': objects})
+        # Now delete the bucket
+        s3conn.delete_bucket(Bucket=bucket_name)
+        log.info("Deleted S3 bucket '%s'", bucket_name)
+    except s3conn.exceptions.ClientError as err:
+        if err.response['Error']['Code'] == '404' or err.response['Error']['Code'] == 'NoSuchBucket':
+            log.info("S3 bucket '%s' does not exist, nothing to delete", bucket_name)
+        else:
+            log.warning("Failed to delete S3 bucket '%s': %s", bucket_name, str(err))
 
 
 @pytest.mark.vector_bucket_test
@@ -390,6 +459,7 @@ def test_vector_buckets_deletion_with_buckets():
 def test_create_index():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     index_name = 'test-index'
@@ -407,6 +477,7 @@ def test_create_index():
     pytest.raises(conn.exceptions.ClientError, conn.create_index, vectorBucketName=invalid_bucket_name, indexName=index_name, dataType='float32', dimension=128, distanceMetric='euclidean')
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.index_test
@@ -414,6 +485,7 @@ def test_get_index():
     conn = connection()
     bucket_name = gen_bucket_name()
     dimension = 128
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     index_name = 'test-index'
@@ -435,12 +507,14 @@ def test_get_index():
     pytest.raises(conn.exceptions.ClientError, conn.get_index, vectorBucketName=invalid_bucket_name, indexName=index_name)
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.index_test
 def test_delete_index():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     index_name = 'test-index'
@@ -459,12 +533,14 @@ def test_delete_index():
     #    result = conn.get_index(vectorBucketName=bucket_name, indexName=index_name)
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.index_test
 def test_list_indexes():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     index_name1 = 'test-index1'
@@ -486,6 +562,7 @@ def test_list_indexes():
     pytest.raises(conn.exceptions.ClientError, conn.list_indexes, vectorBucketName=invalid_bucket_name)
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 def generate_data(dimension, index=0):
@@ -623,6 +700,7 @@ def verify_list_vectors_pagination(conn, bucket_name, index_name, expected_vecto
 def test_put_vectors():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     index_name = 'test-index'
@@ -633,6 +711,7 @@ def test_put_vectors():
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 def update_vectors_thread(conn, bucket_name, thread_id):
@@ -663,6 +742,7 @@ def update_vectors_thread(conn, bucket_name, thread_id):
 def test_update_vectors():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     num_indexes = 10
@@ -676,12 +756,14 @@ def test_update_vectors():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
 def test_put_vectors_dimension_mismatch():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     index_name = 'test-index'
@@ -718,6 +800,7 @@ def test_put_vectors_dimension_mismatch():
         assert f'wrong-{i}' not in inserted_keys
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
@@ -725,6 +808,7 @@ def test_get_vectors():
     conn = connection()
     bucket_name = gen_bucket_name()
     dimension = 128
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
@@ -746,6 +830,7 @@ def test_get_vectors():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
@@ -753,6 +838,7 @@ def test_get_vectors_without_data():
     conn = connection()
     bucket_name = gen_bucket_name()
     dimension = 128
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
@@ -774,12 +860,14 @@ def test_get_vectors_without_data():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
 def test_list_vectors():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
@@ -805,6 +893,7 @@ def test_list_vectors():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
@@ -812,6 +901,7 @@ def test_list_vectors_with_data():
     """Test list_vectors with returnData=True to verify data is returned."""
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
@@ -835,6 +925,7 @@ def test_list_vectors_with_data():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
@@ -842,6 +933,7 @@ def test_list_vectors_without_data():
     """Test list_vectors with returnData=False to verify data is not returned."""
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
@@ -865,12 +957,14 @@ def test_list_vectors_without_data():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
 def test_list_vectors_pagination():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
@@ -897,12 +991,14 @@ def test_list_vectors_pagination():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
 def test_list_vectors_exact_pagination():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
@@ -929,12 +1025,14 @@ def test_list_vectors_exact_pagination():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
 def test_delete_vectors():
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
@@ -969,6 +1067,7 @@ def test_delete_vectors():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
@@ -976,6 +1075,7 @@ def test_query_vectors():
     dimension = 8
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     index_name = 'test-index'
@@ -998,6 +1098,7 @@ def test_query_vectors():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
 
 
 @pytest.mark.vector_test
@@ -1005,6 +1106,7 @@ def test_query_vectors_with_distance():
     dimension = 8
     conn = connection()
     bucket_name = gen_bucket_name()
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     index_name = 'test-index'
@@ -1028,4 +1130,4 @@ def test_query_vectors_with_distance():
 
     # cleanup
     _ = conn.delete_vector_bucket(vectorBucketName=bucket_name)
-
+    _delete_s3_bucket_for_vector_bucket(bucket_name)
