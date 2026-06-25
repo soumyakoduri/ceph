@@ -9,6 +9,7 @@
 #include "include/encoding.h"
 #include "rgw_arn.h"
 #include "common/async/yield_context.h"
+#include <boost/algorithm/string/predicate.hpp>
 
 namespace ceph {
 class Formatter;
@@ -46,6 +47,38 @@ struct filterable_metadata_key_t {
   void dump(ceph::Formatter* f) const;
   void decode_json(JSONObj* obj);
 };
+
+// Backend type for S3 Vector storage
+enum class BackendType {
+  LOCAL, // Local filesystem storage (default)
+  SAL,   // RGW Storage Abstraction Layer (internal)
+  S3     // External S3-compatible object storage
+};
+
+// Convert string to backend type (case-insensitive)
+inline BackendType get_backend_type(const std::string& str) {
+  if (boost::iequals(str, "sal")) {
+    return BackendType::SAL;
+  }
+  if (boost::iequals(str, "s3")) {
+    return BackendType::S3;
+  }
+  // Default to LOCAL for "local" or any unrecognized value
+  return BackendType::LOCAL;
+}
+
+// Helper functions to check backend type
+inline bool is_local_backend(BackendType type) {
+  return type == BackendType::LOCAL;
+}
+
+inline bool is_sal_backend(BackendType type) {
+  return type == BackendType::SAL;
+}
+
+inline bool is_s3_backend(BackendType type) {
+  return type == BackendType::S3;
+}
 
 /*
   {
