@@ -1225,6 +1225,33 @@ if(WITH_RADOSGW)
                       ${CMAKE_CURRENT_SOURCE_DIR}/lancedb-c/include/lancedb.h
                       ${CMAKE_BINARY_DIR}/src/include/lancedb.h
     )
+
+    # Build lancedb-rgw-store Rust crate (SAL wrapper for LanceDB)
+    set(LANCEDB_RGW_STORE_SOURCE_DIR "${CMAKE_SOURCE_DIR}/rust/rgw/lancedb-rgw-store")
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+      set(LANCEDB_RGW_STORE_CARGO_PROFILE "debug")
+      set(LANCEDB_RGW_STORE_CARGO_FLAG "")
+    else()
+      set(LANCEDB_RGW_STORE_CARGO_PROFILE "release")
+      set(LANCEDB_RGW_STORE_CARGO_FLAG "--release")
+    endif()
+    set(LANCEDB_RGW_STORE_TARGET_DIR "${LANCEDB_RGW_STORE_SOURCE_DIR}/target/${LANCEDB_RGW_STORE_CARGO_PROFILE}")
+
+    ExternalProject_Add(lancedb-rgw-store
+      SOURCE_DIR ${LANCEDB_RGW_STORE_SOURCE_DIR}
+      CONFIGURE_COMMAND ""
+      BUILD_COMMAND cargo build ${LANCEDB_RGW_STORE_CARGO_FLAG}
+      BUILD_IN_SOURCE TRUE
+      BUILD_ALWAYS OFF
+      BUILD_BYPRODUCTS ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb_rgw_store.so
+      INSTALL_COMMAND ${CMAKE_COMMAND} -E copy
+                      ${LANCEDB_RGW_STORE_TARGET_DIR}/liblancedb_rgw_store.so
+                      ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb_rgw_store.so
+                  COMMAND ${CMAKE_COMMAND} -E copy
+                      ${LANCEDB_RGW_STORE_SOURCE_DIR}/include/lancedb_rgw_store.h
+                      ${CMAKE_BINARY_DIR}/src/include/lancedb_rgw_store.h
+    )
+    add_dependencies(lancedb-rgw-store lancedb-c)
   endif(WITH_RADOSGW_LANCEDB)
   add_subdirectory(rgw)
 endif(WITH_RADOSGW)
