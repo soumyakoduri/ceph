@@ -19,6 +19,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define RGW_SAL_WRAPPER_VERSION_MAJOR 1
+#define RGW_SAL_WRAPPER_VERSION_MINOR 0
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -385,6 +388,13 @@ void rgw_free_list_result(RGWListResult* result);
  * Get the configured rgw_max_chunk_size (in bytes)
  */
 uint64_t rgw_get_max_chunk_size(void* driver);
+
+/**
+ * Get the SAL wrapper API version string.
+ *
+ * @return Null-terminated version string (e.g., "1.0")
+ */
+const char* rgw_sal_wrapper_version(void);
 
 #ifdef __cplusplus
 }

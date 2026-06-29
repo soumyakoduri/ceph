@@ -1273,4 +1273,16 @@ uint64_t rgw_get_max_chunk_size(void* driver_ptr) {
   return driver->ctx()->_conf.get_val<uint64_t>("rgw_max_chunk_size");
 }
 
+const char* rgw_sal_wrapper_version(void) {
+  static char version[16];
+  static bool initialized = false;
+  if (!initialized) {
+    snprintf(version, sizeof(version), "%d.%d",
+             RGW_SAL_WRAPPER_VERSION_MAJOR,
+             RGW_SAL_WRAPPER_VERSION_MINOR);
+    initialized = true;
+  }
+  return version;
+}
+
 } // extern "C"

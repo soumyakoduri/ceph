@@ -303,6 +303,10 @@ mod mock_impl {
     pub unsafe fn rgw_get_max_chunk_size(_driver: *mut c_void) -> u64 {
         4 * 1024 * 1024 // 4 MB default
     }
+
+    pub unsafe fn rgw_sal_wrapper_version() -> *const c_char {
+        b"1.0\0".as_ptr() as *const c_char
+    }
 }
 
 // Real FFI declarations - used when not in mock mode
@@ -478,6 +482,9 @@ extern "C" {
 
     /// Get the configured rgw_max_chunk_size (in bytes)
     pub fn rgw_get_max_chunk_size(driver: *mut c_void) -> u64;
+
+    /// Get the SAL wrapper API version string
+    pub fn rgw_sal_wrapper_version() -> *const c_char;
 }
 
 //=============================================================================

@@ -71,6 +71,12 @@ pub unsafe extern "C" fn rgw_lancedb_create_provider(
         return std::ptr::null_mut();
     }
 
+    // Verify SAL wrapper version compatibility
+    match check_sal_wrapper_version() {
+        Ok(_) => {}
+        Err(_) => return std::ptr::null_mut(),
+    }
+
     let provider: Arc<dyn lance_io::object_store::ObjectStoreProvider> =
         Arc::new(RGWStoreProvider::new(driver, dpp));
 
@@ -92,6 +98,41 @@ pub unsafe extern "C" fn rgw_lancedb_free_provider(provider: *mut LanceDBObjectS
     if !provider.is_null() {
         let _ = Box::from_raw(provider);
     }
+}
+
+//=============================================================================
+// Version compatibility
+//=============================================================================
+
+/// Expected SAL wrapper major version — must match at runtime
+const EXPECTED_SAL_WRAPPER_MAJOR: u32 = 1;
+
+/// Check that the SAL wrapper version is compatible.
+/// Returns the version string on success, or an error message on mismatch.
+fn check_sal_wrapper_version() -> Result<String, String> {
+    let ver_ptr = unsafe { ffi::rgw_sal_wrapper_version() };
+    if ver_ptr.is_null() {
+        return Err("rgw_sal_wrapper_version() returned null".to_string());
+    }
+    let ver_str = unsafe { std::ffi::CStr::from_ptr(ver_ptr) }
+        .to_str()
+        .map_err(|e| format!("invalid version string: {}", e))?
+        .to_string();
+
+    let major: u32 = ver_str
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| format!("cannot parse major version from '{}'", ver_str))?;
+
+    if major != EXPECTED_SAL_WRAPPER_MAJOR {
+        return Err(format!(
+            "SAL wrapper version mismatch: expected major {}, got '{}'",
+            EXPECTED_SAL_WRAPPER_MAJOR, ver_str
+        ));
+    }
+
+    Ok(ver_str)
 }
 
 //=============================================================================
