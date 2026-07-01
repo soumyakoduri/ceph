@@ -16,18 +16,25 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
 use object_store::{
-    path::Path, Attributes, Error as ObjectStoreError, GetOptions, GetRange, GetResult,
-    GetResultPayload, ListResult, MultipartUpload, ObjectMeta, ObjectStore, PutMode,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, Result as ObjectStoreResult,
-    UpdateVersion,
+    path::Path, Attributes, CopyMode, CopyOptions, Error as ObjectStoreError, GetOptions,
+    GetRange, GetResult, GetResultPayload, ListResult, MultipartUpload, ObjectMeta,
+    ObjectStore, PutMode, PutMultipartOptions, PutOptions, PutPayload, PutResult,
+    Result as ObjectStoreResult, UpdateVersion,
 };
 use std::ffi::{CStr, CString};
 use std::ops::Range;
 use std::os::raw::{c_int, c_void};
 use std::sync::{Arc, Mutex};
 
-/// Wrapper to make raw pointers Send+Sync+Copy
-/// Safety: The RGW driver and dpp are designed to be thread-safe
+/// Send+Sync wrapper for raw mutable pointers.
+///
+/// Methods that return `BoxStream<'static, ...>` (e.g., `delete_stream`, `list`)
+/// cannot capture `&self` because the stream outlives the borrow.  The raw
+/// pointers must be copied out, but `*mut c_void` does not implement `Send`,
+/// which async streams require.  This wrapper adds `Send + Sync`.
+///
+/// Safety: The RGW driver pointer is safe to use from multiple threads — RGW
+/// SAL operations use internal locking.
 #[derive(Clone, Copy, Debug)]
 struct SendPtr(*mut c_void);
 
@@ -43,6 +50,7 @@ impl SendPtr {
     }
 }
 
+/// Send+Sync wrapper for raw const pointers (see [`SendPtr`]).
 #[derive(Clone, Copy, Debug)]
 struct SendConstPtr(*const c_void);
 
@@ -118,9 +126,6 @@ impl RGWObjectStore {
         str_to_cstring(&path.to_string())
     }
 
-    // LanceDB doesn't use S3 object versioning — it manages its own versioning
-    // at the dataset level through separate manifest/fragment files.
-
     fn make_obj(key: &CString) -> RGWObject {
         RGWObject::from_key(key.as_ptr())
     }
@@ -137,9 +142,6 @@ impl RGWObjectStore {
     }
 
     /// Convert errno to ObjectStore error
-    ///
-    /// Maps common POSIX errno values to appropriate ObjectStore error types.
-    /// Negative errno values are expected (e.g., -2 for ENOENT).
     fn errno_to_error(&self, errno: i32, path: &Path, op: &str) -> object_store::Error {
         match errno {
             -2 => object_store::Error::NotFound { // ENOENT
@@ -203,19 +205,12 @@ impl std::fmt::Debug for RGWObjectStore {
 
 #[async_trait]
 impl ObjectStore for RGWObjectStore {
-    /// Write bytes to the specified location
-    async fn put(&self, location: &Path, payload: PutPayload) -> ObjectStoreResult<PutResult> {
-        self.put_opts(location, payload, PutOptions::default()).await
-    }
-
-    /// Write bytes with options (supports conditional writes)
+    /// Write an object to RGW via SAL.
     ///
     /// Supports three modes:
-    /// - `PutMode::Overwrite` (default): Unconditional write, overwrites any existing object.
-    /// - `PutMode::Create`: Atomic create-if-not-exists. Returns `AlreadyExists` if the
-    ///   object already exists. Uses SAL's `if_nomatch="*"` precondition.
-    /// - `PutMode::Update(version)`: Compare-and-swap. Only writes if the existing object's
-    ///   ETag matches `version.e_tag`. Returns `Precondition` error otherwise.
+    /// - `Overwrite`: unconditional write (creates or replaces)
+    /// - `Create`: write only if the object does not exist (if-none-match: *)
+    /// - `Update`: write only if the existing ETag matches (if-match)
     async fn put_opts(
         &self,
         location: &Path,
@@ -227,7 +222,6 @@ impl ObjectStore for RGWObjectStore {
         let obj = Self::make_obj(&key);
         let content_type = str_to_cstring("application/octet-stream")?;
 
-        // Collect payload into contiguous bytes
         let bytes: Bytes = payload.into();
 
         match opts.mode {
@@ -334,21 +328,29 @@ impl ObjectStore for RGWObjectStore {
         }
     }
 
-    /// Read the entire object at location
-    async fn get(&self, location: &Path) -> ObjectStoreResult<GetResult> {
-        self.get_opts(location, GetOptions::default()).await
-    }
-
-    /// Read object with options (supports range reads and streaming)
+    /// Read an object (or byte range) from RGW via SAL.
     ///
-    /// For reads larger than chunk_size, data is returned as a multi-chunk
-    /// stream so that only one chunk is held in memory at a time.
-    /// The C API already supports offset+length, so chunked streaming is done
-    /// by issuing multiple bounded reads.
+    /// Two read paths depending on the requested size:
+    /// - **Small read** (`total_len <= chunk_size`): single `rgw_get_object` call,
+    ///   data copied into Rust-owned `Bytes` via `OwnedRGWBuffer::to_bytes()`.
+    /// - **Chunked read** (`total_len > chunk_size`): returns a lazy stream that
+    ///   reads one chunk per `rgw_get_object` call.  Uses `SendPtr`/`SendConstPtr`
+    ///   because the returned stream is `'static` and cannot borrow `&self`.
     async fn get_opts(&self, location: &Path, opts: GetOptions) -> ObjectStoreResult<GetResult> {
-        // Get metadata first — we need the object size for range calculations
-        // and for the GetResult metadata field
-        let meta = self.head(location).await?;
+        let meta = self.head_opts(location).await?;
+
+        // HEAD request
+        if opts.head {
+            return Ok(GetResult {
+                payload: GetResultPayload::Stream(
+                    stream::once(async { Ok(Bytes::new()) }).boxed(),
+                ),
+                range: 0..0,
+                meta,
+                attributes: Attributes::new(),
+            });
+        }
+
         let obj_size = meta.size;
 
         // Resolve the byte range to read
@@ -411,6 +413,8 @@ impl ObjectStore for RGWObjectStore {
             });
         }
 
+        // Chunked read: stream that yields one chunk per rgw_get_object call.
+        // Uses SendPtr/SendConstPtr because the stream is 'static (outlives &self).
         let bucket_name = self.bucket.clone();
         let key_str = location.to_string();
         let driver = SendPtr::new(self.driver);
@@ -473,7 +477,7 @@ impl ObjectStore for RGWObjectStore {
                             )
                             .into(),
                         }),
-                        range_end, // stop iteration
+                        range_end,
                     ));
                 }
 
@@ -491,39 +495,23 @@ impl ObjectStore for RGWObjectStore {
         })
     }
 
-    /// Read specific byte ranges (optimized for multiple ranges)
-    async fn get_ranges(
-        &self,
-        location: &Path,
-        ranges: &[Range<u64>],
-    ) -> ObjectStoreResult<Vec<Bytes>> {
-        // fetch each range separately
-        let mut results = Vec::with_capacity(ranges.len());
 
-        for range in ranges {
-            let opts = GetOptions {
-                range: Some(GetRange::Bounded(range.clone())),
-                ..Default::default()
-            };
-            let result = self.get_opts(location, opts).await?;
-            let bytes = result.bytes().await?;
-            results.push(bytes);
-        }
-
-        Ok(results)
-    }
-
-    /// Delete the object at location
+    /// Delete a single object. Treats "not found" (-ENOENT) as success.
     async fn delete(&self, location: &Path) -> ObjectStoreResult<()> {
         let bucket = self.bucket_cstr()?;
         let key = self.path_to_cstr(location)?;
         let obj = Self::make_obj(&key);
 
         let result = unsafe {
-            ffi::rgw_delete_object(self.driver, self.dpp, std::ptr::null_mut(), bucket.as_ptr(), &obj)
+            ffi::rgw_delete_object(
+                self.driver,
+                self.dpp,
+                std::ptr::null_mut(),
+                bucket.as_ptr(),
+                &obj,
+            )
         };
 
-        // Treat "not found" as success for delete operations
         if result == 0 || result == -2 {
             Ok(())
         } else {
@@ -531,17 +519,66 @@ impl ObjectStore for RGWObjectStore {
         }
     }
 
-    /// List objects with the given prefix
+    /// Delete objects from a stream of paths, up to 10 concurrently.
+    ///
+    /// Returns a `'static` stream, so `&self` cannot be captured.  The driver
+    /// and dpp pointers are copied into `SendPtr`/`SendConstPtr` wrappers to
+    /// satisfy the `Send` bound required by async streams.
+    fn delete_stream(
+        &self,
+        locations: BoxStream<'static, ObjectStoreResult<Path>>,
+    ) -> BoxStream<'static, ObjectStoreResult<Path>> {
+        let driver = SendPtr::new(self.driver);
+        let dpp = SendConstPtr::new(self.dpp);
+        let bucket = self.bucket.clone();
+
+        locations
+            .map(move |location_result| {
+                let bucket = bucket.clone();
+                async move {
+                    let location = location_result?;
+                    let bucket_c = str_to_cstring(&bucket)?;
+                    let key_c = str_to_cstring(&location.to_string())?;
+                    let obj = RGWObject::from_key(key_c.as_ptr());
+
+                    let result = unsafe {
+                        ffi::rgw_delete_object(
+                            driver.as_ptr(),
+                            dpp.as_ptr(),
+                            std::ptr::null_mut(),
+                            bucket_c.as_ptr(),
+                            &obj,
+                        )
+                    };
+
+                    // Treat "not found" as success for delete operations
+                    if result == 0 || result == -2 {
+                        Ok(location)
+                    } else {
+                        Err(object_store::Error::Generic {
+                            store: "rgw",
+                            source: format!("delete failed with errno {}", result).into(),
+                        })
+                    }
+                }
+            })
+            .buffered(10)
+            .boxed()
+    }
+
+    /// List objects with optional prefix, paginated via markers.
+    ///
+    /// Returns a `'static` stream — uses `SendPtr`/`SendConstPtr` (see `delete_stream`).
+    /// Each page fetches up to 1000 entries via `rgw_list_objects` with empty delimiter
+    /// (flat/recursive listing).
     fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, ObjectStoreResult<ObjectMeta>> {
         let prefix_str = prefix.map(|p| p.to_string()).unwrap_or_default();
         let bucket = self.bucket.clone();
-        // Wrap pointers in Send-safe wrappers
         let driver = SendPtr::new(self.driver);
         let dpp = SendConstPtr::new(self.dpp);
 
-        // Create async stream that pages through results
         stream::unfold(
-            (String::new(), false), // (marker, done)
+            (String::new(), false),
             move |(marker, done)| {
                 let bucket = bucket.clone();
                 let prefix_str = prefix_str.clone();
@@ -551,7 +588,6 @@ impl ObjectStore for RGWObjectStore {
                         return None;
                     }
 
-                    // Helper to convert CString error to stream error
                     macro_rules! try_cstring {
                         ($s:expr) => {
                             match CString::new($s) {
@@ -570,7 +606,6 @@ impl ObjectStore for RGWObjectStore {
                     let bucket_c = try_cstring!(bucket.as_str());
                     let prefix_c = try_cstring!(prefix_str.as_str());
                     let marker_c = try_cstring!(marker.as_str());
-                    // Empty string is safe, but use macro for consistency
                     let delimiter_c = try_cstring!("");
 
                     let mut result = ffi::RGWListResult::default();
@@ -584,7 +619,7 @@ impl ObjectStore for RGWObjectStore {
                             prefix_c.as_ptr(),
                             delimiter_c.as_ptr(),
                             marker_c.as_ptr(),
-                            1000, // max keys per request
+                            1000,
                             &mut result,
                         )
                     };
@@ -641,8 +676,6 @@ impl ObjectStore for RGWObjectStore {
                     };
 
                     let is_done = owned_result.0.is_truncated == 0;
-
-                    // If no entries were returned, we're done regardless
                     let is_done = is_done || entries.is_empty();
 
                     Some((entries, (next_marker, is_done)))
@@ -653,10 +686,11 @@ impl ObjectStore for RGWObjectStore {
         .boxed()
     }
 
-    /// List objects with delimiter support (paginated)
+    /// List one level of hierarchy using "/" as delimiter.
     ///
-    /// Fetches all pages using marker-based pagination so that buckets with
-    /// more than 1000 entries are fully enumerated.
+    /// Returns objects at the current level and common prefixes (directory-like
+    /// groupings).  Uses `self.driver`/`self.dpp` directly since this is an
+    /// `async fn(&self)` — the borrow covers the entire paginated loop.
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> ObjectStoreResult<ListResult> {
         let prefix_str = match prefix {
             Some(p) => {
@@ -688,7 +722,7 @@ impl ObjectStore for RGWObjectStore {
                 ffi::rgw_list_objects(
                     self.driver,
                     self.dpp,
-                    std::ptr::null_mut(),  // yield_ctx: NULL for Tokio threads
+                    std::ptr::null_mut(),
                     bucket_c.as_ptr(),
                     prefix_c.as_ptr(),
                     delimiter_c.as_ptr(),
@@ -716,7 +750,6 @@ impl ObjectStore for RGWObjectStore {
                     for e in slice.iter() {
                         let key = CStr::from_ptr(e.key).to_string_lossy().into_owned();
 
-                        // Entries ending with '/' are common prefixes (directories)
                         if key.ends_with('/') {
                             let prefix_path = key.trim_end_matches('/');
                             if !prefix_path.is_empty() {
@@ -743,7 +776,6 @@ impl ObjectStore for RGWObjectStore {
                 break;
             }
 
-            // Get the next marker for pagination
             if !owned_result.0.next_marker.is_null() {
                 marker = unsafe {
                     CStr::from_ptr(owned_result.0.next_marker)
@@ -751,7 +783,6 @@ impl ObjectStore for RGWObjectStore {
                         .into_owned()
                 };
             } else {
-                // No more entries if is_truncated was set
                 break;
             }
 
@@ -760,7 +791,6 @@ impl ObjectStore for RGWObjectStore {
             }
         }
 
-        // Deduplicate common_prefixes (same prefix could appear in multiple pages)
         common_prefixes.sort();
         common_prefixes.dedup();
 
@@ -770,129 +800,76 @@ impl ObjectStore for RGWObjectStore {
         })
     }
 
-    /// Copy an object from one location to another
-    async fn copy(&self, from: &Path, to: &Path) -> ObjectStoreResult<()> {
+    /// Copy an object within the same bucket via SAL.
+    ///
+    /// Supports `Overwrite` (unconditional) and `Create` (copy-if-not-exists).
+    async fn copy_opts(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: CopyOptions,
+    ) -> ObjectStoreResult<()> {
         let bucket = self.bucket_cstr()?;
         let from_key = self.path_to_cstr(from)?;
         let to_key = self.path_to_cstr(to)?;
         let src_obj = Self::make_obj(&from_key);
         let dst_obj = Self::make_obj(&to_key);
 
-        let result = unsafe {
-            ffi::rgw_copy_object(
-                self.driver,
-                self.dpp,
-                std::ptr::null_mut(),
-                bucket.as_ptr(),
-                &src_obj,
-                bucket.as_ptr(),
-                &dst_obj,
-            )
-        };
+        match options.mode {
+            CopyMode::Overwrite => {
+                let result = unsafe {
+                    ffi::rgw_copy_object(
+                        self.driver,
+                        self.dpp,
+                        std::ptr::null_mut(),
+                        bucket.as_ptr(),
+                        &src_obj,
+                        bucket.as_ptr(),
+                        &dst_obj,
+                    )
+                };
 
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(self.errno_to_error(result, from, "copy"))
+                if result == 0 {
+                    Ok(())
+                } else {
+                    Err(self.errno_to_error(result, from, "copy"))
+                }
+            }
+            CopyMode::Create => {
+                let if_nomatch = str_to_cstring("*")?;
+
+                let result = unsafe {
+                    ffi::rgw_copy_object_conditional(
+                        self.driver,
+                        self.dpp,
+                        std::ptr::null_mut(),
+                        bucket.as_ptr(),
+                        &src_obj,
+                        bucket.as_ptr(),
+                        &dst_obj,
+                        std::ptr::null(),
+                        if_nomatch.as_ptr(),
+                    )
+                };
+
+                if result == 0 {
+                    Ok(())
+                } else if result == -17 {
+                    Err(ObjectStoreError::AlreadyExists {
+                        path: to.to_string(),
+                        source: "destination already exists".into(),
+                    })
+                } else {
+                    Err(self.errno_to_error(result, from, "copy_if_not_exists"))
+                }
+            }
         }
     }
 
-    /// Copy if destination doesn't exist (atomic via SAL precondition)
+    /// Start a multipart upload via SAL.
     ///
-    /// Uses `rgw_copy_object_conditional` with `if_nomatch="*"` so the
-    /// existence check and copy are performed atomically by the SAL backend,
-    /// eliminating the race window of head-then-copy.
-    async fn copy_if_not_exists(&self, from: &Path, to: &Path) -> ObjectStoreResult<()> {
-        let bucket = self.bucket_cstr()?;
-        let from_key = self.path_to_cstr(from)?;
-        let to_key = self.path_to_cstr(to)?;
-        let src_obj = Self::make_obj(&from_key);
-        let dst_obj = Self::make_obj(&to_key);
-        let if_nomatch = str_to_cstring("*")?;
-
-        let result = unsafe {
-            ffi::rgw_copy_object_conditional(
-                self.driver,
-                self.dpp,
-                std::ptr::null_mut(),
-                bucket.as_ptr(),
-                &src_obj,
-                bucket.as_ptr(),
-                &dst_obj,
-                std::ptr::null(),
-                if_nomatch.as_ptr(),
-            )
-        };
-
-        if result == 0 {
-            Ok(())
-        } else if result == -17 {
-            // -EEXIST: destination already exists
-            Err(ObjectStoreError::AlreadyExists {
-                path: to.to_string(),
-                source: "destination already exists".into(),
-            })
-        } else {
-            Err(self.errno_to_error(result, from, "copy_if_not_exists"))
-        }
-    }
-
-    /// Get object metadata without content
-    async fn head(&self, location: &Path) -> ObjectStoreResult<ObjectMeta> {
-        let bucket = self.bucket_cstr()?;
-        let key = self.path_to_cstr(location)?;
-        let obj = Self::make_obj(&key);
-
-        let mut meta = ffi::RGWObjectMeta::default();
-
-        let result = unsafe {
-            ffi::rgw_head_object(self.driver, self.dpp, std::ptr::null_mut(), bucket.as_ptr(), &obj, &mut meta)
-        };
-
-        if result != 0 {
-            return Err(self.errno_to_error(result, location, "head"));
-        }
-
-        let owned_meta = OwnedRGWObjectMeta(meta);
-
-        let etag = if !owned_meta.0.etag.is_null() {
-            Some(unsafe { CStr::from_ptr(owned_meta.0.etag).to_string_lossy().into_owned() })
-        } else {
-            None
-        };
-
-        Ok(ObjectMeta {
-            location: location.clone(),
-            last_modified: chrono::DateTime::from_timestamp(owned_meta.0.last_modified, 0)
-                .unwrap_or_else(chrono::Utc::now),
-            size: owned_meta.0.size,
-            e_tag: etag,
-            version: None,
-        })
-    }
-
-    /// Rename/move an object
-    async fn rename(&self, from: &Path, to: &Path) -> ObjectStoreResult<()> {
-        self.copy(from, to).await?;
-        self.delete(from).await
-    }
-
-    /// Rename if destination doesn't exist
-    async fn rename_if_not_exists(&self, from: &Path, to: &Path) -> ObjectStoreResult<()> {
-        self.copy_if_not_exists(from, to).await?;
-        self.delete(from).await
-    }
-
-    /// Start a multipart upload
-    async fn put_multipart(&self, location: &Path) -> ObjectStoreResult<Box<dyn MultipartUpload>> {
-        self.put_multipart_opts(location, PutMultipartOptions::default())
-            .await
-    }
-
-    /// Start multipart upload with options
-    ///
-    /// Tags/attributes in `_opts` are ignored as thay are optional and doesn't seem to be
-    /// used by LanceDB for now.
+    /// Returns an `RGWMultipartUpload` handle. Caller uploads parts with
+    /// `put_part()`, then finalizes with `complete()` or cancels with `abort()`.
     async fn put_multipart_opts(
         &self,
         location: &Path,
@@ -937,7 +914,52 @@ impl ObjectStore for RGWObjectStore {
     }
 }
 
-/// Multipart upload implementation for RGW
+/// Internal helpers
+impl RGWObjectStore {
+    /// Get object metadata (size, etag, mtime) without reading content.
+    ///
+    /// Called by `get_opts` and by the default `head` trait method.
+    /// Uses `rgw_head_object` → `load_obj_state`.
+    async fn head_opts(&self, location: &Path) -> ObjectStoreResult<ObjectMeta> {
+        let bucket = self.bucket_cstr()?;
+        let key = self.path_to_cstr(location)?;
+        let obj = Self::make_obj(&key);
+
+        let mut meta = ffi::RGWObjectMeta::default();
+
+        let result = unsafe {
+            ffi::rgw_head_object(self.driver, self.dpp, std::ptr::null_mut(), bucket.as_ptr(), &obj, &mut meta)
+        };
+
+        if result != 0 {
+            return Err(self.errno_to_error(result, location, "head"));
+        }
+
+        let owned_meta = OwnedRGWObjectMeta(meta);
+
+        let etag = if !owned_meta.0.etag.is_null() {
+            Some(unsafe { CStr::from_ptr(owned_meta.0.etag).to_string_lossy().into_owned() })
+        } else {
+            None
+        };
+
+        Ok(ObjectMeta {
+            location: location.clone(),
+            last_modified: chrono::DateTime::from_timestamp(owned_meta.0.last_modified, 0)
+                .unwrap_or_else(chrono::Utc::now),
+            size: owned_meta.0.size,
+            e_tag: etag,
+            version: None,
+        })
+    }
+}
+
+/// Multipart upload state for RGW.
+///
+/// Holds raw driver/dpp pointers (not `SendPtr`) because `MultipartUpload`
+/// methods take `&mut self`, so the borrow covers each call.  The `parts`
+/// vec collects ETags returned by each `put_part`; `complete` passes them
+/// in order to `rgw_multipart_complete` to assemble the final object.
 #[derive(Debug)]
 struct RGWMultipartUpload {
     driver: *mut c_void,
@@ -945,7 +967,6 @@ struct RGWMultipartUpload {
     bucket: String,
     key: String,
     upload_id: String,
-    /// ETags in order, wrapped in Arc<Mutex<>> for thread-safe access from futures
     parts: Arc<Mutex<Vec<String>>>,
 }
 
@@ -957,15 +978,13 @@ impl MultipartUpload for RGWMultipartUpload {
         &mut self,
         data: PutPayload,
     ) -> object_store::UploadPart {
-        // Clone all needed data to make the future 'static
         let driver = SendPtr::new(self.driver);
         let dpp = SendConstPtr::new(self.dpp);
         let bucket = self.bucket.clone();
         let key = self.key.clone();
         let upload_id = self.upload_id.clone();
-        let parts = self.parts.clone();  // Clone Arc for thread-safe access
+        let parts = self.parts.clone();
 
-        // Allocate slot for etag and get the part number (1-indexed)
         let part_index = {
             let mut parts_guard = parts.lock().unwrap();
             parts_guard.push(String::new());
@@ -1005,14 +1024,12 @@ impl MultipartUpload for RGWMultipartUpload {
                 });
             }
 
-            // Extract etag string from the buffer
             let etag_str = unsafe {
                 CStr::from_ptr(etag_buf.as_ptr())
                     .to_string_lossy()
                     .into_owned()
             };
 
-            // Store the etag in our shared vector at the correct index
             {
                 let mut parts_guard = parts.lock().unwrap();
                 parts_guard[part_index] = etag_str;
@@ -1054,7 +1071,6 @@ impl MultipartUpload for RGWMultipartUpload {
             )
         };
 
-        // Drop the lock before checking result
         drop(parts_guard);
 
         if result != 0 {
@@ -1107,5 +1123,4 @@ mod tests {
         let store = unsafe { RGWObjectStore::new(std::ptr::null_mut(), std::ptr::null(), "test-bucket", "my-prefix/") };
         assert_eq!(format!("{}", store), "RGWObjectStore(bucket=test-bucket, prefix=my-prefix/)");
     }
-
 }

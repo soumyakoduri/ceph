@@ -75,6 +75,8 @@ static int get_bucket( rgw::sal::Driver* driver, const DoutPrefixProvider* dpp,
         const char* bucket_name, std::unique_ptr<rgw::sal::Bucket>& bucket_out,
         optional_yield y) {
   if (!driver || !bucket_name) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: get_bucket: invalid args"
+                      << " driver=" << driver << " bucket=" << (bucket_name ? bucket_name : "null") << dendl;
     return -EINVAL;
   }
 
@@ -83,6 +85,8 @@ static int get_bucket( rgw::sal::Driver* driver, const DoutPrefixProvider* dpp,
 
   int ret = driver->load_bucket(dpp, bucket_id, &bucket_out, y);
   if (ret < 0) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: load_bucket failed for '"
+                      << bucket_name << "' ret=" << ret << dendl;
     return ret;
   }
 
@@ -200,8 +204,10 @@ int rgw_put_object( void* driver_ptr, const void* dpp_ptr,
     return ret;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -310,8 +316,10 @@ int rgw_put_object_conditional( void* driver_ptr, const void* dpp_ptr,
     return ret;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -412,18 +420,20 @@ int rgw_get_object( void* driver_ptr, const void* dpp_ptr,
     return 0;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     if (buffer->data) {
       free(buffer->data);
       buffer->data = nullptr;
       buffer->len = 0;
-        }
+    }
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     if (buffer->data) {
       free(buffer->data);
       buffer->data = nullptr;
       buffer->len = 0;
-        }
+    }
     return -EIO;
   }
 }
@@ -463,8 +473,10 @@ int rgw_delete_object( void* driver_ptr, const void* dpp_ptr,
     return ret;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -539,8 +551,10 @@ int rgw_head_object( void* driver_ptr, const void* dpp_ptr,
     return 0;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -654,11 +668,11 @@ int rgw_list_objects( void* driver_ptr, const void* dpp_ptr,
     return 0;
 
   } catch (const std::exception& e) {
-    // Clean up any partially allocated memory
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     rgw_free_list_result(result);
     return -EIO;
   } catch (...) {
-    // Clean up any partially allocated memory
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     rgw_free_list_result(result);
     return -EIO;
   }
@@ -748,8 +762,10 @@ int rgw_copy_object( void* driver_ptr, const void* dpp_ptr,
     return ret;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -857,8 +873,10 @@ int rgw_copy_object_conditional( void* driver_ptr, const void* dpp_ptr,
     return ret;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -922,8 +940,10 @@ int rgw_delete_objects( void* driver_ptr, const void* dpp_ptr,
     return 0;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -978,8 +998,10 @@ int rgw_init_multipart( void* driver_ptr, const void* dpp_ptr,
     return 0;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -1100,8 +1122,10 @@ int rgw_multipart_put_part( void* driver_ptr, const void* dpp_ptr,
     return 0;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -1176,8 +1200,10 @@ int rgw_multipart_complete( void* driver_ptr, const void* dpp_ptr,
     return ret;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -1214,8 +1240,10 @@ int rgw_multipart_abort( void* driver_ptr, const void* dpp_ptr,
     return ret;
 
   } catch (const std::exception& e) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": " << e.what() << dendl;
     return -EIO;
   } catch (...) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: " << __func__ << ": unknown exception" << dendl;
     return -EIO;
   }
 }
@@ -1270,7 +1298,7 @@ uint64_t rgw_get_max_chunk_size(void* driver_ptr) {
   if (!driver) {
     return 4 * 1024 * 1024; // 4 MB fallback
   }
-  return driver->ctx()->_conf.get_val<uint64_t>("rgw_max_chunk_size");
+  return driver->ctx()->_conf->rgw_max_chunk_size;
 }
 
 const char* rgw_sal_wrapper_version(void) {

@@ -78,7 +78,6 @@ impl lance_io::object_store::ObjectStoreProvider for RGWStoreProvider {
             None => {
                 return Err(lance_core::Error::io(
                     format!("URL '{}' must have a bucket/host component", base_path),
-                    snafu::location!(),
                 ));
             }
         };
@@ -103,11 +102,10 @@ impl lance_io::object_store::ObjectStoreProvider for RGWStoreProvider {
         let inner = Arc::new(unsafe { RGWObjectStore::new(self.driver, self.dpp, bucket, &prefix) });
 
         let storage_options = StorageOptions::new(
-            params.storage_options.clone().unwrap_or_default(),
+            params.storage_options().cloned().unwrap_or_default(),
         );
         let download_retry_count = storage_options.download_retry_count();
 
-        // Using default params. 
         Ok(ObjectStore::new(
             inner,
             base_path,
@@ -122,7 +120,7 @@ impl lance_io::object_store::ObjectStoreProvider for RGWStoreProvider {
             // Max concurrent I/O ops (64). Can be overridden via LANCE_IO_THREADS env var.
             DEFAULT_CLOUD_IO_PARALLELISM,
             download_retry_count,
-            params.storage_options.as_ref(),
+            params.storage_options(),
         ))
     }
 
@@ -134,7 +132,6 @@ impl lance_io::object_store::ObjectStoreProvider for RGWStoreProvider {
         Path::parse(path).map_err(|e| {
             lance_core::Error::io(
                 format!("Invalid path in URL '{}': {}", url, e),
-                snafu::location!(),
             )
         })
     }
