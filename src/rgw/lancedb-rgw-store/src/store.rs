@@ -22,7 +22,6 @@ use object_store::{
     Result as ObjectStoreResult, UpdateVersion,
 };
 use std::ffi::{CStr, CString};
-use std::ops::Range;
 use std::os::raw::{c_int, c_void};
 use std::sync::{Arc, Mutex};
 
@@ -495,29 +494,6 @@ impl ObjectStore for RGWObjectStore {
         })
     }
 
-
-    /// Delete a single object. Treats "not found" (-ENOENT) as success.
-    async fn delete(&self, location: &Path) -> ObjectStoreResult<()> {
-        let bucket = self.bucket_cstr()?;
-        let key = self.path_to_cstr(location)?;
-        let obj = Self::make_obj(&key);
-
-        let result = unsafe {
-            ffi::rgw_delete_object(
-                self.driver,
-                self.dpp,
-                std::ptr::null_mut(),
-                bucket.as_ptr(),
-                &obj,
-            )
-        };
-
-        if result == 0 || result == -2 {
-            Ok(())
-        } else {
-            Err(self.errno_to_error(result, location, "delete"))
-        }
-    }
 
     /// Delete objects from a stream of paths, up to 10 concurrently.
     ///

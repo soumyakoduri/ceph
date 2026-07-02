@@ -38,9 +38,10 @@ use std::sync::Arc;
 
 /// Opaque handle to an ObjectStoreProvider
 ///
-/// This struct has the same memory layout as lancedb-c's LanceDBObjectStoreProvider.
-/// Pointers returned by this crate can be passed directly to
-/// lancedb_registry_insert_provider() from lancedb-c.
+/// This struct MUST have the same `#[repr(C)]` layout as lancedb-c's
+/// `LanceDBObjectStoreProvider` (in `src/lancedb-c/src/connection.rs`).
+/// Pointers returned by this crate are passed directly to
+/// `lancedb_registry_insert_provider()` from lancedb-c at runtime.
 #[repr(C)]
 pub struct LanceDBObjectStoreProvider {
     pub inner: Option<Arc<dyn lance_io::object_store::ObjectStoreProvider>>,

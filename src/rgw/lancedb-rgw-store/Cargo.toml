@@ -13,27 +13,16 @@ name = "lancedb_rgw_store"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
-# LanceDB ecosystem - versions MUST match lancedb-c to avoid ABI mismatch
-# (both cdylibs share types across the vtable boundary)
-lancedb = { version = "0.30", default-features = false }
-lance = { version = "7.0", default-features = false }
+# Both crates are in a Cargo workspace (src/rgw/Cargo.toml) sharing one
+# Cargo.lock — versions are unified automatically.  No pins needed.
 lance-io = { version = "7.0", default-features = false }
 lance-core = { version = "7.0", default-features = false }
-
-# ObjectStore trait from Apache Arrow - must match lance-io 7.0's dependency
 object_store = "0.13"
-
-# Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+bytes = "1"
 async-trait = "0.1"
 futures = "0.3"
-
-# Data types
-bytes = "=1.11.1"
 url = "2"
 chrono = "0.4"
-
-# For C strings and FFI
 libc = "0.2"
 
 [build-dependencies]
