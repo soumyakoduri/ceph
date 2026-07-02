@@ -86,5 +86,5 @@
 	path = src/lss
 	url = https://chromium.googlesource.com/linux-syscall-support
 [submodule "src/lancedb-c"]
-	path = src/lancedb-c
+	path = src/rgw/lancedb-c
 	url = https://github.com/lancedb/lancedb-c.git

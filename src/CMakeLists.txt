@@ -1203,8 +1203,11 @@ if(WITH_RADOSGW)
   if(WITH_RADOSGW_LANCEDB)
     include(ExternalProject)
 
-    set(LANCEDB_BUILD_DIR "${CMAKE_BINARY_DIR}/src/lancedb-c-prefix/src/lancedb-c-build")
-    # Determine the Rust target directory based on build type
+    # Both Rust crates share a Cargo workspace (src/rgw/Cargo.toml) with a
+    # single Cargo.lock, guaranteeing identical dependency versions.
+
+    # lancedb-c: upstream LanceDB C FFI bindings (git submodule)
+    set(LANCEDB_C_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rgw/lancedb-c")
     set(LANCEDB_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/lancedb-c-prefix/src/lancedb-c-build")
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
       set(LANCEDB_RUST_TARGET_DIR "${LANCEDB_BUILD_DIR}/target/debug")
@@ -1213,7 +1216,7 @@ if(WITH_RADOSGW)
     endif()
 
     ExternalProject_Add(lancedb-c
-      SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lancedb-c
+      SOURCE_DIR ${LANCEDB_C_SOURCE_DIR}
       CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
                  -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/lancedb-c-install
       BUILD_ALWAYS OFF
@@ -1222,12 +1225,12 @@ if(WITH_RADOSGW)
                       ${LANCEDB_RUST_TARGET_DIR}/liblancedb.so
                       ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb.so
                   COMMAND ${CMAKE_COMMAND} -E copy
-                      ${CMAKE_CURRENT_SOURCE_DIR}/lancedb-c/include/lancedb.h
+                      ${LANCEDB_C_SOURCE_DIR}/include/lancedb.h
                       ${CMAKE_BINARY_DIR}/src/include/lancedb.h
     )
 
-    # Build lancedb-rgw-store Rust crate (SAL wrapper for LanceDB)
-    set(LANCEDB_RGW_STORE_SOURCE_DIR "${CMAKE_SOURCE_DIR}/rust/rgw/lancedb-rgw-store")
+    # lancedb-rgw-store: SAL backend for LanceDB
+    set(LANCEDB_RGW_STORE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rgw/lancedb-rgw-store")
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
       set(LANCEDB_RGW_STORE_CARGO_PROFILE "debug")
       set(LANCEDB_RGW_STORE_CARGO_FLAG "")
@@ -1235,7 +1238,9 @@ if(WITH_RADOSGW)
       set(LANCEDB_RGW_STORE_CARGO_PROFILE "release")
       set(LANCEDB_RGW_STORE_CARGO_FLAG "--release")
     endif()
-    set(LANCEDB_RGW_STORE_TARGET_DIR "${LANCEDB_RGW_STORE_SOURCE_DIR}/target/${LANCEDB_RGW_STORE_CARGO_PROFILE}")
+    # Workspace target dir is at the workspace root (src/rgw/target/), not
+    # in the member crate's directory.
+    set(LANCEDB_RGW_STORE_TARGET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rgw/target/${LANCEDB_RGW_STORE_CARGO_PROFILE}")
 
     ExternalProject_Add(lancedb-rgw-store
       SOURCE_DIR ${LANCEDB_RGW_STORE_SOURCE_DIR}

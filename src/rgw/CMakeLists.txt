@@ -442,7 +442,7 @@ if(WITH_RADOSGW_LANCEDB)
   # after rgw_common so the linker can resolve all symbols.
   target_include_directories(rgw_common PRIVATE
     ${CMAKE_SOURCE_DIR}/src/rgw
-    ${CMAKE_SOURCE_DIR}/rust/rgw/lancedb-rgw-store/include
+    ${CMAKE_SOURCE_DIR}/src/rgw/lancedb-rgw-store/include
   )
   add_dependencies(rgw_common lancedb-rgw-store)
   install(FILES ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblancedb_rgw_store.so
