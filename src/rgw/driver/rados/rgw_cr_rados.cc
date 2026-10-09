@@ -616,7 +616,7 @@ int RGWAsyncGetBucketInstanceInfo::_send_request(const DoutPrefixProvider *dpp)
 {
   int r;
   if (!bucket.bucket_id.empty()) {
-    r = store->getRados()->get_bucket_instance_info(bucket, bucket_info, nullptr, &attrs, null_yield, dpp);
+    r = store->getRados()->get_bucket_instance_info(bucket, bucket_info, nullptr, &attrs, null_yield, dpp, false);
   } else {
     r = store->ctl()->bucket->read_bucket_info(bucket, &bucket_info, null_yield, dpp,
                                                RGWBucketCtl::BucketInstance::GetParams().set_attrs(&attrs));

@@ -989,48 +989,6 @@ int RadosBucket::chown(const DoutPrefixProvider* dpp,
   return put_info(dpp, exclusive, ceph::real_clock::now(), y);
 }
 
-int RadosVectorBucket::chown(const DoutPrefixProvider* dpp,
-                             const rgw_owner& new_owner,
-                             const std::string& new_owner_name,
-                             optional_yield y) {
-  // unlink from the old owner, but don't update the entrypoint until link().
-  int r = this->unlink(dpp, info.owner, y, false);
-  if (r < 0) {
-    return r;
-  }
-
-  r = this->link(dpp, new_owner, y);
-  if (r < 0) {
-    return r;
-  }
-
-  // write updated owner to bucket instance metadata
-  info.owner = new_owner;
-
-  // update ACLOwner if an ACL attr is present (S3 ACLs are otherwise unused on
-  // vector buckets, but keep the stored attr consistent)
-  if (auto i = attrs.find(RGW_ATTR_ACL); i != attrs.end()) {
-    try {
-      auto p = i->second.cbegin();
-
-      RGWAccessControlPolicy policy;
-      decode(policy, p);
-
-      chown_acl(new_owner, new_owner_name, policy);
-
-      bufferlist bl;
-      encode(policy, bl);
-
-      i->second = std::move(bl);
-    } catch (const buffer::error&) {
-      // not fatal
-    }
-  }
-
-  constexpr bool exclusive = false;
-  return put_info(dpp, exclusive, ceph::real_clock::now(), y);
-}
-
 int RadosBucket::put_info(const DoutPrefixProvider* dpp, bool exclusive, ceph::real_time _mtime, optional_yield y)
 {
   mtime = _mtime;
@@ -1131,7 +1089,7 @@ int RadosBucket::trim_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch,
 // in sync with rgw::s3vector::vector_bucket_arn().resource.
 static std::string vector_usage_bucket_name(const std::string& name)
 {
-  return "bucket/" + name;
+  return fmt::format("bucket/{}", name);
 }
 
 int RadosVectorBucket::read_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, uint64_t end_epoch,

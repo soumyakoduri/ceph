@@ -369,7 +369,7 @@ static int remove_old_reshard_instance(rgw::sal::RadosStore* store,
 {
   RGWBucketInfo info;
   int r = store->getRados()->get_bucket_instance_info(bucket, info, nullptr,
-                                                      nullptr, y, dpp);
+                                                      nullptr, y, dpp, false);
   if (r < 0) {
     return r;
   }
@@ -500,7 +500,7 @@ static int init_target_layout(rgw::sal::RadosStore* store,
       // racing write detected, read the latest bucket info and try again
       int ret2 = store->getRados()->get_bucket_instance_info(
           bucket_info.bucket, bucket_info,
-          nullptr, &bucket_attrs, y, dpp);
+          nullptr, &bucket_attrs, y, dpp, bucket_info.is_vector());
       if (ret2 < 0) {
         ldpp_dout(dpp, 0) << "ERROR: " << __func__ << " failed to read "
             "bucket info: " << cpp_strerror(ret2) << dendl;
@@ -581,7 +581,7 @@ static int revert_target_layout(rgw::sal::RadosStore* store,
       // racing write detected, read the latest bucket info and try again
       int ret2 = store->getRados()->get_bucket_instance_info(
           bucket_info.bucket, bucket_info,
-          nullptr, &bucket_attrs, y, dpp);
+          nullptr, &bucket_attrs, y, dpp, bucket_info.is_vector());
       if (ret2 < 0) {
         ldpp_dout(dpp, 0) << "ERROR: " << __func__ << " failed to read "
             "bucket info: " << cpp_strerror(ret2) << dendl;
@@ -705,7 +705,7 @@ static int change_reshard_state(rgw::sal::RadosStore* store,
       // racing write detected, read the latest bucket info and try again
       int ret2 = store->getRados()->get_bucket_instance_info(
           bucket_info.bucket, bucket_info,
-          nullptr, &bucket_attrs, y, dpp);
+          nullptr, &bucket_attrs, y, dpp, bucket_info.is_vector());
       if (ret2 < 0) {
         ldpp_dout(dpp, 0) << "ERROR: " << __func__ << " failed to read "
             "bucket info: " << cpp_strerror(ret2) << dendl;
@@ -843,7 +843,7 @@ static int commit_reshard(rgw::sal::RadosStore* store,
       // racing write detected, read the latest bucket info and try again
       int ret2 = store->getRados()->get_bucket_instance_info(
           bucket_info.bucket, bucket_info,
-          nullptr, &bucket_attrs, y, dpp);
+          nullptr, &bucket_attrs, y, dpp, bucket_info.is_vector());
       if (ret2 < 0) {
         ldpp_dout(dpp, 0) << "ERROR: " << __func__ << " failed to read "
             "bucket info: " << cpp_strerror(ret2) << dendl;

@@ -1971,7 +1971,7 @@ int RGWRados::Bucket::update_bucket_id(const string& new_bucket_id, const DoutPr
   bucket.update_bucket_id(new_bucket_id);
 
   bucket_info.objv_tracker.clear();
-  int ret = store->get_bucket_instance_info(bucket, bucket_info, nullptr, nullptr, y, dpp);
+  int ret = store->get_bucket_instance_info(bucket, bucket_info, nullptr, nullptr, y, dpp, bucket_info.is_vector());
   if (ret < 0) {
     return ret;
   }
@@ -2702,9 +2702,6 @@ int RGWRados::create_vector_bucket(const DoutPrefixProvider* dpp,
       if (!index_type) {
         index_type = zone_placement->index_type;
       }
-      // unlike an ordinary bucket, a vector bucket used to be indexless. it now
-      // carries a real bucket index so that LanceDB can store its data inside the
-      // vector bucket itself, like any other object bucket
       init_default_bucket_layout(cct, info.layout, svc.zone->get_zone(),
                                  index_type, index_shards);
     }
@@ -6345,7 +6342,9 @@ int RGWRados::store_delete_bucket_info_flag(RGWBucketInfo& bucket_info, std::map
                                                                     .set_orig_info(&bucket_info));
     if (r == -ECANCELED) {
       //racing write. re-read bucket info
-      int ret = get_bucket_instance_info(bucket, bucket_info, nullptr, &attrs, y, dpp);
+      // regular-bucket delete path (vector buckets use delete_vector_bucket);
+      // re-read must match the ctl.bucket store above, so is_vector=false
+      int ret = get_bucket_instance_info(bucket, bucket_info, nullptr, &attrs, y, dpp, false);
       if (ret < 0) {
         ldpp_dout(dpp, 5) << "ERROR: failed to get bucket instance info for bucket=" << bucket.name << " ret=" << ret << dendl;
         r = ret;
@@ -6640,7 +6639,7 @@ int RGWRados::set_bucket_owner(rgw_bucket& bucket, ACLOwner& owner, const DoutPr
   if (bucket.bucket_id.empty()) {
     r = get_bucket_info(&svc, bucket.tenant, bucket.name, info, NULL, y, dpp, ctl.bucket, &attrs);
   } else {
-    r = get_bucket_instance_info(bucket, info, nullptr, &attrs, y, dpp);
+    r = get_bucket_instance_info(bucket, info, nullptr, &attrs, y, dpp, false);
   }
   if (r < 0) {
     ldpp_dout(dpp, 0) << "NOTICE: get_bucket_info on bucket=" << bucket.name << " returned err=" << r << dendl;
@@ -7364,13 +7363,13 @@ int RGWRados::delete_raw_obj(const DoutPrefixProvider *dpp, const rgw_raw_obj& o
 }
 
 int RGWRados::delete_obj_index(const rgw_obj& obj, ceph::real_time mtime,
-			       const DoutPrefixProvider *dpp, optional_yield y)
+			       const DoutPrefixProvider *dpp, optional_yield y, bool is_vector)
 {
   std::string oid, key;
   get_obj_bucket_and_oid_loc(obj, oid, key);
 
   RGWBucketInfo bucket_info;
-  int ret = get_bucket_instance_info(obj.bucket, bucket_info, NULL, NULL, y, dpp);
+  int ret = get_bucket_instance_info(obj.bucket, bucket_info, NULL, NULL, y, dpp, is_vector);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: " << __func__ << "() get_bucket_instance_info(bucket=" << obj.bucket << ") returned ret=" << ret << dendl;
     return ret;
@@ -9272,7 +9271,7 @@ int RGWRados::guard_reshard(const DoutPrefixProvider *dpp,
   int r;
 
   for (int i = 0; i < NUM_RESHARD_RETRIES; ++i) {
-    r = bs->init(pobj->bucket, *pobj, nullptr /* no RGWBucketInfo */, dpp, y);
+    r = bs->init(pobj->bucket, *pobj, nullptr /* no RGWBucketInfo */, dpp, y, bucket_info.is_vector());
     if (r < 0) {
       ldpp_dout(dpp, 5) << "bs.init() returned ret=" << r << dendl;
       return r;
@@ -9786,7 +9785,7 @@ int RGWRados::bucket_index_read_olh_log(const DoutPrefixProvider *dpp,
 
   BucketShard bs(this);
   int ret =
-    bs.init(obj_instance.bucket, obj_instance, nullptr /* no RGWBucketInfo */, dpp, y);
+    bs.init(obj_instance.bucket, obj_instance, nullptr /* no RGWBucketInfo */, dpp, y, bucket_info.is_vector());
   if (ret < 0) {
     ldpp_dout(dpp, 5) << "bs.init() returned ret=" << ret << dendl;
     return ret;
@@ -9886,7 +9885,7 @@ int RGWRados::bucket_index_trim_olh_log(const DoutPrefixProvider *dpp,
 
   BucketShard bs(this);
   int ret =
-    bs.init(obj_instance.bucket, obj_instance, nullptr /* no RGWBucketInfo */, dpp, y);
+    bs.init(obj_instance.bucket, obj_instance, nullptr /* no RGWBucketInfo */, dpp, y, bucket_info.is_vector());
   if (ret < 0) {
     ldpp_dout(dpp, 5) << "bs.init() returned ret=" << ret << dendl;
     return ret;
@@ -10744,7 +10743,9 @@ int RGWRados::get_bucket_instance_info(const string& meta_key,
   rgw_bucket bucket;
   rgw_bucket_parse_bucket_key(cct, meta_key, &bucket, nullptr);
 
-  return get_bucket_instance_info(bucket, info, pmtime, pattrs, y, dpp);
+  // generic meta_key read path; vector-bucket instances are read via the
+  // dedicated vector ctl, not this handler
+  return get_bucket_instance_info(bucket, info, pmtime, pattrs, y, dpp, false);
 }
 
 int RGWRados::get_bucket_instance_info(const rgw_bucket& bucket, RGWBucketInfo& info,
@@ -10752,10 +10753,11 @@ int RGWRados::get_bucket_instance_info(const rgw_bucket& bucket, RGWBucketInfo& 
                                        const DoutPrefixProvider *dpp, bool is_vector)
 {
   // a vector bucket keeps its instance in the vector namespace/pool, so its read
-  // must go through ctl.vector_bucket; fall back to the regular ctl if the vector
-  // ctl is unavailable rather than crashing.
+  // must go through ctl.vector_bucket;
   RGWBucketCtl* bucket_ctl =
     (is_vector && ctl.vector_bucket) ? ctl.vector_bucket : ctl.bucket;
+
+  ceph_assert(bucket_ctl);
   return bucket_ctl->read_bucket_instance_info(bucket, &info,
 					       y,
                                                dpp,
@@ -11096,6 +11098,7 @@ int RGWRados::bi_put(BucketShard& bs, rgw_cls_bi_entry& entry, optional_yield y)
 
 int RGWRados::bi_put(const DoutPrefixProvider *dpp, rgw_bucket& bucket, rgw_obj& obj, rgw_cls_bi_entry& entry, optional_yield y)
 {
+  // raw bucket-index admin op; not routed for vector buckets
   // make sure incomplete multipart uploads are hashed correctly
   if (obj.key.ns == RGW_OBJ_NS_MULTIPART) {
     RGWMPObj mp;
@@ -11104,7 +11107,7 @@ int RGWRados::bi_put(const DoutPrefixProvider *dpp, rgw_bucket& bucket, rgw_obj&
   }
   BucketShard bs(this);
 
-  int ret = bs.init(bucket, obj, nullptr /* no RGWBucketInfo */, dpp, y);
+  int ret = bs.init(bucket, obj, nullptr /* no RGWBucketInfo */, dpp, y, false);
   if (ret < 0) {
     ldpp_dout(dpp, 5) << "bs.init() returned ret=" << ret << dendl;
     return ret;
@@ -11120,7 +11123,7 @@ int RGWRados::bi_list(const DoutPrefixProvider *dpp, rgw_bucket& bucket,
 {
   rgw_obj obj(bucket, obj_name_filter);
   BucketShard bs(this);
-  int ret = bs.init(bucket, obj, nullptr /* no RGWBucketInfo */, dpp, y);
+  int ret = bs.init(bucket, obj, nullptr /* no RGWBucketInfo */, dpp, y, false);
   if (ret < 0) {
     ldpp_dout(dpp, 5) << "bs.init() returned ret=" << ret << dendl;
     return ret;
@@ -12323,7 +12326,7 @@ int RGWRados::check_disk_state(const DoutPrefixProvider *dpp,
 
       if (loc.key.ns == RGW_OBJ_NS_MULTIPART) {
 	ldout_bitx(bitx, dpp, 10) << "INFO: " << __func__ << " removing manifest part from index loc=" << loc << dendl_bitx;
-	r = delete_obj_index(loc, astate->mtime, dpp, y);
+	r = delete_obj_index(loc, astate->mtime, dpp, y, bucket_info.is_vector());
 	if (r < 0) {
 	  ldout_bitx(bitx, dpp, 0) <<
 	    "WARNING: " << __func__ << ": delete_obj_index returned r=" << r << dendl_bitx;
@@ -12653,7 +12656,7 @@ int RGWRados::delete_obj_aio(const DoutPrefixProvider *dpp, const rgw_obj& obj,
   handles.push_back(c);
 
   if (keep_index_consistent) {
-    ret = delete_obj_index(obj, astate->mtime, dpp, y);
+    ret = delete_obj_index(obj, astate->mtime, dpp, y, bucket_info.is_vector());
     if (ret < 0) {
       ldpp_dout(dpp, -1) << "ERROR: failed to delete obj index with ret=" << ret << dendl;
       return ret;

@@ -12,20 +12,15 @@
 #include "rgw_zone.h"
 #include "rgw_s3vector_background.h"
 
-#include <type_traits>
-
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_rgw
 
 namespace {
 
-// detect whether an s3vector request config carries a vector_bucket_name field
-// (every op does except list_vector_buckets_t, which has no single bucket)
-template<typename T, typename = void>
-struct has_vector_bucket_name : std::false_type {};
+// satisfied by an s3vector request config that carries a vector_bucket_name
+// field (every op does except list_vector_buckets_t, which has no single bucket)
 template<typename T>
-struct has_vector_bucket_name<T, std::void_t<decltype(std::declval<T&>().vector_bucket_name)>>
-    : std::true_type {};
+concept has_vector_bucket_name = requires(T& t) { t.vector_bucket_name; };
 
 class RGWS3VectorBase : public RGWDefaultResponseOp {
 protected:
@@ -56,7 +51,7 @@ protected:
     // Attribute this request to its vector bucket in the ops/usage log using the
     // ARN resource form ("bucket/<name>"), so that it doesn't collide with a same-name
     // regular bucket
-    if constexpr (has_vector_bucket_name<T>::value) {
+    if constexpr (has_vector_bucket_name<T>) {
       if (!configuration.vector_bucket_name.empty()) {
         s->bucket_name = rgw::s3vector::vector_bucket_arn(
             s->zonegroup_name, s->account_name,
@@ -321,8 +316,7 @@ private:
     }
     const bool creating = (ret == -ENOENT);
 
-    // a new bucket takes its storage mode from the admin option; an existing bucket
-    // keeps whatever mode it was created with (its immutable attribute)
+    // a new bucket takes its storage mode from the admin option;
     rgw::s3vector::StorageMode mode = rgw::s3vector::StorageMode::VECTOR_BUCKET;
     {
       const std::string mode_str =

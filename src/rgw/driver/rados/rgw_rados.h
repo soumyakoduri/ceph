@@ -723,7 +723,7 @@ public:
     explicit BucketShard(RGWRados *_store) : store(_store), shard_id(-1) {}
     int init(const rgw_bucket& _bucket, const rgw_obj& obj,
              RGWBucketInfo* out, const DoutPrefixProvider *dpp, optional_yield y,
-             bool is_vector = false);
+             bool is_vector);
     int init(const DoutPrefixProvider *dpp, const RGWBucketInfo& bucket_info, const rgw_obj& obj, optional_yield y);
     int init(const DoutPrefixProvider *dpp,
 	     const RGWBucketInfo& bucket_info,
@@ -784,7 +784,7 @@ public:
     int get_bucket_shard(BucketShard **pbs, const DoutPrefixProvider *dpp, optional_yield y) {
       if (!bs_initialized) {
         int r =
-	  bs.init(bucket_info.bucket, obj, nullptr /* no RGWBucketInfo */, dpp, y);
+	  bs.init(bucket_info.bucket, obj, nullptr /* no RGWBucketInfo */, dpp, y, bucket_info.is_vector());
         if (r < 0) {
           return r;
         }
@@ -1387,7 +1387,7 @@ int restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
 
   /** Remove an object from the bucket index */
   int delete_obj_index(const rgw_obj& obj, ceph::real_time mtime,
-		       const DoutPrefixProvider *dpp, optional_yield y);
+		       const DoutPrefixProvider *dpp, optional_yield y, bool is_vector);
 
   /**
    * Set an attr on an object.
@@ -1566,7 +1566,7 @@ public:
   int put_bucket_instance_info(RGWBucketInfo& info, bool exclusive, ceph::real_time mtime, const std::map<std::string, bufferlist> *pattrs, const DoutPrefixProvider *dpp, optional_yield y, RGWBucketCtl* bucket_ctl);
   /* xxx dang obj_ctx -> svc */
   int get_bucket_instance_info(const std::string& meta_key, RGWBucketInfo& info, ceph::real_time *pmtime, std::map<std::string, bufferlist> *pattrs, optional_yield y, const DoutPrefixProvider *dpp);
-  int get_bucket_instance_info(const rgw_bucket& bucket, RGWBucketInfo& info, ceph::real_time *pmtime, std::map<std::string, bufferlist> *pattrs, optional_yield y, const DoutPrefixProvider *dpp, bool is_vector = false);
+  int get_bucket_instance_info(const rgw_bucket& bucket, RGWBucketInfo& info, ceph::real_time *pmtime, std::map<std::string, bufferlist> *pattrs, optional_yield y, const DoutPrefixProvider *dpp, bool is_vector);
 
   static void make_bucket_entry_name(const std::string& tenant_name, const std::string& bucket_name, std::string& bucket_entry);
 

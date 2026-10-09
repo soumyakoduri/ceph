@@ -252,7 +252,7 @@ int rgw_bucket_sync_checkpoint(const DoutPrefixProvider* dpp,
       auto y = optional_yield{yield};
       int r = store->getRados()->get_bucket_instance_info(
           *entry.pipe.source.bucket, entry.source_bucket_info,
-          nullptr, nullptr, y, dpp);
+          nullptr, nullptr, y, dpp, false);
       if (r < 0) {
         ldpp_dout(dpp, 0) << "failed to read source bucket info: "
             << cpp_strerror(r) << dendl;
