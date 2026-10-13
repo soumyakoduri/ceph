@@ -17,6 +17,7 @@
 #include "test/librados/test_pool_types.h"
 #include "gtest/gtest.h"
 
+#include <future>
 #include <optional>
 #include <system_error>
 #include "include/expected.hpp"
@@ -25,10 +26,35 @@ using ceph::test::pool_type_name;
 using ceph::test::create_pool_by_type;
 using ceph::test::destroy_pool_by_type;
 
+class UserHeaderCB : public RGWGetUserHeader_CB {
+ public:
+  std::promise<std::pair<int, cls_user_header>> result;
+
+  void handle_response(int r, cls_user_header& header) override {
+    result.set_value({r, header});
+  }
+};
+
 // test fixture with helper functions
 class TestClsAccount : public ceph::test::ClsTestFixture {
   // Inherits: rados, ioctx, pool_name, pool_type, SetUp(), TearDown()
  protected:
+  void check_header_async(std::string oid, int expected_ret,
+                          const cls_user_header& expected)
+  {
+    auto cb = std::make_unique<UserHeaderCB>();
+    auto result = cb->result.get_future();
+    ASSERT_EQ(0, cls_user_get_header_async(ioctx, oid, cb.get()));
+    cb.release(); // the async helper consumes the reference on success
+    ASSERT_EQ(std::future_status::ready,
+              result.wait_for(std::chrono::seconds(30)));
+    const auto [ret, header] = result.get();
+    EXPECT_EQ(expected_ret, ret);
+    EXPECT_EQ(expected.stats.total_entries, header.stats.total_entries);
+    EXPECT_EQ(expected.stats.total_bytes, header.stats.total_bytes);
+    EXPECT_EQ(expected.stats.total_bytes_rounded, header.stats.total_bytes_rounded);
+  }
+
   int add(const std::string& oid, const cls_user_account_resource& entry,
           bool exclusive, uint32_t limit)
   {
@@ -112,6 +138,33 @@ bool operator==(const cls_user_account_resource& lhs,
 std::ostream& operator<<(std::ostream& out, const cls_user_account_resource& r)
 {
   return out << r.path << r.name;
+}
+
+TEST_P(TestClsAccount, async_header_missing)
+{
+  check_header_async(__PRETTY_FUNCTION__, -ENOENT, cls_user_header{});
+}
+
+TEST_P(TestClsAccount, async_header_stats)
+{
+  const std::string oid = __PRETTY_FUNCTION__;
+  cls_user_header header;
+  header.stats.total_entries = 3;
+  header.stats.total_bytes = 123;
+  header.stats.total_bytes_rounded = 4096;
+  bufferlist bl;
+  encode(header, bl);
+  ASSERT_EQ(0, ioctx.omap_set_header(oid, bl));
+  check_header_async(oid, 0, header);
+}
+
+TEST_P(TestClsAccount, async_header_corrupt)
+{
+  const std::string oid = __PRETTY_FUNCTION__;
+  bufferlist bl;
+  bl.append("invalid header");
+  ASSERT_EQ(0, ioctx.omap_set_header(oid, bl));
+  check_header_async(oid, -EIO, cls_user_header{});
 }
 
 TEST_P(TestClsAccount, add)

@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 sts=2 expandtab
 
 #include <errno.h>
+#include <memory>
 
 #include "cls/user/cls_user_client.h"
 #include "include/rados/librados.hpp"
@@ -101,6 +102,8 @@ class ClsUserGetHeaderCtx : public ObjectOperationCompletion {
   RGWGetUserHeader_CB *ret_ctx;
   int *pret;
 public:
+  bufferlist outbl; // response buffer for async reads
+
   ClsUserGetHeaderCtx(cls_user_header *_h, RGWGetUserHeader_CB *_ctx, int *_pret) : header(_h), ret_ctx(_ctx), pret(_pret) {}
   ~ClsUserGetHeaderCtx() override {
     if (ret_ctx) {
@@ -108,8 +111,8 @@ public:
     }
   }
   void handle_completion(int r, bufferlist& outbl) override {
+    cls_user_get_header_ret ret;
     if (r >= 0) {
-      cls_user_get_header_ret ret;
       try {
         auto iter = outbl.cbegin();
         decode(ret, iter);
@@ -118,13 +121,19 @@ public:
       } catch (ceph::buffer::error& err) {
         r = -EIO;
       }
-      if (ret_ctx) {
-        ret_ctx->handle_response(r, ret.header);
-      }
+    }
+    if (ret_ctx) {
+      ret_ctx->handle_response(r, ret.header);
     }
     if (pret) {
       *pret = r;
     }
+  }
+
+  static void aio_complete(librados::completion_t completion, void* arg) {
+    std::unique_ptr<ClsUserGetHeaderCtx> self{
+        static_cast<ClsUserGetHeaderCtx*>(arg)};
+    self->handle_completion(rados_aio_get_return_value(completion), self->outbl);
   }
 };
 
@@ -150,17 +159,26 @@ void cls_user_reset_stats(librados::ObjectWriteOperation &op)
 
 int cls_user_get_header_async(IoCtx& io_ctx, string& oid, RGWGetUserHeader_CB *ctx)
 {
-  bufferlist in, out;
+  bufferlist in;
   cls_user_get_header_op call;
   encode(call, in);
+  auto header_ctx = std::make_unique<ClsUserGetHeaderCtx>(nullptr, ctx, nullptr);
+  // Keep a completion reference; consume the caller's reference only if the
+  // request is submitted successfully.
+  ctx->get();
   ObjectReadOperation op;
-  op.exec(method::get_header, in, new ClsUserGetHeaderCtx(NULL, ctx, NULL)); /* no need to pass pret, as we'll call ctx->handle_response() with correct error */
-  auto c = librados::Rados::aio_create_completion(nullptr, nullptr);
+  op.exec(method::get_header, in, &header_ctx->outbl, nullptr);
+  // Use the overall result: an object-level error may leave the per-op result
+  // at zero with no reply to decode.
+  auto c = librados::Rados::aio_create_completion(
+      header_ctx.get(), &ClsUserGetHeaderCtx::aio_complete);
   int r = io_ctx.aio_operate(oid, c, &op, NULL);
   c->release();
-  if (r < 0)
+  if (r < 0) {
     return r;
-
+  }
+  header_ctx.release(); // aio_complete() owns the context
+  ctx->put();
   return 0;
 }
 
