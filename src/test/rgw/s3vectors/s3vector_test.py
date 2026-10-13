@@ -4864,6 +4864,170 @@ def test_delete_user_owning_the_backing_bucket():
         admin(['user', 'rm', '--uid', uid, '--purge-data'] + backend_admin_args())
 
 
+##############################################
+# usage log and owner statistics
+##############################################
+
+@pytest.fixture
+def vector_usage_logging():
+    """Enable usage logging temporarily, preserving client config overrides."""
+    client = rgw_client_name()
+    out, ret = ceph_admin(['config', 'dump', '--format', 'json'])
+    if ret != 0:
+        pytest.skip(f"cannot inspect usage-log configuration: {out}")
+    original = {
+        entry['name']: entry['value']
+        for entry in json.loads(out[out.index('['):])
+        if entry['section'] == client and not entry.get('mask')
+    }
+    options = {
+        'rgw_enable_usage_log': 'true',
+        'rgw_usage_log_flush_threshold': '1',
+        'rgw_usage_log_tick_interval': '1',
+    }
+    changed = []
+    try:
+        for option, value in options.items():
+            set_rgw_config_option(option, value)
+            changed.append(option)
+        yield
+    finally:
+        for option in reversed(changed):
+            if option in original:
+                out, ret = ceph_admin(['config', 'set', client, option, original[option]])
+            else:
+                out, ret = ceph_admin(['config', 'rm', client, option])
+            assert ret == 0, f"failed to restore {option}: {out}"
+
+
+def _vector_test_usage(uid, bucket=None):
+    args = ['usage', 'show', '--uid', uid]
+    if bucket is not None:
+        args += ['--bucket', bucket, '--vector']
+    out, ret = admin(args)
+    assert ret == 0, f"failed to read usage: {out}"
+    data = json.loads(out[out.index('{'):])
+    totals = {}
+    for entry in data.get('entries', []):
+        for item in entry.get('buckets', []):
+            name = item['bucket']
+            totals[name] = totals.get(name, 0) + sum(
+                category.get('ops', 0) for category in item.get('categories', []))
+    return totals
+
+
+def _wait_for_vector_test_usage(conn, bucket_name, usage_key):
+    # Emit a request on each attempt to tolerate runtime-config propagation.
+    for _ in range(40):
+        conn.get_vector_bucket(vectorBucketName=bucket_name)
+        usage = _vector_test_usage(conn.uid)
+        if usage.get(usage_key, 0) > 0:
+            return usage
+        time.sleep(1)
+    pytest.fail(f"no usage recorded for {conn.uid}/{usage_key}")
+
+
+@pytest.mark.vector_bucket_test
+def test_vector_usage_isolated_from_same_name_s3_bucket(vector_usage_logging):
+    conn = another_user()
+    bucket_name = gen_bucket_name()
+    usage_key = f'bucket/{bucket_name}'
+    regular_created = False
+    try:
+        _create_vector_bucket(conn, bucket_name, conn.s3)
+        if not has_backing_bucket():
+            _create_s3bucket(conn.s3, bucket_name)
+            regular_created = True
+        _wait_for_vector_test_usage(conn, bucket_name, usage_key)
+        for _ in range(40):
+            conn.s3.put_object(Bucket=bucket_name, Key='usage-object', Body=b'data')
+            usage = _vector_test_usage(conn.uid)
+            if usage.get(bucket_name, 0) > 0:
+                break
+            time.sleep(1)
+        assert usage.get(bucket_name, 0) > 0, usage
+        selected = _vector_test_usage(conn.uid, bucket_name)
+        assert selected.get(usage_key, 0) > 0, selected
+        assert bucket_name not in selected, selected
+
+        # Late flushes can arrive after the first trim; no new requests are issued.
+        for _ in range(20):
+            out, ret = admin(['usage', 'trim', '--uid', conn.uid,
+                              '--bucket', bucket_name, '--vector'])
+            assert ret == 0, out
+            time.sleep(1)
+            usage = _vector_test_usage(conn.uid)
+            if usage_key not in usage:
+                break
+        assert usage_key not in usage, usage
+        assert usage.get(bucket_name, 0) > 0, usage
+    finally:
+        _cleanup_vector_bucket(conn, bucket_name, conn.s3)
+        if regular_created:
+            conn.s3.delete_object(Bucket=bucket_name, Key='usage-object')
+            conn.s3.delete_bucket(Bucket=bucket_name)
+        admin(['user', 'rm', '--uid', conn.uid, '--purge-data'] + backend_admin_args())
+
+
+@pytest.mark.vector_bucket_test
+def test_vector_usage_after_chown(vector_usage_logging):
+    if has_backing_bucket():
+        pytest.skip('backing S3 bucket permissions are independent of vector chown')
+    source = another_user()
+    destination = None
+    bucket_name = gen_bucket_name()
+    usage_key = f'bucket/{bucket_name}'
+    moved = False
+    try:
+        destination = another_user()
+        _create_vector_bucket(source, bucket_name, source.s3)
+        _wait_for_vector_test_usage(source, bucket_name, usage_key)
+        out, ret = admin(['bucket', 'chown', '--bucket', bucket_name,
+                          '--uid', destination.uid, '--vector'])
+        assert ret == 0, out
+        moved = True
+        assert _vector_bucket_exists(destination, bucket_name)
+        assert not _vector_bucket_exists(source, bucket_name)
+        _wait_for_vector_test_usage(destination, bucket_name, usage_key)
+        # Historical request usage stays with the original owner.
+        assert _vector_test_usage(source.uid).get(usage_key, 0) > 0
+    finally:
+        cleanup_owner = destination if moved else source
+        _cleanup_vector_bucket(cleanup_owner, bucket_name, source.s3)
+        for owner in (source, destination):
+            if owner is not None:
+                admin(['user', 'rm', '--uid', owner.uid, '--purge-data'] +
+                      backend_admin_args())
+
+
+@pytest.mark.vector_bucket_test
+@pytest.mark.parametrize('owner_type', ['user', 'account'])
+def test_vector_storage_in_owner_stats(owner_type):
+    if get_s3vector_backend() != 'rgw':
+        pytest.skip('local backend data is not accounted in RGW storage quotas')
+    conn = another_account_user() if owner_type == 'account' else another_user()
+    bucket_name = gen_bucket_name()
+    try:
+        _create_vector_bucket(conn, bucket_name, conn.s3)
+        conn.create_index(vectorBucketName=bucket_name, indexName='stats-index',
+                          dataType='float32', dimension=4, distanceMetric='euclidean')
+        conn.put_vectors(vectorBucketName=bucket_name, indexName='stats-index',
+                         vectors=generate_vectors(10, 4))
+        if owner_type == 'account':
+            args = ['account', 'stats', '--account-id', conn.account_id]
+        else:
+            args = ['user', 'stats', '--uid', conn.uid]
+        out, ret = admin(args + ['--sync-stats'] + backend_admin_args())
+        assert ret == 0, out
+        stats = json.loads(out[out.index('{'):])['stats']
+        assert stats['size'] > 0 and stats['num_objects'] > 0, stats
+    finally:
+        _cleanup_vector_bucket(conn, bucket_name, conn.s3)
+        admin(['user', 'rm', '--uid', conn.uid, '--purge-data'] + backend_admin_args())
+        if owner_type == 'account':
+            admin(['account', 'rm', '--account-id', conn.account_id] + backend_admin_args())
+
+
 ###############################
 # multi tenancy isolation tests
 ###############################

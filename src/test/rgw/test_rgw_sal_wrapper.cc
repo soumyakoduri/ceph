@@ -8,6 +8,8 @@
 #include "rgw/rgw_sal_config.h"
 #include "rgw/rgw_bucket.h"
 #include "rgw/rgw_zone.h"
+#include "rgw/rgw_acl.h"
+#include "rgw/driver/rados/rgw_user.h"
 #include "common/ceph_argparse.h"
 #include "common/dout.h"
 #include "common/async/context_pool.h"
@@ -19,6 +21,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstring>
+#include <future>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -37,7 +40,7 @@ struct TestEnv {
   rgw::sal::Driver* driver = nullptr;
   const DoutPrefixProvider* dpp = nullptr;
   std::unique_ptr<rgw::sal::ConfigStore> cfgstore;
-  std::string bucket_name;
+  const rgw::SiteConfig* site = nullptr;
   std::string backend;  // "rados", "dbstore", "posix", etc.
 };
 
@@ -152,7 +155,7 @@ TEST(Utility, WrapperVersion) {
 // Functional tests — require live driver + bucket
 // ===========================================================================
 
-class SALWrapperTest : public ::testing::Test {
+class SALWrapperTest : public ::testing::TestWithParam<bool> {
 protected:
   CRgwDriver* driver() {
     return reinterpret_cast<CRgwDriver*>(g_env->driver);
@@ -165,7 +168,91 @@ protected:
     if (!g_env || !g_env->driver) {
       GTEST_SKIP() << "SAL driver not initialized";
     }
-    bucket_ = {g_env->bucket_name.c_str(), nullptr};
+    static uint64_t sequence = 0;
+    bucket_name_ = "sal-wrapper-test-" + std::to_string(getpid()) + "-" +
+        std::to_string(sequence++);
+    ASSERT_EQ(0, create_user(bucket_name_ + "-owner", &owner_));
+    ASSERT_EQ(0, create_bucket(bucket_name_, GetParam(), owner_->get_id(),
+                              &sal_bucket_))
+        << "backend=" << g_env->backend
+        << ", bucket_type=" << (GetParam() ? "Vector" : "S3");
+    bucket_ = {bucket_name_.c_str(), nullptr, GetParam()};
+  }
+
+  int create_user(const std::string& name, rgw::sal::User** result) {
+    auto user = g_env->driver->get_user(rgw_user{"", name});
+    user->get_info().display_name = name;
+    int ret = user->store_user(g_env->dpp, null_yield, true);
+    if (ret < 0) {
+      return ret;
+    }
+    *result = user.get();
+    users_.push_back(std::move(user));
+    return 0;
+  }
+
+  int load_bucket(const std::string& name, bool is_vector,
+                  std::unique_ptr<rgw::sal::Bucket>* result) {
+    const rgw_bucket key("", name);
+    return is_vector
+        ? g_env->driver->load_vector_bucket(g_env->dpp, key, result, null_yield)
+        : g_env->driver->load_bucket(g_env->dpp, key, result, null_yield);
+  }
+
+  int create_bucket(const std::string& name, bool is_vector,
+                    const rgw_owner& owner, rgw::sal::Bucket** result) {
+    std::unique_ptr<rgw::sal::Bucket> bucket;
+    int ret = load_bucket(name, is_vector, &bucket);
+    if (ret != -ENOENT) {
+      return ret < 0 ? ret : -EEXIST;
+    }
+    if (!bucket) {
+      return -EIO;
+    }
+    rgw::sal::Bucket::CreateParams params;
+    params.owner = owner;
+    params.zonegroup_id = g_env->site->get_zonegroup().get_id();
+    params.placement_rule = g_env->site->get_zonegroup().default_placement;
+    params.zone_placement = rgw::find_zone_placement(
+        g_env->dpp, g_env->site->get_zone_params(), params.placement_rule);
+    if (is_vector) {
+      params.attrs[RGW_ATTR_S3VECTOR_STORAGE].append("vector_bucket");
+    }
+    RGWAccessControlPolicy acl;
+    acl.create_default(owner, "SAL wrapper test");
+    encode(acl, params.attrs[RGW_ATTR_ACL]);
+    ret = bucket->create(g_env->dpp, params, null_yield);
+    if (ret < 0) {
+      return ret;
+    }
+    *result = bucket.get();
+    buckets_.push_back(std::move(bucket));
+    // create() persists attributes without populating the Bucket's attrs map.
+    // Load them before quota/chown tests write the instance metadata back.
+    return (*result)->load_bucket(g_env->dpp, null_yield);
+  }
+
+  int put_to(const CRgwBucket& bucket, const char* key,
+             const std::string& data) {
+    CRgwObject obj{key, nullptr};
+    CRgwBuffer buf{reinterpret_cast<uint8_t*>(const_cast<char*>(data.data())),
+                   data.size()};
+    return rgw_put_object(driver(), dpp(), nullptr, &bucket, &obj, &buf, nullptr, nullptr, 0);
+  }
+
+  int load_owner_stats(const rgw_owner& owner, RGWStorageStats& stats) {
+    ceph::real_time synced, updated;
+    return g_env->driver->load_stats(g_env->dpp, null_yield, owner, stats,
+                                     synced, updated);
+  }
+
+  int set_bucket_quota(int64_t max_size, int64_t max_objects) {
+    auto& quota = sal_bucket_->get_info().quota;
+    quota.enabled = true;
+    quota.check_on_raw = true;
+    quota.max_size = max_size;
+    quota.max_objects = max_objects;
+    return sal_bucket_->put_info(g_env->dpp, false, ceph::real_clock::now(), null_yield);
   }
 
   int put(const char* key, const uint8_t* data, size_t len) {
@@ -196,12 +283,23 @@ protected:
   }
 
   CRgwBucket bucket_{};
+  std::string bucket_name_;
+  rgw::sal::Bucket* sal_bucket_ = nullptr;
+  rgw::sal::User* owner_ = nullptr;
+  std::vector<std::unique_ptr<rgw::sal::Bucket>> buckets_;
+  std::vector<std::unique_ptr<rgw::sal::User>> users_;
   std::vector<std::string> created_keys_;
 
   void TearDown() override {
     if (!g_env || !g_env->driver) return;
     for (auto& k : created_keys_) {
       del(k.c_str());
+    }
+    for (auto& bucket : buckets_) {
+      EXPECT_EQ(0, bucket->remove(g_env->dpp, true, null_yield));
+    }
+    for (auto& user : users_) {
+      EXPECT_EQ(0, user->remove_user(g_env->dpp, null_yield));
     }
   }
 
@@ -219,7 +317,7 @@ protected:
 
 // --------------- Null buffer ---------------
 
-TEST_F(SALWrapperTest, OutputBufferUntouchedOnFailure) {
+TEST_P(SALWrapperTest, OutputBufferUntouchedOnFailure) {
   CRgwBuffer buf{nullptr, 0};
   CRgwObject obj{"test/no-such-key-ever", nullptr};
   EXPECT_EQ(-ENOENT, rgw_get_object(driver(), dpp(), nullptr,
@@ -228,7 +326,7 @@ TEST_F(SALWrapperTest, OutputBufferUntouchedOnFailure) {
   EXPECT_EQ(buf.len, 0u);
 }
 
-TEST_F(SALWrapperTest, NullBufferPut) {
+TEST_P(SALWrapperTest, NullBufferPut) {
   CRgwObject obj{"test/null-buf", nullptr};
 
   // null buffer pointer is treated as a zero-byte put (valid)
@@ -242,7 +340,7 @@ TEST_F(SALWrapperTest, NullBufferPut) {
 
 // --------------- Put / Get ---------------
 
-TEST_F(SALWrapperTest, PutGetRoundTrip) {
+TEST_P(SALWrapperTest, PutGetRoundTrip) {
   std::string data = "hello, SAL wrapper!";
   ASSERT_EQ(0, put_str_tracked("test/put-get", data));
 
@@ -253,7 +351,7 @@ TEST_F(SALWrapperTest, PutGetRoundTrip) {
   rgw_free_buffer(&buf);
 }
 
-TEST_F(SALWrapperTest, PutGetBinaryData) {
+TEST_P(SALWrapperTest, PutGetBinaryData) {
   std::vector<uint8_t> data(256);
   std::iota(data.begin(), data.end(), 0);
   ASSERT_EQ(0, put_tracked("test/binary", data.data(), data.size()));
@@ -266,7 +364,7 @@ TEST_F(SALWrapperTest, PutGetBinaryData) {
 }
 
 // known fail: dbstore, posix — backend does not support multi-chunk reads
-TEST_F(SALWrapperTest, PutGetLargeObject) {
+TEST_P(SALWrapperTest, PutGetLargeObject) {
   size_t test_size = 1024 * 1024;
   std::vector<uint8_t> data(test_size);
   std::iota(data.begin(), data.end(), 0);
@@ -279,7 +377,7 @@ TEST_F(SALWrapperTest, PutGetLargeObject) {
   rgw_free_buffer(&buf);
 }
 
-TEST_F(SALWrapperTest, PutZeroLength) {
+TEST_P(SALWrapperTest, PutZeroLength) {
   ASSERT_EQ(0, put_tracked("test/empty-obj", nullptr, 0));
 
   CRgwObjectMeta meta{};
@@ -288,7 +386,7 @@ TEST_F(SALWrapperTest, PutZeroLength) {
   rgw_free_object_meta(&meta);
 }
 
-TEST_F(SALWrapperTest, PutOverwrite) {
+TEST_P(SALWrapperTest, PutOverwrite) {
   std::string data1 = "first version";
   std::string data2 = "second version, different length";
   ASSERT_EQ(0, put_str_tracked("test/overwrite", data1));
@@ -301,7 +399,7 @@ TEST_F(SALWrapperTest, PutOverwrite) {
   rgw_free_buffer(&buf);
 }
 
-TEST_F(SALWrapperTest, PutGetMultipleObjects) {
+TEST_P(SALWrapperTest, PutGetMultipleObjects) {
   const int count = 10;
   for (int i = 0; i < count; i++) {
     std::string key = "test/multi/obj-" + std::to_string(i);
@@ -323,7 +421,7 @@ TEST_F(SALWrapperTest, PutGetMultipleObjects) {
 
 // --------------- Put/Get with Attributes ---------------
 
-TEST_F(SALWrapperTest, PutObjectWithAttributes) {
+TEST_P(SALWrapperTest, PutObjectWithAttributes) {
   std::string data = "object with attributes";
   CRgwObject obj{"test/put-with-attrs", nullptr};
   CRgwBuffer buf{reinterpret_cast<uint8_t*>(const_cast<char*>(data.data())), data.size()};
@@ -361,7 +459,7 @@ TEST_F(SALWrapperTest, PutObjectWithAttributes) {
   rgw_free_object_meta(&meta);
 }
 
-TEST_F(SALWrapperTest, PutObjectWithContentType) {
+TEST_P(SALWrapperTest, PutObjectWithContentType) {
   std::string data = "JSON content";
   CRgwObject obj{"test/put-json", nullptr};
   CRgwBuffer buf{reinterpret_cast<uint8_t*>(const_cast<char*>(data.data())), data.size()};
@@ -381,7 +479,7 @@ TEST_F(SALWrapperTest, PutObjectWithContentType) {
   rgw_free_object_meta(&meta);
 }
 
-TEST_F(SALWrapperTest, PutObjectWithCustomMetadata) {
+TEST_P(SALWrapperTest, PutObjectWithCustomMetadata) {
   std::string data = "data with custom metadata";
   CRgwObject obj{"test/put-custom-meta", nullptr};
   CRgwBuffer buf{reinterpret_cast<uint8_t*>(const_cast<char*>(data.data())), data.size()};
@@ -406,7 +504,7 @@ TEST_F(SALWrapperTest, PutObjectWithCustomMetadata) {
   rgw_free_object_meta(&meta);
 }
 
-TEST_F(SALWrapperTest, PutObjectAttributesOverwrite) {
+TEST_P(SALWrapperTest, PutObjectAttributesOverwrite) {
   std::string data = "original data";
   CRgwObject obj{"test/attrs-overwrite", nullptr};
   CRgwBuffer buf{reinterpret_cast<uint8_t*>(const_cast<char*>(data.data())), data.size()};
@@ -443,7 +541,7 @@ TEST_F(SALWrapperTest, PutObjectAttributesOverwrite) {
   rgw_free_object_meta(&meta);
 }
 
-TEST_F(SALWrapperTest, GetObjectPreservesAttributes) {
+TEST_P(SALWrapperTest, GetObjectPreservesAttributes) {
   std::string data = "data to retrieve";
   CRgwObject obj{"test/get-with-attrs", nullptr};
   CRgwBuffer put_buf{reinterpret_cast<uint8_t*>(const_cast<char*>(data.data())), data.size()};
@@ -476,7 +574,7 @@ TEST_F(SALWrapperTest, GetObjectPreservesAttributes) {
   rgw_free_object_meta(&meta);
 }
 
-TEST_F(SALWrapperTest, PutObjectWithNullAttributes) {
+TEST_P(SALWrapperTest, PutObjectWithNullAttributes) {
   std::string data = "data without attributes";
   CRgwObject obj{"test/put-null-attrs", nullptr};
   CRgwBuffer buf{reinterpret_cast<uint8_t*>(const_cast<char*>(data.data())), data.size()};
@@ -497,12 +595,12 @@ TEST_F(SALWrapperTest, PutObjectWithNullAttributes) {
 
 // --------------- Get edge cases ---------------
 
-TEST_F(SALWrapperTest, GetNonExistent) {
+TEST_P(SALWrapperTest, GetNonExistent) {
   CRgwBuffer buf{};
   EXPECT_EQ(-ENOENT, get("test/no-such-key-ever", &buf));
 }
 
-TEST_F(SALWrapperTest, RangeRead) {
+TEST_P(SALWrapperTest, RangeRead) {
   std::vector<uint8_t> data(512);
   std::iota(data.begin(), data.end(), 0);
   ASSERT_EQ(0, put_tracked("test/range-read", data.data(), data.size()));
@@ -514,7 +612,7 @@ TEST_F(SALWrapperTest, RangeRead) {
   rgw_free_buffer(&buf);
 }
 
-TEST_F(SALWrapperTest, RangeReadFromStart) {
+TEST_P(SALWrapperTest, RangeReadFromStart) {
   std::string data = "range-read-from-start-test-data";
   ASSERT_EQ(0, put_str_tracked("test/range-start", data));
 
@@ -525,7 +623,7 @@ TEST_F(SALWrapperTest, RangeReadFromStart) {
   rgw_free_buffer(&buf);
 }
 
-TEST_F(SALWrapperTest, RangeReadToEnd) {
+TEST_P(SALWrapperTest, RangeReadToEnd) {
   std::string data = "read-to-end-data-here";
   ASSERT_EQ(0, put_str_tracked("test/range-end", data));
 
@@ -536,7 +634,7 @@ TEST_F(SALWrapperTest, RangeReadToEnd) {
   rgw_free_buffer(&buf);
 }
 
-TEST_F(SALWrapperTest, RangeReadBeyondObjectSize) {
+TEST_P(SALWrapperTest, RangeReadBeyondObjectSize) {
   std::string data = "short-data";
   ASSERT_EQ(0, put_str_tracked("test/range-beyond", data));
 
@@ -552,7 +650,7 @@ TEST_F(SALWrapperTest, RangeReadBeyondObjectSize) {
 
 // --------------- Conditional get ---------------
 
-TEST_F(SALWrapperTest, ConditionalGetIfMatch) {
+TEST_P(SALWrapperTest, ConditionalGetIfMatch) {
   std::string data = "conditional get data";
   ASSERT_EQ(0, put_str_tracked("test/cond-get", data));
 
@@ -580,7 +678,7 @@ TEST_F(SALWrapperTest, ConditionalGetIfMatch) {
              "wrong-etag", nullptr, nullptr, nullptr, &buf2));
 }
 
-TEST_F(SALWrapperTest, ConditionalGetIfNoneMatch) {
+TEST_P(SALWrapperTest, ConditionalGetIfNoneMatch) {
   std::string data = "none-match data";
   ASSERT_EQ(0, put_str_tracked("test/cond-get-nm", data));
 
@@ -608,7 +706,7 @@ TEST_F(SALWrapperTest, ConditionalGetIfNoneMatch) {
   rgw_free_buffer(&buf2);
 }
 
-TEST_F(SALWrapperTest, ConditionalGetIfModifiedSince) {
+TEST_P(SALWrapperTest, ConditionalGetIfModifiedSince) {
   std::string data = "modified since data";
   ASSERT_EQ(0, put_str_tracked("test/cond-get-mod", data));
 
@@ -638,7 +736,7 @@ TEST_F(SALWrapperTest, ConditionalGetIfModifiedSince) {
              nullptr, nullptr, &future, nullptr, &buf2));
 }
 
-TEST_F(SALWrapperTest, ConditionalGetIfUnmodifiedSince) {
+TEST_P(SALWrapperTest, ConditionalGetIfUnmodifiedSince) {
   std::string data = "unmodified since data";
   ASSERT_EQ(0, put_str_tracked("test/cond-get-unmod", data));
 
@@ -670,7 +768,7 @@ TEST_F(SALWrapperTest, ConditionalGetIfUnmodifiedSince) {
 
 // --------------- Head / Metadata ---------------
 
-TEST_F(SALWrapperTest, HeadObject) {
+TEST_P(SALWrapperTest, HeadObject) {
   std::string data = "metadata test data";
   ASSERT_EQ(0, put_str_tracked("test/head-obj", data));
 
@@ -685,13 +783,13 @@ TEST_F(SALWrapperTest, HeadObject) {
   rgw_free_object_meta(&meta);
 }
 
-TEST_F(SALWrapperTest, HeadNonExistent) {
+TEST_P(SALWrapperTest, HeadNonExistent) {
   CRgwObjectMeta meta{};
   EXPECT_EQ(-ENOENT, head("test/head-nonexistent", &meta));
   rgw_free_object_meta(&meta);
 }
 
-TEST_F(SALWrapperTest, EtagChangesOnOverwrite) {
+TEST_P(SALWrapperTest, EtagChangesOnOverwrite) {
   ASSERT_EQ(0, put_str_tracked("test/etag-change", "version1"));
 
   CRgwObjectMeta meta1{};
@@ -710,7 +808,7 @@ TEST_F(SALWrapperTest, EtagChangesOnOverwrite) {
   rgw_free_object_meta(&meta2);
 }
 
-TEST_F(SALWrapperTest, HeadReflectsCorrectSize) {
+TEST_P(SALWrapperTest, HeadReflectsCorrectSize) {
   std::vector<size_t> sizes = {1, 100, 512, 999};
   for (size_t sz : sizes) {
     std::string key = "test/size-" + std::to_string(sz);
@@ -726,7 +824,7 @@ TEST_F(SALWrapperTest, HeadReflectsCorrectSize) {
 
 // --------------- Delete ---------------
 
-TEST_F(SALWrapperTest, DeleteObject) {
+TEST_P(SALWrapperTest, DeleteObject) {
   std::string data = "to-be-deleted";
   ASSERT_EQ(0, put_str("test/delete-me", data));
 
@@ -737,11 +835,11 @@ TEST_F(SALWrapperTest, DeleteObject) {
   rgw_free_object_meta(&meta);
 }
 
-TEST_F(SALWrapperTest, DeleteNonExistent) {
+TEST_P(SALWrapperTest, DeleteNonExistent) {
   EXPECT_EQ(0, del("test/already-gone"));
 }
 
-TEST_F(SALWrapperTest, DeleteThenPut) {
+TEST_P(SALWrapperTest, DeleteThenPut) {
   std::string data1 = "original";
   ASSERT_EQ(0, put_str("test/delete-reput", data1));
   ASSERT_EQ(0, del("test/delete-reput"));
@@ -756,7 +854,7 @@ TEST_F(SALWrapperTest, DeleteThenPut) {
   rgw_free_buffer(&buf);
 }
 
-TEST_F(SALWrapperTest, BulkDelete) {
+TEST_P(SALWrapperTest, BulkDelete) {
   const int count = 5;
   std::vector<std::string> keys;
   std::vector<const char*> key_ptrs;
@@ -778,7 +876,7 @@ TEST_F(SALWrapperTest, BulkDelete) {
 
 // --------------- List ---------------
 
-TEST_F(SALWrapperTest, ListObjects) {
+TEST_P(SALWrapperTest, ListObjects) {
   // write each object with a distinct size so the size reported by list is
   // meaningful to verify (not all identical).
   std::map<std::string, uint64_t> expected;  // key -> size
@@ -829,7 +927,7 @@ TEST_F(SALWrapperTest, ListObjects) {
   rgw_free_list_result(&result);
 }
 
-TEST_F(SALWrapperTest, ListWithDelimiter) {
+TEST_P(SALWrapperTest, ListWithDelimiter) {
   ASSERT_EQ(0, put_str_tracked("test/delim/a/1", "d"));
   ASSERT_EQ(0, put_str_tracked("test/delim/a/2", "d"));
   ASSERT_EQ(0, put_str_tracked("test/delim/b/1", "d"));
@@ -841,7 +939,7 @@ TEST_F(SALWrapperTest, ListWithDelimiter) {
   rgw_free_list_result(&result);
 }
 
-TEST_F(SALWrapperTest, ListPagination) {
+TEST_P(SALWrapperTest, ListPagination) {
   for (int i = 0; i < 10; i++) {
     std::string key = "test/page/obj-" + std::to_string(i);
     ASSERT_EQ(0, put_str_tracked(key.c_str(), "data"));
@@ -870,7 +968,7 @@ TEST_F(SALWrapperTest, ListPagination) {
   EXPECT_FALSE(truncated);
 }
 
-TEST_F(SALWrapperTest, ListEmpty) {
+TEST_P(SALWrapperTest, ListEmpty) {
   CRgwListResult result{};
   ASSERT_EQ(0, rgw_list_objects(driver(), dpp(), nullptr, &bucket_,
              "no-such-prefix-xyz/", nullptr, nullptr, 100, &result));
@@ -879,7 +977,7 @@ TEST_F(SALWrapperTest, ListEmpty) {
   rgw_free_list_result(&result);
 }
 
-TEST_F(SALWrapperTest, ListReflectsDeletedObjects) {
+TEST_P(SALWrapperTest, ListReflectsDeletedObjects) {
   for (int i = 0; i < 3; i++) {
     std::string key = "test/list-del/obj-" + std::to_string(i);
     ASSERT_EQ(0, put_str(key.c_str(), "data"));
@@ -910,7 +1008,7 @@ TEST_F(SALWrapperTest, ListReflectsDeletedObjects) {
 // --------------- Copy ---------------
 
 // known fail: dbstore — copy_object is a no-op stub
-TEST_F(SALWrapperTest, CopyObject) {
+TEST_P(SALWrapperTest, CopyObject) {
   std::string data = "copy me";
   ASSERT_EQ(0, put_str_tracked("test/copy-src", data));
 
@@ -928,7 +1026,7 @@ TEST_F(SALWrapperTest, CopyObject) {
 }
 
 // known fail: dbstore — copy_object is a no-op stub
-TEST_F(SALWrapperTest, CopyPreservesData) {
+TEST_P(SALWrapperTest, CopyPreservesData) {
   std::vector<uint8_t> data(512);
   std::iota(data.begin(), data.end(), 0);
   ASSERT_EQ(0, put_tracked("test/copy-bin-src", data.data(), data.size()));
@@ -947,7 +1045,7 @@ TEST_F(SALWrapperTest, CopyPreservesData) {
 }
 
 // known fail: dbstore — copy_object is a no-op stub
-TEST_F(SALWrapperTest, CopyNonExistent) {
+TEST_P(SALWrapperTest, CopyNonExistent) {
   CRgwObject src{"test/no-such-copy-src", nullptr};
   CRgwObject dst{"test/copy-dst-fail", nullptr};
   EXPECT_LT(rgw_copy_object(driver(), dpp(), nullptr,
@@ -957,7 +1055,7 @@ TEST_F(SALWrapperTest, CopyNonExistent) {
 // --------------- Conditional put ---------------
 
 // known fail: dbstore — ignores conditionals; posix — inverted if_nomatch logic
-TEST_F(SALWrapperTest, ConditionalPutIfNomatch) {
+TEST_P(SALWrapperTest, ConditionalPutIfNomatch) {
   std::string data = "conditional data";
   ASSERT_EQ(0, put_str_tracked("test/cond-put", data));
 
@@ -983,14 +1081,14 @@ TEST_F(SALWrapperTest, ConditionalPutIfNomatch) {
 
 // --------------- MaxChunkSize ---------------
 
-TEST_F(SALWrapperTest, MaxChunkSize) {
+TEST_P(SALWrapperTest, MaxChunkSize) {
   uint64_t chunk = rgw_get_max_chunk_size(driver());
   EXPECT_GT(chunk, 0u);
 }
 
 // --------------- Key naming edge cases ---------------
 
-TEST_F(SALWrapperTest, SpecialCharacterKeys) {
+TEST_P(SALWrapperTest, SpecialCharacterKeys) {
   std::string data = "special";
   const char* keys[] = {
     "test/special/key with spaces",
@@ -1013,7 +1111,7 @@ TEST_F(SALWrapperTest, SpecialCharacterKeys) {
 // --------------- Conditional put — if_match ---------------
 
 // known fail: dbstore, posix — do not enforce conditional write preconditions
-TEST_F(SALWrapperTest, ConditionalPutIfMatchSucceeds) {
+TEST_P(SALWrapperTest, ConditionalPutIfMatchSucceeds) {
   std::string data = "original";
   ASSERT_EQ(0, put_str_tracked("test/cond-match", data));
 
@@ -1041,7 +1139,7 @@ TEST_F(SALWrapperTest, ConditionalPutIfMatchSucceeds) {
 }
 
 // known fail: dbstore, posix — do not enforce conditional write preconditions
-TEST_F(SALWrapperTest, ConditionalPutIfMatchWrongEtag) {
+TEST_P(SALWrapperTest, ConditionalPutIfMatchWrongEtag) {
   std::string data = "should stay";
   ASSERT_EQ(0, put_str_tracked("test/cond-match-fail", data));
 
@@ -1065,7 +1163,7 @@ TEST_F(SALWrapperTest, ConditionalPutIfMatchWrongEtag) {
 // --------------- Conditional copy ---------------
 
 // known fail: dbstore — copy_object is a no-op stub
-TEST_F(SALWrapperTest, ConditionalCopyIfNomatch) {
+TEST_P(SALWrapperTest, ConditionalCopyIfNomatch) {
   std::string data = "conditional copy source";
   ASSERT_EQ(0, put_str_tracked("test/ccopy-src", data));
 
@@ -1085,7 +1183,7 @@ TEST_F(SALWrapperTest, ConditionalCopyIfNomatch) {
 }
 
 // known fail: dbstore — copy_object is a no-op stub
-TEST_F(SALWrapperTest, ConditionalCopyIfNomatchExists) {
+TEST_P(SALWrapperTest, ConditionalCopyIfNomatchExists) {
   ASSERT_EQ(0, put_str_tracked("test/ccopy-src2", "source data"));
   ASSERT_EQ(0, put_str_tracked("test/ccopy-dst-exists", "existing data"));
 
@@ -1109,7 +1207,7 @@ TEST_F(SALWrapperTest, ConditionalCopyIfNomatchExists) {
 // --------------- Multipart upload ---------------
 
 // known fail: dbstore — does not support multi-chunk reads needed to verify multipart
-TEST_F(SALWrapperTest, MultipartBasic) {
+TEST_P(SALWrapperTest, MultipartBasic) {
   CRgwObject obj{"test/multipart-obj", nullptr};
   char upload_id[256] = {0};
 
@@ -1152,7 +1250,7 @@ TEST_F(SALWrapperTest, MultipartBasic) {
 
 }
 
-TEST_F(SALWrapperTest, MultipartAbort) {
+TEST_P(SALWrapperTest, MultipartAbort) {
   CRgwObject obj{"test/multipart-abort", nullptr};
   char upload_id[256] = {0};
 
@@ -1179,7 +1277,7 @@ TEST_F(SALWrapperTest, MultipartAbort) {
 
 }
 
-TEST_F(SALWrapperTest, MultipartInvalidUploadId) {
+TEST_P(SALWrapperTest, MultipartInvalidUploadId) {
   CRgwObject obj{"test/multipart-bad-id", nullptr};
   std::string data = "data";
   char etag[256] = {0};
@@ -1196,7 +1294,7 @@ TEST_F(SALWrapperTest, MultipartInvalidUploadId) {
   EXPECT_LT(ret, 0);
 }
 
-TEST_F(SALWrapperTest, MultipartSinglePart) {
+TEST_P(SALWrapperTest, MultipartSinglePart) {
   CRgwObject obj{"test/multipart-single", nullptr};
   char upload_id[256] = {0};
 
@@ -1226,7 +1324,7 @@ TEST_F(SALWrapperTest, MultipartSinglePart) {
 
 
 // Test that multipart complete handles concurrent operations safely with locking
-TEST_F(SALWrapperTest, MultipartCompleteConcurrentSafety) {
+TEST_P(SALWrapperTest, MultipartCompleteConcurrentSafety) {
   CRgwObject obj{"test/multipart-concurrent", nullptr};
   
   char upload_id[256] = {0};
@@ -1284,7 +1382,7 @@ TEST_F(SALWrapperTest, MultipartCompleteConcurrentSafety) {
 }
 
 // Test that multipart complete is idempotent (can be called multiple times)
-TEST_F(SALWrapperTest, MultipartCompleteIdempotent) {
+TEST_P(SALWrapperTest, MultipartCompleteIdempotent) {
   CRgwObject obj{"test/multipart-idempotent", nullptr};
   char upload_id[256] = {0};
 
@@ -1324,7 +1422,7 @@ TEST_F(SALWrapperTest, MultipartCompleteIdempotent) {
 }
 
 // Test multipart with custom metadata
-TEST_F(SALWrapperTest, MultipartWithCustomMetadata) {
+TEST_P(SALWrapperTest, MultipartWithCustomMetadata) {
   CRgwObject obj{"test/multipart-custom-meta", nullptr};
   
   // Create attributes with custom metadata (JSON format)
@@ -1371,12 +1469,293 @@ TEST_F(SALWrapperTest, MultipartWithCustomMetadata) {
   rgw_free_object_meta(&meta);
 }
 
+// Quota, owner statistics, and namespace checks for both bucket types.
+class SALWrapperAccountingTest : public SALWrapperTest {
+protected:
+  int sync_stats(const rgw_owner& owner) {
+    return rgw_sync_all_stats(g_env->dpp, null_yield, g_env->driver, owner, "");
+  }
+
+  int list_owner(const rgw_owner& owner, rgw::sal::BucketList& listing) {
+    return GetParam()
+        ? g_env->driver->list_vector_buckets(g_env->dpp, owner, "", "", "",
+                                             100, true, listing, null_yield)
+        : g_env->driver->list_buckets(g_env->dpp, owner, "", "", "",
+                                      100, true, listing, null_yield);
+  }
+};
+
+// known fail: dbstore, posix — load_vector_bucket returns -ENOTSUP
+TEST_P(SALWrapperAccountingTest, SameNameBucketsAreIsolated) {
+  rgw::sal::Bucket* other = nullptr;
+  ASSERT_EQ(0, create_bucket(bucket_name_, !GetParam(), owner_->get_id(), &other));
+  ASSERT_NE(sal_bucket_->get_bucket_id(), other->get_bucket_id());
+  CRgwBucket opposite{bucket_name_.c_str(), nullptr, !GetParam()};
+  ASSERT_EQ(0, put_to(bucket_, "same-key", "first"));
+  ASSERT_EQ(0, put_to(opposite, "same-key", "second namespace"));
+
+  CRgwObject obj{"same-key", nullptr};
+  CRgwBuffer data{};
+  ASSERT_EQ(0, get(obj.key, &data));
+  EXPECT_EQ("first", std::string(reinterpret_cast<char*>(data.data), data.len));
+  rgw_free_buffer(&data);
+  ASSERT_EQ(0, rgw_get_object(driver(), dpp(), nullptr, &opposite, &obj,
+                              0, UINT64_MAX, &data));
+  EXPECT_EQ("second namespace", std::string(reinterpret_cast<char*>(data.data), data.len));
+  rgw_free_buffer(&data);
+
+  ASSERT_EQ(0, del(obj.key));
+  CRgwObjectMeta meta{};
+  EXPECT_EQ(-ENOENT, head(obj.key, &meta));
+  ASSERT_EQ(0, rgw_head_object(driver(), dpp(), nullptr, &opposite, &obj, &meta));
+  EXPECT_EQ(16u, meta.size);
+  rgw_free_object_meta(&meta);
+}
+
+// known fail: dbstore, posix — load_vector_bucket returns -ENOTSUP;
+// dbstore also leaves copy_object unimplemented
+TEST_P(SALWrapperAccountingTest, CopyBetweenBucketTypes) {
+  rgw::sal::Bucket* other = nullptr;
+  ASSERT_EQ(0, create_bucket(bucket_name_, !GetParam(), owner_->get_id(), &other));
+  CRgwBucket opposite{bucket_name_.c_str(), nullptr, !GetParam()};
+  ASSERT_EQ(0, put_to(opposite, "source", "copy across namespaces"));
+  CRgwObject src{"source", nullptr};
+  CRgwObject dst{"destination", nullptr};
+  ASSERT_EQ(0, rgw_copy_object(driver(), dpp(), nullptr,
+                                &opposite, &src, &bucket_, &dst));
+  CRgwBuffer data{};
+  ASSERT_EQ(0, get(dst.key, &data));
+  EXPECT_EQ("copy across namespaces",
+            std::string(reinterpret_cast<char*>(data.data), data.len));
+  rgw_free_buffer(&data);
+  CRgwObject conditional{"conditional", nullptr};
+  ASSERT_EQ(0, rgw_copy_object_conditional(driver(), dpp(), nullptr,
+                                           &opposite, &src, &bucket_, &conditional,
+                                           nullptr, "*"));
+  ASSERT_EQ(0, get(conditional.key, &data));
+  EXPECT_EQ("copy across namespaces",
+            std::string(reinterpret_cast<char*>(data.data), data.len));
+  rgw_free_buffer(&data);
+}
+
+// known fail: dbstore — check_quota is a no-op stub
+TEST_P(SALWrapperAccountingTest, BucketQuotaRejectsPutAndConditionalPut) {
+  ASSERT_EQ(0, set_bucket_quota(4, -1));
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, put_str("too-large", "12345"));
+  CRgwObject obj{"conditional", nullptr};
+  std::string contents = "12345";
+  CRgwBuffer data{reinterpret_cast<uint8_t*>(contents.data()), contents.size()};
+  int canceled = 0;
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED,
+            rgw_put_object_conditional(driver(), dpp(), nullptr, &bucket_, &obj,
+                                        &data, nullptr, "*", &canceled, nullptr, nullptr, 0));
+  CRgwObjectMeta meta{};
+  EXPECT_EQ(-ENOENT, head("too-large", &meta));
+  EXPECT_EQ(-ENOENT, head(obj.key, &meta));
+  EXPECT_EQ(0, put_str("within-limit", "1234"));
+}
+
+// known fail: dbstore — check_quota is a no-op stub
+TEST_P(SALWrapperAccountingTest, BucketObjectCountQuota) {
+  ASSERT_EQ(0, set_bucket_quota(-1, 1));
+  ASSERT_EQ(0, put_str("first", "one"));
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, put_str("second", "two"));
+  ASSERT_EQ(0, del("first"));
+  EXPECT_EQ(0, put_str("second", "two"));
+}
+
+// known fail: dbstore, posix — load_vector_bucket returns -ENOTSUP;
+// dbstore also leaves check_quota and copy_object unimplemented
+TEST_P(SALWrapperAccountingTest, CopyChecksDestinationQuota) {
+  rgw::sal::Bucket* other = nullptr;
+  ASSERT_EQ(0, create_bucket(bucket_name_, !GetParam(), owner_->get_id(), &other));
+  CRgwBucket opposite{bucket_name_.c_str(), nullptr, !GetParam()};
+  ASSERT_EQ(0, put_to(opposite, "source", "12345"));
+  ASSERT_EQ(0, set_bucket_quota(4, -1));
+  CRgwObject src{"source", nullptr};
+  CRgwObject dst{"destination", nullptr};
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, rgw_copy_object(driver(), dpp(), nullptr,
+                                                 &opposite, &src, &bucket_, &dst));
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED,
+            rgw_copy_object_conditional(driver(), dpp(), nullptr,
+                                          &opposite, &src, &bucket_, &dst,
+                                          nullptr, "*"));
+  CRgwObjectMeta meta{};
+  EXPECT_EQ(-ENOENT, head(dst.key, &meta));
+  ASSERT_EQ(0, set_bucket_quota(5, -1));
+  EXPECT_EQ(0, rgw_copy_object(driver(), dpp(), nullptr,
+                                &opposite, &src, &bucket_, &dst));
+}
+
+// known fail: dbstore — check_quota is a no-op stub
+TEST_P(SALWrapperAccountingTest, MultipartPartChecksQuota) {
+  ASSERT_EQ(0, set_bucket_quota(4, -1));
+  CRgwObject obj{"multipart-quota", nullptr};
+  char upload_id[256] = {0};
+  ASSERT_EQ(0, rgw_multipart_init(driver(), dpp(), nullptr, &bucket_, &obj,
+                                  nullptr, upload_id, sizeof(upload_id)));
+  std::string contents = "12345";
+  char etag[256] = {0};
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED,
+            rgw_multipart_put_part(driver(), dpp(), nullptr, &bucket_, &obj,
+                                     upload_id, 1,
+                                     reinterpret_cast<const uint8_t*>(contents.data()),
+                                     contents.size(), etag, sizeof(etag)));
+  EXPECT_STREQ("", etag);
+  ASSERT_EQ(0, rgw_multipart_put_part(driver(), dpp(), nullptr, &bucket_, &obj,
+                                      upload_id, 1,
+                                      reinterpret_cast<const uint8_t*>(contents.data()),
+                                      4, etag, sizeof(etag)));
+  const char* etags[] = {etag};
+  ASSERT_EQ(0, rgw_multipart_complete(driver(), dpp(), nullptr, &bucket_, &obj,
+                                      upload_id, etags, 1));
+  CRgwObjectMeta meta{};
+  ASSERT_EQ(0, head(obj.key, &meta));
+  EXPECT_EQ(4u, meta.size);
+  rgw_free_object_meta(&meta);
+}
+
+class TestOwnerStatsCB : public rgw::sal::ReadStatsCB {
+public:
+  std::promise<std::pair<int, RGWStorageStats>> result;
+
+  void handle_response(int ret, const RGWStorageStats& stats) override {
+    result.set_value({ret, stats});
+  }
+};
+
+// known fail: dbstore, posix — owner stats sync/load are no-op stubs and
+// load_stats_async returns -ENOTSUP
+TEST_P(SALWrapperAccountingTest, OwnerStatsWithOneBucketType) {
+  ASSERT_EQ(0, put_str("object", "12345"));
+  // Sync only this namespace, leaving the other owner-stats object absent.
+  ASSERT_EQ(0, sal_bucket_->sync_owner_stats(g_env->dpp, null_yield, nullptr));
+  RGWStorageStats stats;
+  ASSERT_EQ(0, load_owner_stats(owner_->get_id(), stats));
+  EXPECT_EQ(5u, stats.size);
+  EXPECT_EQ(1u, stats.num_objects);
+
+  boost::intrusive_ptr<TestOwnerStatsCB> cb{new TestOwnerStatsCB};
+  auto result = cb->result.get_future();
+  ASSERT_EQ(0, g_env->driver->load_stats_async(g_env->dpp, owner_->get_id(), cb));
+  ASSERT_EQ(std::future_status::ready, result.wait_for(std::chrono::seconds(30)));
+  const auto [ret, async_stats] = result.get();
+  ASSERT_EQ(0, ret);
+  EXPECT_EQ(stats.size, async_stats.size);
+  EXPECT_EQ(stats.num_objects, async_stats.num_objects);
+}
+
+// known fail: dbstore, posix — vector bucket loading and owner stats are
+// unimplemented; dbstore also leaves check_quota unimplemented
+TEST_P(SALWrapperAccountingTest, OwnerStatsAndQuotaIncludeBothBucketTypes) {
+  rgw::sal::Bucket* other = nullptr;
+  ASSERT_EQ(0, create_bucket(bucket_name_, !GetParam(), owner_->get_id(), &other));
+  CRgwBucket opposite{bucket_name_.c_str(), nullptr, !GetParam()};
+  ASSERT_EQ(0, put_str("object", "123"));
+  ASSERT_EQ(0, put_to(opposite, "object", "12345"));
+  ASSERT_EQ(0, sync_stats(owner_->get_id()));
+  RGWStorageStats stats;
+  ASSERT_EQ(0, load_owner_stats(owner_->get_id(), stats));
+  EXPECT_EQ(8u, stats.size);
+  EXPECT_EQ(2u, stats.num_objects);
+
+  boost::intrusive_ptr<TestOwnerStatsCB> cb{new TestOwnerStatsCB};
+  auto result = cb->result.get_future();
+  ASSERT_EQ(0, g_env->driver->load_stats_async(g_env->dpp, owner_->get_id(), cb));
+  ASSERT_EQ(std::future_status::ready, result.wait_for(std::chrono::seconds(30)));
+  const auto [ret, async_stats] = result.get();
+  ASSERT_EQ(0, ret);
+  EXPECT_EQ(8u, async_stats.size);
+  EXPECT_EQ(2u, async_stats.num_objects);
+
+  auto& quota = owner_->get_info().quota.user_quota;
+  quota.enabled = true;
+  quota.check_on_raw = true;
+  quota.max_size = 8;
+  ASSERT_EQ(0, owner_->store_user(g_env->dpp, null_yield, false));
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, put_str("over-quota", "x"));
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, put_to(opposite, "over-quota", "x"));
+  quota.max_size = 9;
+  ASSERT_EQ(0, owner_->store_user(g_env->dpp, null_yield, false));
+  EXPECT_EQ(0, put_str("within-quota", "x"));
+}
+
+// known fail: dbstore, posix — vector bucket loading/listing and owner stats
+// are unimplemented; dbstore has no quota enforcement and posix chown is a stub
+TEST_P(SALWrapperAccountingTest, ChownKeepsOtherNamespaceAndUsesNewOwnerQuota) {
+  rgw::sal::Bucket* other = nullptr;
+  ASSERT_EQ(0, create_bucket(bucket_name_, !GetParam(), owner_->get_id(), &other));
+  CRgwBucket opposite{bucket_name_.c_str(), nullptr, !GetParam()};
+  ASSERT_EQ(0, put_str("object", "123"));
+  ASSERT_EQ(0, put_to(opposite, "object", "12345"));
+  // The wrapper writes internal objects without ACLs. Admin chown of an S3
+  // bucket expects the object ACL normally supplied by the REST layer.
+  RGWAccessControlPolicy acl;
+  acl.create_default(owner_->get_id(), owner_->get_display_name());
+  rgw::sal::Attrs attrs;
+  encode(acl, attrs[RGW_ATTR_ACL]);
+  auto object = sal_bucket_->get_object(rgw_obj_key{"object"});
+  ASSERT_EQ(0, object->set_obj_attrs(g_env->dpp, &attrs, nullptr, null_yield, 0));
+  ASSERT_EQ(0, sync_stats(owner_->get_id()));
+  rgw::sal::User* new_owner = nullptr;
+  ASSERT_EQ(0, create_user(bucket_name_ + "-new-owner", &new_owner));
+  std::string error;
+  ASSERT_EQ(0, rgw_chown_bucket_and_objects(
+      g_env->driver, sal_bucket_, new_owner->get_id(), new_owner->get_display_name(),
+      "", &error, g_env->dpp, null_yield)) << error;
+
+  std::unique_ptr<rgw::sal::Bucket> loaded;
+  ASSERT_EQ(0, load_bucket(bucket_name_, GetParam(), &loaded));
+  EXPECT_EQ(rgw_owner{new_owner->get_id()}, loaded->get_info().owner);
+  ASSERT_EQ(0, load_bucket(bucket_name_, !GetParam(), &loaded));
+  EXPECT_EQ(rgw_owner{owner_->get_id()}, loaded->get_info().owner);
+
+  rgw::sal::BucketList listing;
+  ASSERT_EQ(0, list_owner(new_owner->get_id(), listing));
+  ASSERT_EQ(1u, listing.buckets.size());
+  EXPECT_EQ(bucket_name_, listing.buckets.front().bucket.name);
+  EXPECT_EQ(3u, listing.buckets.front().size);
+  listing = {};
+  ASSERT_EQ(0, list_owner(owner_->get_id(), listing));
+  EXPECT_TRUE(listing.buckets.empty());
+
+  // Chown has the regular bucket semantics: explicitly sync before checking totals.
+  ASSERT_EQ(0, sync_stats(owner_->get_id()));
+  ASSERT_EQ(0, sync_stats(new_owner->get_id()));
+  RGWStorageStats stats;
+  ASSERT_EQ(0, load_owner_stats(owner_->get_id(), stats));
+  EXPECT_EQ(5u, stats.size);
+  EXPECT_EQ(1u, stats.num_objects);
+  ASSERT_EQ(0, load_owner_stats(new_owner->get_id(), stats));
+  EXPECT_EQ(3u, stats.size);
+  EXPECT_EQ(1u, stats.num_objects);
+  auto& quota = new_owner->get_info().quota.user_quota;
+  quota.enabled = true;
+  quota.check_on_raw = true;
+  quota.max_size = 3;
+  ASSERT_EQ(0, new_owner->store_user(g_env->dpp, null_yield, false));
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, put_str("new-owner-quota", "x"));
+  EXPECT_EQ(0, put_to(opposite, "old-owner-unaffected", "x"));
+}
+
+static std::string bucket_type_name(const testing::TestParamInfo<bool>& info) {
+  return info.param ? "Vector" : "S3";
+}
+
+INSTANTIATE_TEST_SUITE_P(BucketTypes, SALWrapperTest,
+                         testing::Bool(), bucket_type_name);
+INSTANTIATE_TEST_SUITE_P(BucketTypes, SALWrapperAccountingTest,
+                         testing::Bool(), bucket_type_name);
 
 // ===========================================================================
 // main() — bootstrap SAL driver
 // ===========================================================================
 
 int main(int argc, char** argv) {
+  testing::InitGoogleTest(&argc, argv);
+  if (::testing::GTEST_FLAG(list_tests)) {
+    return RUN_ALL_TESTS();
+  }
   // ceph.conf is found via -c flag, $CEPH_CONF, or default paths.
   // When running under teuthology, the default path is used.
   auto args = argv_to_vec(argc, const_cast<const char**>(argv));
@@ -1389,6 +1768,8 @@ int main(int argc, char** argv) {
     g_conf().set_val_or_die("rgw_zonegroup", g_conf()->rgw_region.c_str());
   }
 
+  // Read quota usage afresh so assertions do not depend on cache expiry.
+  g_conf().set_val_or_die("rgw_bucket_quota_ttl", "0");
   common_init_finish(g_ceph_context);
 
   static TestEnv env;
@@ -1422,6 +1803,8 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  env.site = &site;
+
   // initialize SAL driver with all background threads disabled
   env.driver = DriverManager::get_storage(env.dpp,
                                           g_ceph_context,
@@ -1445,50 +1828,9 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // create test bucket via SAL API with proper zonegroup + placement
-  env.bucket_name = "sal-wrapper-test-" + std::to_string(getpid());
-  {
-    rgw_bucket b;
-    b.name = env.bucket_name;
-
-    std::unique_ptr<rgw::sal::Bucket> bucket;
-    r = env.driver->load_bucket(env.dpp, b, &bucket, null_yield);
-
-    if (bucket) {
-      rgw::sal::Bucket::CreateParams params;
-      rgw_user uid{"", "sal-wrapper-test-user"};
-      params.owner = uid;
-      params.zonegroup_id = site.get_zonegroup().get_id();
-      params.placement_rule = site.get_zonegroup().default_placement;
-      params.zone_placement = rgw::find_zone_placement(
-          env.dpp, site.get_zone_params(), params.placement_rule);
-
-      r = bucket->create(env.dpp, params, null_yield);
-      if (r < 0 && r != -EEXIST) {
-        std::cerr << "ERROR: failed to create test bucket (r=" << r << ")" << std::endl;
-        env.driver->shutdown();
-        DriverManager::close_storage(env.driver);
-        return 1;
-      }
-    } else {
-      std::cerr << "ERROR: load_bucket returned no bucket object" << std::endl;
-      env.driver->shutdown();
-      DriverManager::close_storage(env.driver);
-      return 1;
-    }
-  }
-
-  testing::InitGoogleTest(&argc, argv);
   int ret = RUN_ALL_TESTS();
 
-  // cleanup: delete test bucket and all objects in it
   if (env.driver) {
-    rgw_bucket b;
-    b.name = env.bucket_name;
-    std::unique_ptr<rgw::sal::Bucket> bucket;
-    if (env.driver->load_bucket(env.dpp, b, &bucket, null_yield) == 0 && bucket) {
-      bucket->remove(env.dpp, true, null_yield);
-    }
     env.driver->shutdown();
     DriverManager::close_storage(env.driver);
     env.driver = nullptr;

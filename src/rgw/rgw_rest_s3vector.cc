@@ -50,6 +50,25 @@ protected:
       return -EINVAL;
     }
 
+    // ListVectorBuckets has no individual bucket to charge. All other requests
+    // use the ARN resource as the usage key, distinct from a same-name S3 bucket.
+    if constexpr (requires { configuration.vector_bucket_name; }) {
+      if (!configuration.vector_bucket_name.empty()) {
+        s->bucket_name = rgw::s3vector::vector_bucket_arn(
+            s->zonegroup_name, bucket_ns.name(),
+            configuration.vector_bucket_name).resource;
+        std::unique_ptr<rgw::sal::VectorBucket> bucket;
+        int ret = driver->load_vector_bucket(this,
+            rgw_bucket(bucket_ns.name(), configuration.vector_bucket_name),
+            &bucket, y);
+        if (ret == 0) {
+          s->bucket_owner.id = bucket->get_info().owner;
+        } else if (ret != -ENOENT) {
+          return ret;
+        }
+      }
+    }
+
     return 0;
   }
 
@@ -800,7 +819,7 @@ private:
     }
 
     op_ret = driver->list_vector_buckets(this, s->owner.id, bucket_ns.name(),
-        start_marker, end_marker, configuration.max_results, listing, y);
+        start_marker, end_marker, configuration.max_results, false, listing, y);
     if (op_ret < 0) {
       ldpp_dout(this, 20) << "ERROR: failed to execute ListVectorBuckets. error: " << op_ret << dendl;
       return;
@@ -1306,6 +1325,9 @@ int RGWHandler_REST_s3Vector::postauth_init(optional_yield y) {
     return ret;
   }
   s->bucket_tenant = tenant;
+  // New buckets belong to the caller. Existing bucket owners are loaded after
+  // parsing the request, since the URL contains the operation name.
+  s->bucket_owner = s->owner;
   return 0;
 }
 

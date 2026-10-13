@@ -204,8 +204,16 @@ int RGWBucket::init(rgw::sal::Driver* _driver, RGWBucketAdminOpState& op_state,
     bucket_name = bucket_name.substr(pos + 1);
   }
 
-  int r = driver->load_bucket(dpp, rgw_bucket(tenant, bucket_name, bucket_id),
-                              &bucket, y);
+  // a vector bucket lives in a separate metadata namespace, so it must be loaded
+  // through load_vector_bucket()
+  int r;
+  if (op_state.is_vector_bucket()) {
+    r = driver->load_vector_bucket(dpp, rgw_bucket(tenant, bucket_name, bucket_id),
+                                   &bucket, y);
+  } else {
+    r = driver->load_bucket(dpp, rgw_bucket(tenant, bucket_name, bucket_id),
+                            &bucket, y);
+  }
   if (r < 0) {
       set_err_msg(err_msg, "failed to fetch bucket info for bucket=" + bucket_name);
       return r;
@@ -1639,13 +1647,14 @@ static int bucket_restore_stats(rgw::sal::Driver* driver,
 
 static int bucket_stats(rgw::sal::Driver* driver, const rgw::SiteConfig& site,
                         const std::string& tenant_name, const std::string& bucket_name,
-                        bool dump_restore_stats, Formatter* formatter,
+                        bool dump_restore_stats, bool is_vector, Formatter* formatter,
                         const DoutPrefixProvider* dpp, optional_yield y) {
   std::unique_ptr<rgw::sal::Bucket> bucket;
   map<RGWObjCategory, RGWStorageStats> stats;
 
-  int ret = driver->load_bucket(dpp, rgw_bucket(tenant_name, bucket_name),
-                                &bucket, y);
+  const rgw_bucket key(tenant_name, bucket_name);
+  int ret = is_vector ? driver->load_vector_bucket(dpp, key, &bucket, y)
+                      : driver->load_bucket(dpp, key, &bucket, y);
   if (ret < 0) {
     return ret;
   }
@@ -1865,7 +1874,7 @@ static int list_owner_bucket_info(const DoutPrefixProvider* dpp,
                                   const std::string& tenant,
                                   const std::string& marker,
 				  uint32_t max_entries,
-                                  bool show_stats,
+                                  bool show_stats, bool is_vector,
                                   RGWFormatterFlusher& flusher)
 {
   bool max_entries_specified = (max_entries > 0);
@@ -1894,16 +1903,20 @@ static int list_owner_bucket_info(const DoutPrefixProvider* dpp,
       max_items = (max_entries - count);
     }
 
-    int ret = driver->list_buckets(dpp, owner, tenant, listing.next_marker,
-                                   empty_end_marker, max_items, no_need_stats,
-                                   listing, y);
+    int ret = is_vector
+        ? driver->list_vector_buckets(dpp, owner, tenant, listing.next_marker,
+                                      empty_end_marker, max_items, no_need_stats,
+                                      listing, y)
+        : driver->list_buckets(dpp, owner, tenant, listing.next_marker,
+                               empty_end_marker, max_items, no_need_stats,
+                               listing, y);
     if (ret < 0) {
       return ret;
     }
 
     for (const auto& ent : listing.buckets) {
       if (show_stats) {
-        bucket_stats(driver, site, tenant, ent.bucket.name, false, formatter, dpp, y);
+        bucket_stats(driver, site, tenant, ent.bucket.name, false, is_vector, formatter, dpp, y);
       } else {
         formatter->dump_string("bucket", ent.bucket.name);
       }
@@ -1957,9 +1970,12 @@ int RGWBucketAdminOp::info(rgw::sal::Driver* driver,
   flusher.start(0);
 
   const bool show_stats = op_state.will_fetch_stats();
+  const bool is_vector = op_state.is_vector_bucket();
   const rgw_user& user_id = op_state.get_user_id();
   if (!bucket_name.empty()) {
-    ret = bucket_stats(driver, site, user_id.tenant, bucket_name, op_state.restore_stats, formatter, dpp, y);
+    ret = bucket_stats(driver, site, op_state.get_bucket()->get_tenant(),
+                       op_state.get_bucket()->get_name(), op_state.restore_stats,
+                       is_vector, formatter, dpp, y);
     if (ret < 0) {
       return ret;
     }
@@ -1975,10 +1991,10 @@ int RGWBucketAdminOp::info(rgw::sal::Driver* driver,
       ldpp_dout(dpp, 1) << "Listing buckets in user account "
           << info.account_id << dendl;
       ret = list_owner_bucket_info(dpp, y, driver, site, info.account_id, uid.tenant,
-                                   op_state.marker, op_state.max_entries, show_stats, flusher);
+                                   op_state.marker, op_state.max_entries, show_stats, is_vector, flusher);
     } else {
       ret = list_owner_bucket_info(dpp, y, driver, site, uid, uid.tenant,
-                                   op_state.marker, op_state.max_entries, show_stats, flusher);
+                                   op_state.marker, op_state.max_entries, show_stats, is_vector, flusher);
     }
     if (ret < 0) {
       return ret;
@@ -1997,7 +2013,7 @@ int RGWBucketAdminOp::info(rgw::sal::Driver* driver,
     }
 
     ret = list_owner_bucket_info(dpp, y, driver, site, account_id, info.tenant,
-                                 op_state.marker, op_state.max_entries, show_stats, flusher);
+                                 op_state.marker, op_state.max_entries, show_stats, is_vector, flusher);
     if (ret < 0) {
       return ret;
     }
@@ -2009,7 +2025,8 @@ int RGWBucketAdminOp::info(rgw::sal::Driver* driver,
     bool done = false;
 
     formatter->open_array_section("buckets");
-    ret = driver->meta_list_keys_init(dpp, "bucket", string(), &handle);
+    ret = driver->meta_list_keys_init(dpp, is_vector ? "vectorbucket" : "bucket",
+                                      string(), &handle);
 
     while (ret == 0 && !done && truncated) {
       std::list<std::string> buckets;
@@ -2023,7 +2040,7 @@ int RGWBucketAdminOp::info(rgw::sal::Driver* driver,
       for (const auto& bucket_name : buckets) {
         if (show_stats) {
           bucket_stats(driver, site, user_id.tenant, bucket_name,
-                       op_state.restore_stats, formatter, dpp, y);
+                       op_state.restore_stats, is_vector, formatter, dpp, y);
 	} else {
           formatter->dump_string("bucket", bucket_name);
 	}

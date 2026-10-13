@@ -51,6 +51,23 @@ ninja ceph_test_rgw_sal_wrapper
 
 The backend (rados, dbstore, posix) is read from ceph.conf.
 
+The functional suite runs each case against both S3 and native vector buckets
+on the configured SAL backend, with a fresh bucket and persisted owner for
+each case. The accounting suite additionally
+checks quotas, synchronous/asynchronous owner statistics, chown, and isolation
+between S3 and vector buckets with the same name.
+Current backend limitations are noted with `known fail` comments on the
+affected tests; those cases remain enabled.
+
+```bash
+# List cases without connecting to a cluster
+./bin/ceph_test_rgw_sal_wrapper --gtest_list_tests
+# Run only the vector variants, or just accounting and isolation checks
+./bin/ceph_test_rgw_sal_wrapper -c ./ceph.conf --gtest_filter='*/Vector'
+./bin/ceph_test_rgw_sal_wrapper -c ./ceph.conf \
+  --gtest_filter='BucketTypes/SALWrapperAccountingTest.*'
+```
+
 ### LanceDB ObjectStore Integration Tests
 
 Tests the `ObjectStore` trait implementation end-to-end through the
