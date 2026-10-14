@@ -25,8 +25,13 @@ protected:
 public:
   explicit RGWS3VectorBase(bufferlist&& data) : in_data(std::move(data)) {}
 protected:
-  template<typename T>
-  int do_init_processing(T& configuration, optional_yield y) {
+  template<typename RestConfig>
+  int do_init_processing(rgw::s3vector::VectorBucketConfig<RestConfig>& configuration,
+                         optional_yield y) {
+    auto& rest_config = configuration.rest_config;
+    auto& backend_config = configuration.backend_config;
+    backend_config.storage_mode.reset();
+
     // the namespace of the request is the one of the user making it
     bucket_ns.tenant = s->bucket_tenant;
     if (const auto* account_id = std::get_if<rgw_account_id>(&s->owner.id); account_id) {
@@ -44,28 +49,42 @@ protected:
       return -EINVAL;
     }
     try {
-      decode_json_obj(configuration, &parser);
+      decode_json_obj(rest_config, &parser);
     } catch (const JSONDecoder::err& e) {
       ldpp_dout(this, 1) << "ERROR: failed to decode JSON s3vector payload: " << e.what() << dendl;
       return -EINVAL;
     }
 
+    const auto backend_name = s->cct->_conf.get_val<std::string>("rgw_s3vector_backend");
+    if (rgw::s3vector::get_backend_type(backend_name, backend_config.backend_type) < 0) {
+      return -EINVAL;
+    }
+
     // ListVectorBuckets has no individual bucket to charge. All other requests
     // use the ARN resource as the usage key, distinct from a same-name S3 bucket.
-    if constexpr (requires { configuration.vector_bucket_name; }) {
-      if (!configuration.vector_bucket_name.empty()) {
+    if constexpr (requires { rest_config.vector_bucket_name; }) {
+      if (!rest_config.vector_bucket_name.empty()) {
         s->bucket_name = rgw::s3vector::vector_bucket_arn(
             s->zonegroup_name, bucket_ns.name(),
-            configuration.vector_bucket_name).resource;
+            rest_config.vector_bucket_name).resource;
         std::unique_ptr<rgw::sal::VectorBucket> bucket;
         int ret = driver->load_vector_bucket(this,
-            rgw_bucket(bucket_ns.name(), configuration.vector_bucket_name),
+            rgw_bucket(bucket_ns.name(), rest_config.vector_bucket_name),
             &bucket, y);
         if (ret == 0) {
           s->bucket_owner.id = bucket->get_info().owner;
         } else if (ret != -ENOENT) {
           return ret;
         }
+        rgw::s3vector::StorageMode mode;
+        ret = rgw::s3vector::get_bucket_storage_mode(this,
+            ret == 0 && rgw::s3vector::is_rgw_backend(backend_config.backend_type)
+                ? bucket.get() : nullptr,
+            mode);
+        if (ret < 0) {
+          return ret;
+        }
+        backend_config.storage_mode = mode;
       }
     }
 
@@ -82,26 +101,17 @@ protected:
   // Native vector data uses its own bucket's owner; a separate S3 backing
   // bucket uses that bucket's ACL and policies.
   int verify_backend_permission(const std::string& bucket_name,
+                                  const rgw::s3vector::BackendConfig& backend_config,
                                   std::initializer_list<uint64_t> s3_ops,
                                   optional_yield y) {
-    CephContext* cct = s->cct;
-    const auto& conf = cct->_conf;
-    const std::string backend_str = conf.get_val<std::string>("rgw_s3vector_backend");
-    rgw::s3vector::BackendType backend_type;
-    if (rgw::s3vector::get_backend_type(backend_str, backend_type) < 0) {
-      ldpp_dout(this, 1) << "ERROR: s3vector unrecognized backend type: " << backend_str << dendl;
+    if (!backend_config.storage_mode) {
       return -EINVAL;
     }
-    if (!rgw::s3vector::is_rgw_backend(backend_type)) {
+    if (!rgw::s3vector::is_rgw_backend(backend_config.backend_type)) {
       return 0;
     }
 
-    rgw::s3vector::StorageMode mode;
-    if (int ret = rgw::s3vector::get_bucket_storage_mode(
-            this, driver, bucket_ns, bucket_name, mode, y); ret < 0) {
-      return ret;
-    }
-    if (rgw::s3vector::uses_vector_bucket_storage(mode)) {
+    if (rgw::s3vector::uses_vector_bucket_storage(*backend_config.storage_mode)) {
       std::unique_ptr<rgw::sal::VectorBucket> vector_bucket;
       int ret = driver->load_vector_bucket(this,
           rgw_bucket(bucket_ns.name(), bucket_name), &vector_bucket, y);
@@ -140,7 +150,7 @@ protected:
     }
 
     auto bucket_policy = get_iam_policy_from_attr(
-        cct, s3_bucket->get_attrs(), s->bucket_tenant);
+        s->cct, s3_bucket->get_attrs(), s->bucket_tenant);
 
     for (const uint64_t s3_op : s3_ops) {
       const rgw::ARN arn = (s3_op == rgw::IAM::s3ListBucket) ?
@@ -183,7 +193,7 @@ protected:
 };
 
 class RGWS3VectorCreateIndex : public RGWS3VectorBase {
-  rgw::s3vector::create_index_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::create_index_t> configuration;
 public:
   explicit RGWS3VectorCreateIndex(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
 private:
@@ -194,7 +204,7 @@ private:
       return -EACCES;
     }*/
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject, rgw::IAM::s3PutObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject, rgw::IAM::s3PutObject}, y);
   }
 
   const char* name() const override { return "s3vector_create_index"; }
@@ -207,7 +217,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -238,7 +248,7 @@ private:
     dump_start(s);
 
     rgw::s3vector::create_index_reply_t reply{
-      rgw::s3vector::index_arn(s->zonegroup_name, bucket_ns.name(), configuration.vector_bucket_name, configuration.index_name).to_string()
+      rgw::s3vector::index_arn(s->zonegroup_name, bucket_ns.name(), configuration.rest_config.vector_bucket_name, configuration.rest_config.index_name).to_string()
     };
     const auto f = s->formatter;
     reply.dump(f);
@@ -247,7 +257,7 @@ private:
 };
 
 class RGWS3VectorCreateVectorBucket : public RGWS3VectorBase {
-  rgw::s3vector::create_vector_bucket_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::create_vector_bucket_t> configuration;
   std::unique_ptr<rgw::sal::VectorBucket> bucket;
 public:
   explicit RGWS3VectorCreateVectorBucket(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
@@ -259,7 +269,7 @@ private:
     }
 
     const rgw::ARN arn = rgw::s3vector::vector_bucket_arn(
-        s->zonegroup_name, bucket_ns.name(), configuration.vector_bucket_name);
+        s->zonegroup_name, bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     if (!verify_user_permission(this, s, arn, rgw::IAM::s3vectorsCreateVectorBucket, false)) {
       return -EACCES;
     }
@@ -276,7 +286,7 @@ private:
     }
 
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3PutObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3PutObject}, y);
   }
 
   const char* name() const override { return "s3vector_create_vector_bucket"; }
@@ -326,7 +336,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     const int ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (ret == 0) {
       ldpp_dout(this, 5) << "WARNING: s3vector bucket " << bucket_id << " already exists" << dendl;
@@ -339,21 +349,14 @@ private:
       return;
     }
 
-    const auto mode = s->cct->_conf.get_val<bool>("rgw_s3vector_data_s3_bucket")
-        ? rgw::s3vector::StorageMode::S3_BUCKET
-        : rgw::s3vector::StorageMode::VECTOR_BUCKET;
+    if (!configuration.backend_config.storage_mode) {
+      op_ret = -EINVAL;
+      return;
+    }
+    const auto mode = *configuration.backend_config.storage_mode;
     // the storage mode only governs the "rgw" backend; with the "local" backend the
     // data is on the local filesystem and no bucket is involved
-    rgw::s3vector::BackendType backend_type;
-    {
-      const std::string backend_str =
-          s->cct->_conf.get_val<std::string>("rgw_s3vector_backend");
-      if (rgw::s3vector::get_backend_type(backend_str, backend_type) < 0) {
-        ldpp_dout(this, 1) << "ERROR: s3vector unrecognized backend type: " << backend_str << dendl;
-        op_ret = -EINVAL;
-        return;
-      }
-    }
+    const auto backend_type = configuration.backend_config.backend_type;
 
     // Native storage needs its bucket index before LanceDB can connect.
     const bool vector_storage =
@@ -428,7 +431,7 @@ private:
       rgw::s3vector::vector_bucket_arn(
         s->zonegroup_name,
         bucket_ns.name(),
-        configuration.vector_bucket_name).to_string()
+        configuration.rest_config.vector_bucket_name).to_string()
     };
     reply.dump(&f);
     rgw_flush_formatter_and_reset(s, &f);
@@ -436,7 +439,7 @@ private:
 };
 
 class RGWS3VectorDeleteIndex : public RGWS3VectorBase {
-  rgw::s3vector::delete_index_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::delete_index_t> configuration;
 public:
   explicit RGWS3VectorDeleteIndex(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
 private:
@@ -447,7 +450,7 @@ private:
       return -EACCES;
     }*/
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject, rgw::IAM::s3DeleteObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject, rgw::IAM::s3DeleteObject}, y);
   }
 
   const char* name() const override { return "s3vector_delete_index"; }
@@ -460,7 +463,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -475,18 +478,18 @@ private:
 };
 
 class RGWS3VectorDeleteVectorBucket : public RGWS3VectorBase {
-  rgw::s3vector::delete_vector_bucket_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::delete_vector_bucket_t> configuration;
 public:
   explicit RGWS3VectorDeleteVectorBucket(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
 private:
   int verify_permission(optional_yield y) override {
     ldpp_dout(this, 10) << "INFO: verifying permission for s3vector DeleteVectorBucket" << dendl;
-    if (!verify_bucket_permission(this, s, configuration.vector_bucket_arn.get(), rgw::IAM::s3vectorsDeleteVectorBucket)) {
+    if (!verify_bucket_permission(this, s, configuration.rest_config.vector_bucket_arn.get(), rgw::IAM::s3vectorsDeleteVectorBucket)) {
       // policy TODO: ignore failure for now "evaluate_iam_policies: implicit deny from identity-based policy"
       // return -EACCES;
     }
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
   }
 
   const char* name() const override { return "s3vector_delete_vector_bucket"; }
@@ -499,28 +502,28 @@ private:
     if (ret < 0) {
       return ret;
     }
-    if (!configuration.vector_bucket_arn) {
-      configuration.vector_bucket_arn = rgw::s3vector::vector_bucket_arn(
+    if (!configuration.rest_config.vector_bucket_arn) {
+      configuration.rest_config.vector_bucket_arn = rgw::s3vector::vector_bucket_arn(
         s->zonegroup_name,
         bucket_ns.name(),
-        configuration.vector_bucket_name
+        configuration.rest_config.vector_bucket_name
       );
     }
 
-    s->bucket_name = configuration.vector_bucket_arn->resource;
-    ldpp_dout(this, 20) << "INFO: s3vector bucket ARN: " << configuration.vector_bucket_arn.get() << dendl;
+    s->bucket_name = configuration.rest_config.vector_bucket_arn->resource;
+    ldpp_dout(this, 20) << "INFO: s3vector bucket ARN: " << configuration.rest_config.vector_bucket_arn.get() << dendl;
     return 0;
   }
 
   void execute(optional_yield y) override {
     {
       JSONFormatter f;
-      configuration.dump(&f);
+      configuration.rest_config.dump(&f);
       std::stringstream ss;
       f.flush(ss);
       ldpp_dout(this, 20) << "INFO: executing s3vector DeleteVectorBucket with: " << ss.str() << dendl;
     }
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -538,7 +541,7 @@ private:
 };
 
 class RGWS3VectorDeleteVectorBucketPolicy : public RGWS3VectorBase {
-  rgw::s3vector::delete_vector_bucket_policy_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::delete_vector_bucket_policy_t> configuration;
 public:
   explicit RGWS3VectorDeleteVectorBucketPolicy(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
 private:
@@ -561,7 +564,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -571,12 +574,12 @@ private:
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    op_ret = rgw::s3vector::delete_vector_bucket_policy(configuration, this, y);
+    op_ret = rgw::s3vector::delete_vector_bucket_policy(configuration.rest_config, this, y);
   }
 };
 
 class RGWS3VectorPutVectors : public RGWS3VectorBase {
-  rgw::s3vector::put_vectors_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::put_vectors_t> configuration;
 public:
   explicit RGWS3VectorPutVectors(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
 private:
@@ -587,7 +590,7 @@ private:
       return -EACCES;
     }*/
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject, rgw::IAM::s3PutObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject, rgw::IAM::s3PutObject}, y);
   }
 
   const char* name() const override { return "s3vector_put_vectors"; }
@@ -600,7 +603,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -627,7 +630,7 @@ private:
 };
 
 class RGWS3VectorGetVectors : public RGWS3VectorBase {
-  rgw::s3vector::get_vectors_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::get_vectors_t> configuration;
   rgw::s3vector::get_vectors_reply_t reply;
 public:
   explicit RGWS3VectorGetVectors(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
@@ -639,7 +642,7 @@ private:
       return -EACCES;
     }*/
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
   }
 
   const char* name() const override { return "s3vector_get_vectors"; }
@@ -652,7 +655,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -685,7 +688,7 @@ private:
 };
 
 class RGWS3VectorListVectors : public RGWS3VectorBase {
-  rgw::s3vector::list_vectors_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::list_vectors_t> configuration;
   rgw::s3vector::list_vectors_reply_t reply;
 public:
   explicit RGWS3VectorListVectors(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
@@ -697,7 +700,7 @@ private:
       return -EACCES;
     }*/
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
   }
 
   const char* name() const override { return "s3vector_list_vectors"; }
@@ -710,7 +713,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -769,7 +772,7 @@ std::string prefix_end_marker(std::string_view prefix) {
 }
 
 class RGWS3VectorListVectorBuckets : public RGWS3VectorBase {
-  rgw::s3vector::list_vector_buckets_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::list_vector_buckets_t> configuration;
   rgw::sal::BucketList listing;
   std::string zonegroup_name;
 public:
@@ -805,31 +808,31 @@ private:
   void execute(optional_yield y) override {
     {
       JSONFormatter f;
-      configuration.dump(&f);
+      configuration.rest_config.dump(&f);
       std::stringstream ss;
       f.flush(ss);
       ldpp_dout(this, 20) << "INFO: executing s3vector ListVectorBuckets with: " << ss.str() << dendl;
     }
 
-    std::string start_marker = configuration.next_token;
+    std::string start_marker = configuration.rest_config.next_token;
     std::string end_marker;
-    if (!configuration.prefix.empty()) {
-      start_marker = std::max(start_marker, prefix_start_marker(configuration.prefix));
-      end_marker = prefix_end_marker(configuration.prefix);
+    if (!configuration.rest_config.prefix.empty()) {
+      start_marker = std::max(start_marker, prefix_start_marker(configuration.rest_config.prefix));
+      end_marker = prefix_end_marker(configuration.rest_config.prefix);
     }
 
     op_ret = driver->list_vector_buckets(this, s->owner.id, bucket_ns.name(),
-        start_marker, end_marker, configuration.max_results, false, listing, y);
+        start_marker, end_marker, configuration.rest_config.max_results, false, listing, y);
     if (op_ret < 0) {
       ldpp_dout(this, 20) << "ERROR: failed to execute ListVectorBuckets. error: " << op_ret << dendl;
       return;
     }
-    if (!configuration.prefix.empty()) {
+    if (!configuration.rest_config.prefix.empty()) {
       // the markers only bound the listing to the range of the prefix, so the
       // names at the edges of that range still have to be filtered out here
       // won't be needed once https://tracker.ceph.com/issues/79532 is implemented
       std::erase_if(listing.buckets, [this](const RGWBucketEnt& bucket) {
-        if (bucket.bucket.name.starts_with(configuration.prefix)) {
+        if (bucket.bucket.name.starts_with(configuration.rest_config.prefix)) {
           return false;
         }
         ldpp_dout(this, 20) << "INFO: on s3vector listing, vector bucket: " << bucket.bucket.name << " is filtered out" << dendl;
@@ -874,7 +877,7 @@ private:
 };
 
 class RGWS3VectorGetVectorBucket : public RGWS3VectorBase {
-  rgw::s3vector::get_vector_bucket_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::get_vector_bucket_t> configuration;
   std::unique_ptr<rgw::sal::VectorBucket> bucket;
 public:
   explicit RGWS3VectorGetVectorBucket(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
@@ -882,7 +885,7 @@ private:
   int verify_permission(optional_yield y) override {
     ldpp_dout(this, 10) << "INFO: verifying permission for s3vector GetVectorBucket" << dendl;
 
-    if (!verify_bucket_permission(this, s, configuration.vector_bucket_arn.get(), rgw::IAM::s3vectorsGetVectorBucket)) {
+    if (!verify_bucket_permission(this, s, configuration.rest_config.vector_bucket_arn.get(), rgw::IAM::s3vectorsGetVectorBucket)) {
       // policy TODO: ignore failure for now "evaluate_iam_policies: implicit deny from identity-based policy"
       // return -EACCES;
       return 0;
@@ -900,28 +903,28 @@ private:
     if (ret < 0) {
       return ret;
     }
-    if (!configuration.vector_bucket_arn) {
-      configuration.vector_bucket_arn = rgw::s3vector::vector_bucket_arn(
+    if (!configuration.rest_config.vector_bucket_arn) {
+      configuration.rest_config.vector_bucket_arn = rgw::s3vector::vector_bucket_arn(
         s->zonegroup_name,
         bucket_ns.name(),
-        configuration.vector_bucket_name
+        configuration.rest_config.vector_bucket_name
       );
     }
 
-    s->bucket_name = configuration.vector_bucket_arn->resource;
-    ldpp_dout(this, 20) << "INFO: s3vector bucket ARN: " << configuration.vector_bucket_arn.get() << dendl;
+    s->bucket_name = configuration.rest_config.vector_bucket_arn->resource;
+    ldpp_dout(this, 20) << "INFO: s3vector bucket ARN: " << configuration.rest_config.vector_bucket_arn.get() << dendl;
     return 0;
   }
 
   void execute(optional_yield y) override {
     {
       JSONFormatter f;
-      configuration.dump(&f);
+      configuration.rest_config.dump(&f);
       std::stringstream ss;
       f.flush(ss);
       ldpp_dout(this, 20) << "INFO: executing s3vector GetVectorBucket with: " << ss.str() << dendl;
     }
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
       if (op_ret == -ENOENT) {
@@ -948,7 +951,7 @@ private:
     f.open_object_section("vectorBucket");
     // the AWS API encodes timestamps as seconds since the epoch
     ::encode_json("creationTime", static_cast<uint64_t>(ceph::real_clock::to_time_t(bucket->get_creation_time())), &f);
-    ::encode_json("vectorBucketArn", configuration.vector_bucket_arn->to_string(), &f);
+    ::encode_json("vectorBucketArn", configuration.rest_config.vector_bucket_arn->to_string(), &f);
     ::encode_json("vectorBucketName", bucket->get_name(), &f);
     f.close_section(); // vectorBucket
     f.close_section(); // root object
@@ -959,7 +962,7 @@ private:
 };
 
 class RGWS3VectorGetIndex : public RGWS3VectorBase {
-  rgw::s3vector::get_index_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::get_index_t> configuration;
   rgw::s3vector::get_index_reply_t reply;
 public:
   explicit RGWS3VectorGetIndex(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
@@ -971,7 +974,7 @@ private:
       return -EACCES;
     }*/
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
   }
 
   const char* name() const override { return "s3vector_get_index"; }
@@ -984,7 +987,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -1017,7 +1020,7 @@ private:
 };
 
 class RGWS3VectorListIndexes : public RGWS3VectorBase {
-  rgw::s3vector::list_indexes_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::list_indexes_t> configuration;
   rgw::s3vector::list_indexes_reply_t reply;
 public:
   explicit RGWS3VectorListIndexes(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
@@ -1029,7 +1032,7 @@ private:
       return -EACCES;
     }*/
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
   }
 
   const char* name() const override { return "s3vector_list_indexes"; }
@@ -1042,7 +1045,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -1052,11 +1055,11 @@ private:
       ldpp_dout(this, 1) << "ERROR: failed to load s3vector bucket " << bucket_id << ". error: " << op_ret << dendl;
       return;
     }
-    if (!configuration.vector_bucket_arn) {
-      configuration.vector_bucket_arn = rgw::s3vector::vector_bucket_arn(
+    if (!configuration.rest_config.vector_bucket_arn) {
+      configuration.rest_config.vector_bucket_arn = rgw::s3vector::vector_bucket_arn(
         s->zonegroup_name,
         bucket_ns.name(),
-        configuration.vector_bucket_name
+        configuration.rest_config.vector_bucket_name
       );
     }
     op_ret = rgw::s3vector::list_indexes(configuration, driver, bucket_ns, this, y, reply);
@@ -1090,7 +1093,7 @@ private:
 };
 
 class RGWS3VectorPutVectorBucketPolicy : public RGWS3VectorBase {
-  rgw::s3vector::put_vector_bucket_policy_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::put_vector_bucket_policy_t> configuration;
 public:
   explicit RGWS3VectorPutVectorBucketPolicy(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
 private:
@@ -1113,7 +1116,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -1128,7 +1131,7 @@ private:
 };
 
 class RGWS3VectorGetVectorBucketPolicy : public RGWS3VectorBase {
-  rgw::s3vector::get_vector_bucket_policy_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::get_vector_bucket_policy_t> configuration;
 public:
   explicit RGWS3VectorGetVectorBucketPolicy(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
 private:
@@ -1151,7 +1154,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -1166,7 +1169,7 @@ private:
 };
 
 class RGWS3VectorDeleteVectors : public RGWS3VectorBase {
-  rgw::s3vector::delete_vectors_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::delete_vectors_t> configuration;
 public:
   explicit RGWS3VectorDeleteVectors(bufferlist&& data) : RGWS3VectorBase(std::move(data)) {}
 private:
@@ -1177,7 +1180,7 @@ private:
       return -EACCES;
     }*/
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject, rgw::IAM::s3PutObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject, rgw::IAM::s3PutObject}, y);
   }
 
   const char* name() const override { return "s3vector_delete_vectors"; }
@@ -1190,7 +1193,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
@@ -1205,7 +1208,7 @@ private:
 };
 
 class RGWS3VectorQueryVectors : public RGWS3VectorBase {
-  rgw::s3vector::query_vectors_t configuration;
+  rgw::s3vector::VectorBucketConfig<rgw::s3vector::query_vectors_t> configuration;
   rgw::s3vector::query_vectors_reply_t reply;
   std::optional<JSONParser> filter_parser;
 public:
@@ -1218,7 +1221,7 @@ private:
       return -EACCES;
     }*/
     return verify_backend_permission(
-        configuration.vector_bucket_name, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
+        configuration.rest_config.vector_bucket_name, configuration.backend_config, {rgw::IAM::s3ListBucket, rgw::IAM::s3GetObject}, y);
   }
 
   const char* name() const override { return "s3vector_query_vectors"; }
@@ -1231,10 +1234,10 @@ private:
     if (ret < 0) {
       return ret;
     }
-    if (!configuration.filter.empty()) {
+    if (!configuration.rest_config.filter.empty()) {
       filter_parser.emplace();
-      if (!filter_parser->parse(configuration.filter.c_str(), configuration.filter.size())) {
-        ldpp_dout(this, 1) << "ERROR: failed to parse filter JSON: " << configuration.filter << dendl;
+      if (!filter_parser->parse(configuration.rest_config.filter.c_str(), configuration.rest_config.filter.size())) {
+        ldpp_dout(this, 1) << "ERROR: failed to parse filter JSON: " << configuration.rest_config.filter << dendl;
         return -EINVAL;
       }
     }
@@ -1242,7 +1245,7 @@ private:
   }
 
   void execute(optional_yield y) override {
-    const rgw_bucket bucket_id(bucket_ns.name(), configuration.vector_bucket_name);
+    const rgw_bucket bucket_id(bucket_ns.name(), configuration.rest_config.vector_bucket_name);
     std::unique_ptr<rgw::sal::VectorBucket> bucket;
     op_ret = driver->load_vector_bucket(this, bucket_id, &bucket, y);
     if (op_ret < 0) {
