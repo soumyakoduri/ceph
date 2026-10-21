@@ -418,6 +418,10 @@ int AtomicObjectProcessor::complete(
   obj_op.meta.zones_trace = zones_trace;
   obj_op.meta.modify_tail = true;
 
+  if (flags & rgw::sal::FLAG_ITE_PRESERVE) {
+    obj_op.meta.bilog_flags |= RGW_BILOG_FLAG_ITE_PRESERVE;
+  }
+
   r = read_cloudtier_info_from_attrs(attrs, obj_op.meta.category, obj_op.meta.olh_epoch, manifest);
 
   if (r < 0) { // incase of any errors while decoding tier_config/restore attrs

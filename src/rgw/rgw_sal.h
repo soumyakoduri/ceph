@@ -175,6 +175,9 @@ static constexpr uint32_t FLAG_PREVENT_VERSIONING = 0x0002;
 // delete object where head object is missing)
 static constexpr uint32_t FLAG_FORCE_OP = 0x0004;
 static constexpr uint32_t FLAG_SKIP_UPDATE_OLH = 0x0008;
+// ITE: the write rewrites the same data instance, as a tier move does, so
+// the instance keeps its per-object ITE state
+static constexpr uint32_t FLAG_ITE_PRESERVE = 0x0010;
 
 enum class RGWRestoreStatus : uint8_t {
   None  = 0,
@@ -1370,9 +1373,13 @@ class Object {
     /** ITE: move this instance's bytes to the target placement of its
      * two-placement storage class. The advertised storage class and the
      * instance's ITE state are left unchanged. Copies, verifies, then
-     * removes the source; a no-op if the bytes are already there. */
+     * removes the source; a no-op if the bytes are already there.
+     * -ECANCELED unless the instance is still generation expected_gen (its
+     * ITE base generation) when its bytes are rewritten, -EOPNOTSUPP when
+     * its class has no cold placement. */
     virtual int ite_move_placement(const DoutPrefixProvider* dpp,
                                    rgw::ite::Placement target,
+                                   uint64_t expected_gen,
                                    optional_yield y) = 0;
     /** Check to see if two placement rules match */
     virtual bool placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2) = 0;

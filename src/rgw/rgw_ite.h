@@ -209,4 +209,12 @@ public:
  * interval compresses the whole schedule */
 ceph::timespan scaled_period(const TimeScale& ts, uint64_t secs);
 
+/* the placement for an object written to a bucket with these attributes:
+ * in an ITE bucket every object takes the two-placement class
+ * (rgw_ite_storage_class) at PUT, whatever was asked, and keeps it for
+ * life. A zone placement without the class leaves rule as it is. */
+void select_placement(CephContext* cct, rgw::sal::Driver* driver,
+                      const std::map<std::string, ceph::buffer::list>& bucket_attrs,
+                      rgw_placement_rule* rule);
+
 } // namespace rgw::ite

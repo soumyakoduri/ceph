@@ -250,6 +250,23 @@ int for_each_bucket(const DoutPrefixProvider* dpp, Context& ctx,
   return ret;
 }
 
+void select_placement(CephContext* cct, rgw::sal::Driver* driver,
+                      const std::map<std::string, ceph::buffer::list>& bucket_attrs,
+                      rgw_placement_rule* rule)
+{
+  const auto config = get_bucket_config(bucket_attrs);
+  if (!config || !config->enabled) {
+    return;
+  }
+  rgw_placement_rule ite(rule->name, cct->_conf.get_val<std::string>("rgw_ite_storage_class"));
+  if (!driver->valid_placement(ite)) {
+    // nothing to tier into: the objects keep their class, and ITE leaves
+    // them alone
+    return;
+  }
+  *rule = std::move(ite);
+}
+
 ceph::timespan scaled_period(const TimeScale& ts, uint64_t secs)
 {
   const uint64_t scaled = secs * ts.secs_per_day / 86400;

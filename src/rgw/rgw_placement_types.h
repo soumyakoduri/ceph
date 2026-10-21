@@ -4,6 +4,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 #include "include/types.h"
 
@@ -11,6 +12,35 @@
 
 
 static std::string RGW_STORAGE_CLASS_STANDARD = "STANDARD";
+
+/* A two-placement storage class (ITE) keeps a cold placement beside its
+ * data pool. A manifest names that placement with the internal class
+ * "<class>@cold"; index entries, attributes and clients only ever see the
+ * class itself, and no client can ask for the internal name. */
+inline constexpr std::string_view RGW_STORAGE_CLASS_COLD_SUFFIX = "@cold";
+
+inline bool rgw_is_cold_storage_class(std::string_view sc) {
+  return sc.size() > RGW_STORAGE_CLASS_COLD_SUFFIX.size() &&
+         sc.ends_with(RGW_STORAGE_CLASS_COLD_SUFFIX);
+}
+
+/* the class an internal class stands for: itself unless it is a cold one */
+inline std::string_view rgw_advertised_storage_class(std::string_view sc) {
+  if (rgw_is_cold_storage_class(sc)) {
+    sc.remove_suffix(RGW_STORAGE_CLASS_COLD_SUFFIX.size());
+  }
+  return sc;
+}
+
+/* the internal class of sc's cold placement */
+inline std::string rgw_cold_storage_class(std::string_view sc) {
+  std::string cold{rgw_advertised_storage_class(sc)};
+  if (cold.empty()) {
+    cold = RGW_STORAGE_CLASS_STANDARD;
+  }
+  cold.append(RGW_STORAGE_CLASS_COLD_SUFFIX);
+  return cold;
+}
 
 struct rgw_placement_rule {
   std::string name;

@@ -14,6 +14,7 @@
 #include "common/async/context_pool.h"
 #include "common/ceph_argparse.h"
 #include "global/global_init.h"
+#include "include/scope_guard.h"
 #include "rgw_common.h"
 #include "rgw_ite.h"
 #include "rgw_ite_aggregator.h"
@@ -164,6 +165,120 @@ struct TestBucket {
     return bs.bucket_obj.ioctx.operate(bs.bucket_obj.obj.oid, &complete);
   }
 };
+
+/* the zone's default placement given an INTELLIGENT_TIER class with a
+ * hot and a cold pool, for this process only */
+struct TieredPlacement {
+  RGWZoneParams& zone;
+  const std::string rule;
+  std::optional<RGWZoneStorageClass> saved;
+  // fixed pools, left behind, so that the gc can still reclaim the copies
+  // a move leaves for it
+  const rgw_pool hot{"ite-test.hot"};
+  const rgw_pool cold{"ite-test.cold"};
+
+  TieredPlacement()
+    : zone(const_cast<RGWZoneParams&>(
+          static_cast<sal::RadosStore*>(driver)->svc()->zone->get_zone_params())),
+      rule(site->get_zonegroup().default_placement.name) {
+    auto rados = static_cast<sal::RadosStore*>(driver)->getRados()->get_rados_handle();
+    rados->pool_create(hot.name.c_str());
+    rados->pool_create(cold.name.c_str());
+    auto& classes = zone.placement_pools[rule].storage_classes;
+    const RGWZoneStorageClass* sc = nullptr;
+    if (classes.find("INTELLIGENT_TIER", &sc)) {
+      saved = *sc;
+    }
+    classes.set_storage_class("INTELLIGENT_TIER", &hot, nullptr, &cold);
+  }
+  ~TieredPlacement() {
+    auto& classes = zone.placement_pools[rule].storage_classes;
+    if (saved) {
+      classes.get_all()["INTELLIGENT_TIER"] = *saved;
+    } else {
+      classes.remove_storage_class("INTELLIGENT_TIER");
+    }
+  }
+};
+
+/* write an object whose storage class is picked as a PUT picks it */
+int put_object(sal::Bucket* bucket, const std::string& name, const std::string& data,
+               ceph::real_time* mtime)
+{
+  auto obj = bucket->get_object(rgw_obj_key(name));
+  rgw_placement_rule rule = bucket->get_placement_rule();
+  select_placement(g_ceph_context, driver, bucket->get_attrs(), &rule);
+  ACLOwner owner;
+  owner.id = bucket->get_owner();
+  auto writer = driver->get_atomic_writer(dpp, null_yield, obj.get(), owner, &rule, 0,
+                                          "ite-test-" + name);
+  int r = writer->prepare(null_yield);
+  if (r < 0) {
+    return r;
+  }
+  ceph::buffer::list bl;
+  bl.append(data);
+  r = writer->process(std::move(bl), 0);
+  if (r == 0) {
+    r = writer->process({}, data.size()); // flush
+  }
+  if (r < 0) {
+    return r;
+  }
+  const std::string etag = "ite-test-etag";
+  sal::Attrs attrs;
+  attrs[RGW_ATTR_ETAG].append(etag);
+  const req_context rctx{dpp, null_yield, nullptr};
+  return writer->complete(data.size(), etag, mtime, ceph::real_time(), attrs, std::nullopt,
+                          ceph::real_time(), nullptr, nullptr, nullptr, nullptr, nullptr,
+                          rctx, sal::FLAG_LOG_OP);
+}
+
+std::string read_object(sal::Bucket* bucket, const std::string& name, uint64_t size)
+{
+  auto obj = bucket->get_object(rgw_obj_key(name));
+  auto op = obj->get_read_op();
+  if (op->prepare(null_yield, dpp) < 0) {
+    return {};
+  }
+  std::string out;
+  while (out.size() < size) { // a read stops at the end of a rados object
+    ceph::buffer::list bl;
+    int r = op->read(out.size(), size - 1, bl, null_yield, dpp);
+    if (r <= 0) {
+      return {};
+    }
+    out.append(bl.to_str());
+  }
+  return out;
+}
+
+void delete_object(sal::Bucket* bucket, const std::string& name)
+{
+  auto obj = bucket->get_object(rgw_obj_key(name));
+  auto op = obj->get_delete_op();
+  op->params.bucket_owner = bucket->get_owner();
+  op->delete_obj(dpp, null_yield, 0);
+}
+
+/* the pools an object's bytes are in, as its manifest names them */
+std::set<std::string> data_pools(sal::Bucket* bucket, const std::string& name)
+{
+  auto rados = static_cast<sal::RadosStore*>(driver)->getRados();
+  RGWObjectCtx octx(driver);
+  RGWObjState* state = nullptr;
+  RGWObjManifest* manifest = nullptr;
+  const rgw_obj obj(bucket->get_key(), rgw_obj_key(name));
+  if (rados->get_obj_state(dpp, &octx, bucket->get_info(), obj, &state, &manifest,
+                           false, null_yield) < 0 || !manifest) {
+    return {};
+  }
+  std::set<std::string> pools;
+  for (auto i = manifest->obj_begin(dpp); i != manifest->obj_end(dpp); ++i) {
+    pools.insert(i.get_location().get_raw_obj(rados).pool.name);
+  }
+  return pools;
+}
 
 std::string count_key(const std::string& name, uint64_t gen, Op op)
 {
@@ -805,6 +920,117 @@ TEST_F(ITERados, DecisionEngineOnIndexEntries)
   EXPECT_EQ(key, entries[0].action.bucket);
   EXPECT_EQ(5u, entries[0].action.obj.gen);
   EXPECT_EQ(ctx.zone_id, entries[0].action.zone_id);
+}
+
+TEST_F(ITERados, PlacementMoveKeepsTheInstance)
+{
+  TieredPlacement tiered;
+  TestBucket tb;
+  ASSERT_EQ(0, tb.create("ite-placement", 3, true));
+  sal::Bucket* bucket = tb.bucket.get();
+  // past the head chunk, so the bytes span several rados objects
+  std::string data(6 << 20, '\0');
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<char>('a' + i % 26);
+  }
+  ceph::real_time mtime;
+  ASSERT_EQ(0, put_object(bucket, "big", data, &mtime));
+  auto cleanup = make_scope_guard([&] { delete_object(bucket, "big"); });
+
+  // an ITE bucket's object takes the class at PUT, in its hot placement
+  auto state = driver->get_ite_state_store();
+  const rgw_obj_key key("big");
+  ObjectEntry e;
+  ASSERT_EQ(0, state->get_state(dpp, bucket, key, &e, null_yield));
+  EXPECT_EQ("INTELLIGENT_TIER", e.storage_class);
+  const uint64_t gen = e.instance().gen;
+  Placement where;
+  ASSERT_EQ(0, bucket->get_object(key)->ite_get_placement(dpp, &where, null_yield));
+  EXPECT_EQ(Placement::Hot, where);
+  EXPECT_EQ(std::set<std::string>{tiered.hot.name}, data_pools(bucket, "big"));
+
+  rgw_bucket_ite_state s;
+  s.temperature = 0.01;
+  s.temp_updated_at = 1234;
+  s.tier_state = RGWITETierState::Pseudo;
+  s.pseudo_since = 1;
+  ASSERT_EQ(0, state->set_state(dpp, bucket, key, s,
+                                rgw_bucket_ite_state::MASK_TEMPERATURE |
+                                rgw_bucket_ite_state::MASK_TIER, gen, null_yield));
+
+  ASSERT_EQ(0, bucket->get_object(key)->ite_move_placement(dpp, Placement::Cold, gen,
+                                                           null_yield));
+  // the bytes are in the cold pool and read back the same
+  ASSERT_EQ(0, bucket->get_object(key)->ite_get_placement(dpp, &where, null_yield));
+  EXPECT_EQ(Placement::Cold, where);
+  EXPECT_EQ(std::set<std::string>{tiered.cold.name}, data_pools(bucket, "big"));
+  EXPECT_EQ(data, read_object(bucket, "big", data.size()));
+  // with the class and mtime the client sees unchanged
+  auto obj = bucket->get_object(key);
+  ASSERT_EQ(0, obj->get_obj_attrs(null_yield, dpp));
+  EXPECT_EQ("INTELLIGENT_TIER", rgw_bl_str(obj->get_attrs()[RGW_ATTR_STORAGE_CLASS]));
+  EXPECT_EQ(mtime, obj->get_mtime());
+  // and the instance its identity and ITE state through the rewrite
+  ASSERT_EQ(0, state->get_state(dpp, bucket, key, &e, null_yield));
+  EXPECT_EQ("INTELLIGENT_TIER", e.storage_class);
+  EXPECT_EQ(gen, e.instance().gen);
+  EXPECT_LT(gen, e.gen); // the head was rewritten
+  EXPECT_EQ(mtime, e.mtime);
+  EXPECT_DOUBLE_EQ(0.01, e.ite.temperature);
+  EXPECT_EQ(1234u, e.ite.temp_updated_at);
+  EXPECT_EQ(RGWITETierState::Pseudo, e.ite.tier_state);
+  const uint64_t rewritten = e.gen;
+
+  // already there: nothing is rewritten
+  ASSERT_EQ(0, bucket->get_object(key)->ite_move_placement(dpp, Placement::Cold, gen,
+                                                           null_yield));
+  ASSERT_EQ(0, state->get_state(dpp, bucket, key, &e, null_yield));
+  EXPECT_EQ(rewritten, e.gen);
+
+  // a metadata update keeps the instance's state too
+  ceph::buffer::list meta;
+  meta.append("v");
+  ASSERT_EQ(0, obj->modify_obj_attrs(RGW_ATTR_META_PREFIX "ite-test", meta, null_yield, dpp));
+  ASSERT_EQ(0, state->get_state(dpp, bucket, key, &e, null_yield));
+  EXPECT_EQ(gen, e.instance().gen);
+  EXPECT_EQ(RGWITETierState::Pseudo, e.ite.tier_state);
+  EXPECT_DOUBLE_EQ(0.01, e.ite.temperature);
+
+  // a move names its instance: another generation's is refused
+  EXPECT_EQ(-ECANCELED, bucket->get_object(key)->ite_move_placement(
+                            dpp, Placement::Hot, gen + 1000, null_yield));
+
+  ASSERT_EQ(0, bucket->get_object(key)->ite_move_placement(dpp, Placement::Hot, gen,
+                                                           null_yield));
+  ASSERT_EQ(0, bucket->get_object(key)->ite_get_placement(dpp, &where, null_yield));
+  EXPECT_EQ(Placement::Hot, where);
+  EXPECT_EQ(std::set<std::string>{tiered.hot.name}, data_pools(bucket, "big"));
+  EXPECT_EQ(data, read_object(bucket, "big", data.size()));
+  ASSERT_EQ(0, state->get_state(dpp, bucket, key, &e, null_yield));
+  EXPECT_EQ(gen, e.instance().gen);
+  EXPECT_DOUBLE_EQ(0.01, e.ite.temperature);
+}
+
+TEST_F(ITERados, MoveNeedsAColdPlacement)
+{
+  TieredPlacement tiered;
+  TestBucket tb;
+  ASSERT_EQ(0, tb.create("ite-plain", 1, false));
+  sal::Bucket* bucket = tb.bucket.get();
+  ceph::real_time mtime;
+  ASSERT_EQ(0, put_object(bucket, "plain", std::string(8192, 'x'), &mtime));
+  auto cleanup = make_scope_guard([&] { delete_object(bucket, "plain"); });
+
+  // without ITE on the bucket, the object keeps the class it asked for
+  auto state = driver->get_ite_state_store();
+  ObjectEntry e;
+  ASSERT_EQ(0, state->get_state(dpp, bucket, rgw_obj_key("plain"), &e, null_yield));
+  EXPECT_EQ(RGW_STORAGE_CLASS_STANDARD,
+            rgw_placement_rule::get_canonical_storage_class(e.storage_class));
+  // which has no cold placement to move to
+  EXPECT_EQ(-EOPNOTSUPP, bucket->get_object(rgw_obj_key("plain"))->ite_move_placement(
+                             dpp, Placement::Cold, e.instance().gen, null_yield));
+  EXPECT_EQ(std::string(8192, 'x'), read_object(bucket, "plain", 8192));
 }
 
 int main(int argc, const char** argv)

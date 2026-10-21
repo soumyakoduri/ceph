@@ -106,18 +106,28 @@ WRITE_CLASS_ENCODER(RGWDefaultSystemMetaObjInfo)
 struct RGWZoneStorageClass {
   boost::optional<rgw_pool> data_pool;
   boost::optional<std::string> compression_type;
+  /* the cold placement of a two-placement class (ITE): the bytes of an
+   * instance committed cold, which its manifest addresses through the
+   * internal class "<class>@cold" */
+  boost::optional<rgw_pool> cold_data_pool;
 
   void encode(bufferlist& bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(2, 1, bl);
     encode(data_pool, bl);
     encode(compression_type, bl);
+    encode(cold_data_pool, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::const_iterator& bl) {
-    DECODE_START(1, bl);
+    DECODE_START(2, bl);
     decode(data_pool, bl);
     decode(compression_type, bl);
+    if (struct_v >= 2) {
+      decode(cold_data_pool, bl);
+    } else {
+      cold_data_pool.reset();
+    }
     DECODE_FINISH(bl);
   }
 
@@ -176,7 +186,8 @@ public:
     return m;
   }
 
-  void set_storage_class(const std::string& sc, const rgw_pool* data_pool, const std::string* compression_type) {
+  void set_storage_class(const std::string& sc, const rgw_pool* data_pool, const std::string* compression_type,
+                         const rgw_pool* cold_data_pool = nullptr) {
     const std::string *psc = &sc;
     if (sc.empty()) {
       psc = &RGW_STORAGE_CLASS_STANDARD;
@@ -187,6 +198,13 @@ public:
     }
     if (compression_type) {
       storage_class.compression_type = *compression_type;
+    }
+    if (cold_data_pool) {
+      if (cold_data_pool->empty()) {
+        storage_class.cold_data_pool.reset();
+      } else {
+        storage_class.cold_data_pool = *cold_data_pool;
+      }
     }
   }
 
@@ -282,6 +300,16 @@ struct RGWZonePlacementInfo {
     const RGWZoneStorageClass *storage_class;
     static rgw_pool no_pool;
 
+    if (rgw_is_cold_storage_class(sc)) {
+      // a cold placement without its pool resolves to no pool, never to
+      // the hot one
+      if (!storage_classes.find(std::string{rgw_advertised_storage_class(sc)},
+                                &storage_class)) {
+        return no_pool;
+      }
+      return storage_class->cold_data_pool.get_value_or(no_pool);
+    }
+
     if (!storage_classes.find(sc, &storage_class)) {
       return storage_classes.get_standard().data_pool.get_value_or(no_pool);
     }
@@ -296,14 +324,29 @@ struct RGWZonePlacementInfo {
     const RGWZoneStorageClass *storage_class;
     static std::string no_compression;
 
-    if (!storage_classes.find(sc, &storage_class)) {
+    // the cold placement compresses as its class does
+    if (!storage_classes.find(std::string{rgw_advertised_storage_class(sc)},
+                              &storage_class)) {
       return no_compression;
     }
     return storage_class->compression_type.get_value_or(no_compression);
   }
 
+  /* the internal cold classes are not classes anyone can ask for */
   bool storage_class_exists(const std::string& sc) const {
     return storage_classes.exists(sc);
+  }
+
+  /* the cold pool of a two-placement class, or nullptr */
+  const rgw_pool* get_cold_data_pool(const std::string& sc) const {
+    const RGWZoneStorageClass *storage_class;
+    if (!storage_classes.find(std::string{rgw_advertised_storage_class(sc)},
+                              &storage_class) ||
+        !storage_class->cold_data_pool ||
+        storage_class->cold_data_pool->empty()) {
+      return nullptr;
+    }
+    return &*storage_class->cold_data_pool;
   }
 
   void dump(Formatter *f) const;

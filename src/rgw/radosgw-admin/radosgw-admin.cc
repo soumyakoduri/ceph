@@ -472,6 +472,8 @@ void usage()
   cout << "   --index-pool=<pool>               placement target index pool\n";
   cout << "   --data-pool=<pool>                placement target data pool\n";
   cout << "   --data-extra-pool=<pool>          placement target data extra (non-ec) pool\n";
+  cout << "   --cold-data-pool=<pool>           cold placement of a two-placement (ITE) storage class;\n";
+  cout << "                                     empty to remove it\n";
   cout << "   --placement-index-type=<type>     placement target index type (normal, indexless, or #id)\n";
   cout << "   --placement-inline-data=<true>    set whether the placement target is configured to store a data\n";
   cout << "                                     chunk inline in head objects\n";
@@ -3997,6 +3999,7 @@ int main(int argc, const char **argv)
   boost::optional<string> index_pool;
   boost::optional<string> data_pool;
   boost::optional<string> data_extra_pool;
+  boost::optional<string> cold_data_pool;
 #ifdef WITH_RADOSGW_RADOS
   rgw::BucketIndexType placement_index_type = rgw::BucketIndexType::Normal;
   bool index_type_specified = false;
@@ -4563,6 +4566,8 @@ int main(int argc, const char **argv)
       data_pool = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--data-extra-pool", (char*)NULL)) {
       data_extra_pool = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--cold-data-pool", (char*)NULL)) {
+      cold_data_pool = val;
 #ifdef WITH_RADOSGW_RADOS
     } else if (ceph_argparse_witharg(args, i, &val, "--placement-index-type", (char*)NULL)) {
       if (val == "normal") {
@@ -7004,7 +7009,18 @@ int main(int argc, const char **argv)
 	  }
 
           rgw_pool dp = opt_data_pool;
-          info.storage_classes.set_storage_class(storage_class, &dp, compression_type.get_ptr());
+          std::optional<rgw_pool> cdp;
+          if (cold_data_pool) {
+            cdp.emplace(*cold_data_pool); // empty removes the cold placement
+          }
+          // the class's cold placement, as set or as kept, is another pool
+          if (const rgw_pool* cold = cdp ? &*cdp : info.get_cold_data_pool(storage_class);
+              cold && !cold->empty() && *cold == dp) {
+            cerr << "ERROR: the cold data pool must differ from the data pool" << std::endl;
+            return EINVAL;
+          }
+          info.storage_classes.set_storage_class(storage_class, &dp, compression_type.get_ptr(),
+                                                 cdp ? &*cdp : nullptr);
 
           if (data_extra_pool) {
             info.data_extra_pool = *data_extra_pool;

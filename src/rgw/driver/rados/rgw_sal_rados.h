@@ -662,6 +662,13 @@ class RadosObject : public StoreObject {
 			   uint64_t& size,
 			   const DoutPrefixProvider* dpp,
 			   optional_yield y) override;
+    virtual int ite_get_placement(const DoutPrefixProvider* dpp,
+                                  rgw::ite::Placement* placement,
+                                  optional_yield y) override;
+    virtual int ite_move_placement(const DoutPrefixProvider* dpp,
+                                   rgw::ite::Placement target,
+                                   uint64_t expected_gen,
+                                   optional_yield y) override;
     virtual bool placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2) override;
     virtual int dump_obj_layout(const DoutPrefixProvider *dpp, optional_yield y, Formatter* f) override;
 

@@ -69,6 +69,7 @@
 #include "rgw_bucket_logging.h"
 #include "rgw_restore.h"
 #include "rgw_restore_waiter.h"
+#include "rgw_ite.h"
 
 #include "services/svc_zone.h"
 #include "services/svc_quota.h"
@@ -709,6 +710,7 @@ int rgw_build_bucket_policies(const DoutPrefixProvider *dpp, rgw::sal::Driver* d
       ldpp_dout(dpp, 0) << "NOTICE: invalid dest placement: " << s->dest_placement.to_str() << dendl;
       return -EINVAL;
     }
+    rgw::ite::select_placement(s->cct, driver, s->bucket->get_attrs(), &s->dest_placement);
 
     ret = read_public_access_conf(dpp, y, driver,
                                   s->bucket->get_owner(),

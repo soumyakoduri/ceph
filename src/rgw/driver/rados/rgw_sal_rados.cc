@@ -3379,6 +3379,101 @@ int RadosObject::transition(Bucket* bucket,
                                            mtime, olh_epoch, dpp, y, flags & FLAG_LOG_OP);
 }
 
+/* the placement an instance's manifest puts its bytes in: the cold one
+ * when its tail is addressed through the internal cold class */
+static rgw::ite::Placement ite_placement_of(const RGWObjManifest* manifest)
+{
+  if (manifest && rgw_is_cold_storage_class(
+          manifest->get_tail_placement().placement_rule.storage_class)) {
+    return rgw::ite::Placement::Cold;
+  }
+  return rgw::ite::Placement::Hot;
+}
+
+int RadosObject::ite_get_placement(const DoutPrefixProvider* dpp,
+                                   rgw::ite::Placement* placement,
+                                   optional_yield y)
+{
+  // as a read resolves it, so that this is the head a move rewrites
+  int r = load_obj_state(dpp, y, true);
+  if (r < 0) {
+    return r;
+  }
+  if (!state.exists) {
+    return -ENOENT;
+  }
+  *placement = ite_placement_of(manifest);
+  return 0;
+}
+
+int RadosObject::ite_move_placement(const DoutPrefixProvider* dpp,
+                                    rgw::ite::Placement target,
+                                    uint64_t expected_gen,
+                                    optional_yield y)
+{
+  RGWRados* rados = store->getRados();
+  RGWBucketInfo& info = bucket->get_info();
+  if (!info.bucket.explicit_placement.data_pool.empty()) {
+    return -EOPNOTSUPP; // explicit pools have no storage classes
+  }
+
+  // the index entry names the instance: its generation, and the mtime and
+  // olh epoch the rewrite keeps. The index addresses the null version with
+  // an empty instance.
+  rgw_obj index_obj = get_obj();
+  if (index_obj.key.have_null_instance()) {
+    index_obj.key.instance.clear();
+  }
+  rgw_bucket_dir_entry dirent;
+  int r = rados->bi_get_instance(dpp, info, index_obj, &dirent, y);
+  if (r < 0) {
+    return r;
+  }
+  if (!dirent.exists || dirent.is_delete_marker()) {
+    return -ENOENT;
+  }
+  const uint64_t gen = dirent.ite.base_gen ? dirent.ite.base_gen : dirent.ver.epoch;
+  if (expected_gen && gen != expected_gen) {
+    return -ECANCELED;
+  }
+
+  rgw::ite::Placement where;
+  r = ite_get_placement(dpp, &where, y);
+  if (r < 0) {
+    return r;
+  }
+  if (where == target) {
+    return 0;
+  }
+
+  rgw_placement_rule rule;
+  if (manifest) {
+    rule = manifest->get_tail_placement().placement_rule;
+  }
+  rule.inherit_from(bucket->get_placement_rule());
+  const std::string sc{rgw_advertised_storage_class(rule.get_storage_class())};
+  const RGWZoneParams& zone_params = store->svc()->zone->get_zone_params();
+  auto p = zone_params.placement_pools.find(rule.name);
+  if (p == zone_params.placement_pools.end() || !p->second.get_cold_data_pool(sc)) {
+    ldpp_dout(dpp, 10) << "storage class " << sc << " of " << get_obj()
+                       << " has no cold placement" << dendl;
+    return -EOPNOTSUPP;
+  }
+  rule.storage_class = target == rgw::ite::Placement::Cold ? rgw_cold_storage_class(sc) : sc;
+
+  // copy into the target placement, then rewrite the head to it; the old
+  // copy goes to gc only once the head names the new one, and the head
+  // write fails with -ECANCELED if the instance changed since it was read,
+  // by a metadata update too, which the retry then keeps.
+  // The move is the zone's own, so it is not logged for sync, and the
+  // index entry keeps the instance's ITE state.
+  r = rados->transition_obj(*rados_ctx, info, get_obj(), rule, dirent.meta.mtime,
+                            dirent.versioned_epoch, dpp, y, false, FLAG_ITE_PRESERVE);
+  invalidate();
+  manifest = nullptr;
+  return r;
+}
+
 int RadosObject::restore_obj_from_cloud(Bucket* bucket,
                                   rgw::sal::PlacementTier* tier,
                           	  CephContext* cct,

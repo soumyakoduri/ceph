@@ -439,6 +439,7 @@ class StoreObject : public Object {
     }
     virtual int ite_move_placement(const DoutPrefixProvider* dpp,
                                    rgw::ite::Placement target,
+                                   uint64_t expected_gen,
                                    optional_yield y) override {
       return -EOPNOTSUPP;
     }

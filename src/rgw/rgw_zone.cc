@@ -740,6 +740,9 @@ void RGWZoneStorageClass::dump(Formatter *f) const
   if (compression_type) {
     encode_json("compression_type", compression_type.get(), f);
   }
+  if (cold_data_pool) {
+    encode_json("cold_data_pool", cold_data_pool.get(), f);
+  }
 }
 
 list<RGWZoneStorageClass> RGWZoneStorageClass::generate_test_instances()
@@ -749,6 +752,9 @@ list<RGWZoneStorageClass> RGWZoneStorageClass::generate_test_instances()
   o.emplace_back();
   o.back().data_pool = rgw_pool("pool1");
   o.back().compression_type = "zlib";
+  o.emplace_back();
+  o.back().data_pool = rgw_pool("hot");
+  o.back().cold_data_pool = rgw_pool("cold");
   return o;
 }
 
@@ -756,6 +762,7 @@ void RGWZoneStorageClass::decode_json(JSONObj *obj)
 {
   JSONDecoder::decode_json("data_pool", data_pool, obj);
   JSONDecoder::decode_json("compression_type", compression_type, obj);
+  JSONDecoder::decode_json("cold_data_pool", cold_data_pool, obj);
 }
 
 void RGWTierACLMapping::decode_json(JSONObj *obj)

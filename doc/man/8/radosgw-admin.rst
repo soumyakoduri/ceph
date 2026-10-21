@@ -799,6 +799,12 @@ Options
 
    The placement target data extra (non-EC) pool.
 
+.. option:: --cold-data-pool=<pool>
+
+   The cold placement of a two-placement storage class, the pool the
+   intelligent tiering engine moves an object's bytes to once it commits
+   the object cold. An empty value removes the cold placement.
+
 .. option:: --placement-index-type=<type>
 
    The placement target index type (normal, indexless, or #id).

@@ -3467,7 +3467,11 @@ int RGWRados::Object::Write::_do_write_meta(uint64_t size, uint64_t accounted_si
     return r;
   }
   bool guard = ((target->manifest) || (target->state->obj_tag.length() != 0)) && (!target->state->fake_tag);
-  bool set_attr_id_tag = guard && target->obj.key.instance.empty() && (meta.if_nomatch == nullptr || meta.if_nomatch != "*"sv);
+  // an ITE move rewrites the head of an instance it has read, versioned or
+  // not, so any change since, a metadata update included, must fail it
+  // rather than be overwritten
+  const bool ite_move = (meta.bilog_flags & RGW_BILOG_FLAG_ITE_PRESERVE);
+  bool set_attr_id_tag = guard && (target->obj.key.instance.empty() || ite_move) && (meta.if_nomatch == nullptr || meta.if_nomatch != "*"sv);
   r = target->prepare_atomic_modification(rctx.dpp, op, reset_obj, ptag, meta.modify_tail, set_attr_id_tag, rctx.y);
   if (r < 0)
     return r;
@@ -3518,7 +3522,10 @@ int RGWRados::Object::Write::_do_write_meta(uint64_t size, uint64_t accounted_si
   }
 
   if (meta.manifest) {
-    storage_class = meta.manifest->get_tail_placement().placement_rule.storage_class;
+    // a cold placement's internal class stays in the manifest; the
+    // attribute and the index carry the class the instance was given
+    storage_class = std::string{rgw_advertised_storage_class(
+        meta.manifest->get_tail_placement().placement_rule.storage_class)};
 
     /* remove existing manifest attr */
     iter = attrs.find(RGW_ATTR_MANIFEST);
@@ -3612,8 +3619,12 @@ int RGWRados::Object::Write::_do_write_meta(uint64_t size, uint64_t accounted_si
 
   bool versioned_op = (target->versioning_enabled() || is_olh || versioned_target);
 
+  uint16_t bilog_flags = meta.bilog_flags;
   if (versioned_op) {
-    index_op->set_bilog_flags(RGW_BILOG_FLAG_VERSIONED_OP);
+    bilog_flags |= RGW_BILOG_FLAG_VERSIONED_OP;
+  }
+  if (bilog_flags) {
+    index_op->set_bilog_flags(bilog_flags);
   }
 
   if (!index_op->is_prepared()) {
@@ -5613,7 +5624,8 @@ int RGWRados::copy_obj_data(RGWObjectCtx& obj_ctx,
                const DoutPrefixProvider *dpp,
                optional_yield y,
                uint64_t src_accounted_size,
-               bool log_op)
+               bool log_op,
+               uint32_t write_flags)
 {
   string tag;
   append_rand_alpha(cct, tag, tag, 32);
@@ -5698,7 +5710,7 @@ int RGWRados::copy_obj_data(RGWObjectCtx& obj_ctx,
   return aoproc.complete(accounted_size, etag, mtime, set_mtime, attrs,
 			    rgw::cksum::no_cksum, delete_at,
                             nullptr, nullptr, nullptr, nullptr, nullptr, rctx,
-                            log_op ? rgw::sal::FLAG_LOG_OP : 0);
+                            (log_op ? rgw::sal::FLAG_LOG_OP : 0) | write_flags);
 }
 
 int fixup_manifest_to_parts_len(const DoutPrefixProvider *dpp, rgw::sal::Attrs &src_attrs) {
@@ -5800,7 +5812,8 @@ int RGWRados::transition_obj(RGWObjectCtx& obj_ctx,
                              uint64_t olh_epoch,
                              const DoutPrefixProvider *dpp,
                              optional_yield y,
-                             bool log_op)
+                             bool log_op,
+                             uint32_t write_flags)
 {
   rgw::sal::Attrs attrs;
   real_time read_mtime;
@@ -5964,7 +5977,8 @@ int RGWRados::transition_obj(RGWObjectCtx& obj_ctx,
                       dpp,
                       y,
                       0, /* src_accounted_size: unknown here, keep ofs-based size */
-                      log_op);
+                      log_op,
+                      write_flags);
   if (ret < 0) {
     return ret;
   }
@@ -8043,6 +8057,9 @@ int RGWRados::set_attrs(const DoutPrefixProvider *dpp, RGWObjectCtx* octx, RGWBu
 
   RGWRados::Bucket bop(this, bucket_info);
   RGWRados::Bucket::UpdateIndex index_op(&bop, obj);
+  // a metadata-only update keeps the data instance, and with it the
+  // instance's ITE state
+  index_op.set_bilog_flags(RGW_BILOG_FLAG_ITE_PRESERVE);
 
   if (state) {
     string tag;

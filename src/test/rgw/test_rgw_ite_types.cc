@@ -4,10 +4,13 @@
 #include "rgw_ite_types.h"
 
 #include <set>
+#include <sstream>
 #include <gtest/gtest.h>
 
 #include "common/ceph_context.h"
+#include "common/ceph_json.h"
 #include "global/global_context.h"
+#include "rgw_zone_types.h"
 
 using namespace rgw::ite;
 
@@ -212,4 +215,83 @@ TEST(ITETypes, MoveKinds)
   EXPECT_EQ(RGWITEMovePending::Commit, move_pending_of(MoveKind::Commit));
   EXPECT_EQ(RGWITEMovePending::PreWarm, move_pending_of(MoveKind::PreWarm));
   EXPECT_EQ(RGWITEMovePending::Restore, move_pending_of(MoveKind::Restore));
+}
+
+TEST(ITETypes, ColdStorageClassNames)
+{
+  EXPECT_FALSE(rgw_is_cold_storage_class("INTELLIGENT_TIER"));
+  EXPECT_TRUE(rgw_is_cold_storage_class("INTELLIGENT_TIER@cold"));
+  EXPECT_FALSE(rgw_is_cold_storage_class("@cold"));
+  EXPECT_EQ("INTELLIGENT_TIER", rgw_advertised_storage_class("INTELLIGENT_TIER@cold"));
+  EXPECT_EQ("STANDARD", rgw_advertised_storage_class("STANDARD"));
+  EXPECT_EQ("INTELLIGENT_TIER@cold", rgw_cold_storage_class("INTELLIGENT_TIER"));
+  EXPECT_EQ("INTELLIGENT_TIER@cold", rgw_cold_storage_class("INTELLIGENT_TIER@cold"));
+  EXPECT_EQ("STANDARD@cold", rgw_cold_storage_class(""));
+}
+
+TEST(ITETypes, TwoPlacementStorageClass)
+{
+  RGWZonePlacementInfo info;
+  const rgw_pool standard("std"), hot("hot"), cold("cold");
+  const std::string zlib = "zlib";
+  info.storage_classes.set_storage_class("STANDARD", &standard, nullptr);
+  info.storage_classes.set_storage_class("INTELLIGENT_TIER", &hot, &zlib, &cold);
+  EXPECT_EQ(hot, info.get_data_pool("INTELLIGENT_TIER"));
+  EXPECT_EQ(cold, info.get_data_pool("INTELLIGENT_TIER@cold"));
+  EXPECT_EQ("zlib", info.get_compression_type("INTELLIGENT_TIER@cold"));
+  ASSERT_TRUE(info.get_cold_data_pool("INTELLIGENT_TIER"));
+  EXPECT_EQ(cold, *info.get_cold_data_pool("INTELLIGENT_TIER@cold"));
+  // no client or bucket can name the internal class
+  EXPECT_TRUE(info.storage_class_exists("INTELLIGENT_TIER"));
+  EXPECT_FALSE(info.storage_class_exists("INTELLIGENT_TIER@cold"));
+  // without a cold placement the cold name resolves to no pool, never to
+  // the hot one or the standard one
+  EXPECT_FALSE(info.get_cold_data_pool("STANDARD"));
+  EXPECT_TRUE(info.get_data_pool("STANDARD@cold").empty());
+  EXPECT_TRUE(info.get_data_pool("MISSING@cold").empty());
+  EXPECT_EQ(standard, info.get_data_pool("MISSING"));
+  // an empty pool removes the cold placement and keeps the rest
+  const rgw_pool none;
+  info.storage_classes.set_storage_class("INTELLIGENT_TIER", nullptr, nullptr, &none);
+  EXPECT_FALSE(info.get_cold_data_pool("INTELLIGENT_TIER"));
+  EXPECT_EQ(hot, info.get_data_pool("INTELLIGENT_TIER"));
+  EXPECT_EQ("zlib", info.get_compression_type("INTELLIGENT_TIER"));
+}
+
+TEST(ITETypes, ZoneStorageClassEncoding)
+{
+  RGWZoneStorageClass c;
+  c.data_pool = rgw_pool("hot");
+  c.cold_data_pool = rgw_pool("cold");
+  ceph::buffer::list bl;
+  encode(c, bl);
+  RGWZoneStorageClass d;
+  auto p = bl.cbegin();
+  decode(d, p);
+  EXPECT_EQ(c.data_pool, d.data_pool);
+  EXPECT_EQ(c.cold_data_pool, d.cold_data_pool);
+
+  // as a zone written before two-placement classes holds it
+  ceph::buffer::list v1;
+  ENCODE_START(1, 1, v1);
+  encode(c.data_pool, v1);
+  encode(c.compression_type, v1);
+  ENCODE_FINISH(v1);
+  p = v1.cbegin();
+  decode(d, p);
+  EXPECT_EQ(c.data_pool, d.data_pool);
+  EXPECT_FALSE(d.cold_data_pool);
+
+  JSONFormatter f;
+  f.open_object_section("storage_class");
+  c.dump(&f);
+  f.close_section();
+  std::stringstream ss;
+  f.flush(ss);
+  JSONParser parser;
+  ASSERT_TRUE(parser.parse(ss.str().c_str(), ss.str().size()));
+  RGWZoneStorageClass j;
+  j.decode_json(&parser);
+  EXPECT_EQ(c.data_pool, j.data_pool);
+  EXPECT_EQ(c.cold_data_pool, j.cold_data_pool);
 }

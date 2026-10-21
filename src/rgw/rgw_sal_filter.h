@@ -876,8 +876,9 @@ public:
   }
   virtual int ite_move_placement(const DoutPrefixProvider* dpp,
                                  rgw::ite::Placement target,
+                                 uint64_t expected_gen,
                                  optional_yield y) override {
-    return next->ite_move_placement(dpp, target, y);
+    return next->ite_move_placement(dpp, target, expected_gen, y);
   }
   virtual bool placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2) override;
   virtual int dump_obj_layout(const DoutPrefixProvider *dpp, optional_yield y,

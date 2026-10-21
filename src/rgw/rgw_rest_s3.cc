@@ -79,6 +79,7 @@
 #include "rgw_sts.h"
 #include "rgw_cksum_pipe.h"
 #include "rgw_s3select.h"
+#include "rgw_ite.h"
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_rgw
@@ -3321,6 +3322,7 @@ int RGWPostObj_ObjStore_S3::get_params(optional_yield y)
       err_msg = "The storage class you specified is not valid";
       return -EINVAL;
     }
+    rgw::ite::select_placement(s->cct, driver, s->bucket->get_attrs(), &s->dest_placement);
   }
 
   map<string, struct post_form_part, ltstr_nocase>::iterator piter =

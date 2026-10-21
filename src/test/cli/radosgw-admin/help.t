@@ -316,6 +316,8 @@
      --index-pool=<pool>               placement target index pool
      --data-pool=<pool>                placement target data pool
      --data-extra-pool=<pool>          placement target data extra (non-ec) pool
+     --cold-data-pool=<pool>           cold placement of a two-placement (ITE) storage class;
+                                       empty to remove it
      --placement-index-type=<type>     placement target index type (normal, indexless, or #id)
      --placement-inline-data=<true>    set whether the placement target is configured to store a data
                                        chunk inline in head objects

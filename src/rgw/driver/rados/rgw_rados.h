@@ -883,6 +883,7 @@ public:
         bool keep_tail;
         bool completeMultipart;
         bool appendable;
+        uint16_t bilog_flags{0}; // index-only flags, e.g. RGW_BILOG_FLAG_ITE_PRESERVE
 
         MetaParams() : mtime(NULL), rmattrs(NULL), data(NULL), manifest(NULL), ptag(NULL),
                  remove_objs(NULL), category(RGWObjCategory::Main), flags(0),
@@ -1320,7 +1321,8 @@ public:
                const DoutPrefixProvider *dpp,
                optional_yield y,
                uint64_t src_accounted_size = 0,
-               bool log_op = true);
+               bool log_op = true,
+               uint32_t write_flags = 0 /* rgw::sal::FLAG_*, besides FLAG_LOG_OP */);
 
   int transition_obj(RGWObjectCtx& obj_ctx,
                      RGWBucketInfo& bucket_info,
@@ -1330,7 +1332,8 @@ public:
                      uint64_t olh_epoch,
                      const DoutPrefixProvider *dpp,
                      optional_yield y,
-                     bool log_op = true);
+                     bool log_op = true,
+                     uint32_t write_flags = 0);
 int restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
                              RGWObjectCtx& obj_ctx,
                              RGWBucketInfo& dest_bucket_info,
