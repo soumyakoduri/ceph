@@ -81,6 +81,7 @@ set(librgw_common_srcs
   rgw_ite.cc
   rgw_ite_aggregator.cc
   rgw_ite_temperature.cc
+  rgw_ite_fft_detector.cc
   rgw_restore_waiter.cc
   rgw_metadata.cc
   rgw_multi.cc

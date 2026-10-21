@@ -105,12 +105,11 @@ int TemperatureScorer::score(const DoutPrefixProvider* dpp, rgw::sal::Bucket* bu
   const TimeScale ts = ctx.timescale();
   const Granularity g = ctx.granularity();
   // a window is scored once the aggregator has surely folded all of it in
-  const auto settled = now - 2 * ctx.period("rgw_ite_agg_period");
-  const uint64_t open = Window::of(settled, g, ts).index;
-  if (open == 0) {
+  const auto settled = ctx.settled_window(now);
+  if (!settled) {
     return 0;
   }
-  const uint64_t last = open - 1;
+  const uint64_t last = settled->index;
 
   uint64_t first;
   if (p.last_scored && p.last_scored->granularity == g) {
@@ -199,7 +198,8 @@ int TemperatureScorer::fold_window(const DoutPrefixProvider* dpp,
       heat[key->obj.key()].emplace_back(key->obj.gen, weight * n);
     }
     for (const auto& [key, by_gen] : heat) {
-      if (ctx.going_down) {
+      // only a clock read until a renewal is due
+      if (ctx.going_down || !lock.keep(dpp, y)) {
         return STOPPED;
       }
       r = fold_object(dpp, bucket, key, by_gen, w, knobs, y);

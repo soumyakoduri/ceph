@@ -291,6 +291,19 @@ struct MemAggStore : public rgw::sal::StoreITEAggStore {
   }
 };
 
+/* add n accesses of one instance to a window, in the instance's shard */
+inline void add_count(MemAggStore& agg, const rgw_bucket& b, const Window& w,
+                      const std::string& name, uint64_t gen, Op op, uint64_t n,
+                      CallerType caller = CallerType::User)
+{
+  CountKey k;
+  k.obj = InstanceId(name, "", gen);
+  k.op = op;
+  k.caller = caller;
+  const uint32_t shard = agg_shard_of(name, agg.num_shards());
+  agg.windows[MemAggStore::Key{b.get_key(), w, shard}].counts[k.to_str()] += n;
+}
+
 /* contract three, with the cls setter's rules: masks, the generation
  * check, and base_gen stamped on first write */
 struct MemStateStore : public rgw::sal::StoreITEStateStore {

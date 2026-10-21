@@ -80,6 +80,9 @@ struct Context {
   ceph::timespan period(std::string_view key) const;
   /* windows the aggregated store keeps at granularity g */
   uint64_t retention(Granularity g) const;
+  /* the newest window the aggregator has surely folded in completely by
+   * now: one closed for two aggregation periods. nullopt before the first. */
+  std::optional<Window> settled_window(ceph::real_time now) const;
 
   int load_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& b,
                   std::unique_ptr<rgw::sal::Bucket>* bucket, optional_yield y);
@@ -176,6 +179,8 @@ class Manager : public RGWRealmReloader::Pauser, public DoutPrefixProvider {
   std::vector<std::unique_ptr<WorkerThread>> workers;
   bool running = false;
 
+  void add_worker(std::string name, WorkerThread::Cycle cycle,
+                  WorkerThread::Period period);
   void add_worker(std::string name, WorkerThread::Cycle cycle,
                   std::string_view period_key);
   int start_workers();

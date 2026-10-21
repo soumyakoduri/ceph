@@ -17,6 +17,7 @@
 #include "rgw_common.h"
 #include "rgw_ite.h"
 #include "rgw_ite_aggregator.h"
+#include "rgw_ite_fft_detector.h"
 #include "rgw_ite_temperature.h"
 #include "rgw_ite_types.h"
 #include "rgw_zone.h"
@@ -38,6 +39,7 @@ rgw::SiteConfig* site = nullptr;
 
 struct ITERados : public ::testing::Test {
   std::string saved_pool;
+  std::map<std::string, std::string> saved;
 
   void SetUp() override {
     // a private pool per test run keeps reruns independent
@@ -50,6 +52,16 @@ struct ITERados : public ::testing::Test {
     auto rados = static_cast<sal::RadosStore*>(driver)->getRados()->get_rados_handle();
     rados->pool_delete(g_conf().get_val<std::string>("rgw_ite_pool").c_str());
     g_conf().set_val_or_die("rgw_ite_pool", saved_pool);
+    for (const auto& [k, v] : saved) {
+      g_conf().set_val_or_die(k, v);
+    }
+  }
+
+  void set_conf(const std::string& key, const std::string& val) {
+    std::string old;
+    ASSERT_EQ(0, g_conf().get_val(key, &old));
+    saved.try_emplace(key, old);
+    g_conf().set_val_or_die(key, val);
   }
 };
 
@@ -614,6 +626,67 @@ TEST_F(ITERados, TemperatureScorerScoresIndexEntries)
   EXPECT_EQ(0u, again.stats().objects);
   ASSERT_EQ(0, ctx.state->get_state(dpp, tb.bucket.get(), rgw_obj_key("a"), &e, null_yield));
   EXPECT_NEAR(0.3, e.ite.temperature, 1e-9);
+}
+
+TEST_F(ITERados, FFTDetectorWritesVerdictsToIndexEntries)
+{
+  set_conf("rgw_ite_fft_span", "21");
+  set_conf("rgw_ite_fft_warmup", "0");
+  TestBucket tb;
+  ASSERT_EQ(0, tb.create("ite-fft", 3, true));
+  ASSERT_EQ(0, tb.add_entry("weekly", 5, 4096));
+  ASSERT_EQ(0, tb.add_entry("burst", 5, 4096));
+  const rgw_bucket key = tb.bucket->get_key();
+
+  Context ctx;
+  ctx.cct = g_ceph_context;
+  ctx.driver = driver;
+  ctx.cookie = "ceph_test_rgw_ite";
+  ctx.agg = driver->get_ite_agg_store();
+  ctx.state = driver->get_ite_state_store();
+  ASSERT_EQ(0, ctx.agg->initialize(dpp, null_yield));
+
+  const TimeScale ts = ctx.timescale();
+  const Window today = Window::of(ceph::real_clock::now(), Granularity::Day, ts);
+  const auto noon = today.start(ts) + std::chrono::hours(12);
+  BucketProgress p;
+  p.bucket = key;
+  p.enabled_at = noon - std::chrono::hours(24 * 30);
+  ASSERT_EQ(0, ctx.agg->put_bucket(dpp, p, null_yield));
+  const uint32_t shards = ctx.agg->num_shards();
+  // each object's counts come from its own buffer shard, so the two never
+  // contend for one marker even when they share an aggregated shard
+  auto reads = [&](const std::string& name, uint32_t buffer_shard,
+                   std::initializer_list<uint64_t> days) {
+    for (auto d : days) {
+      const Window w{Granularity::Day, today.index - d};
+      ASSERT_EQ(0, ctx.agg->add_counts(dpp, key, w, agg_shard_of(name, shards),
+                                       buffer_shard, "", "m",
+                                       {{count_key(name, 5, Op::Get), 1}}, null_yield));
+    }
+  };
+  reads("weekly", 0, {1, 8, 15});
+  reads("burst", 1, {1, 2, 3});
+
+  FFTDetector detector(ctx);
+  ASSERT_EQ(0, detector.process_bucket(dpp, key, noon, null_yield));
+  EXPECT_EQ(1u, detector.stats().buckets);
+  EXPECT_EQ(2u, detector.stats().candidates);
+  EXPECT_EQ(1u, detector.stats().periodic);
+  ObjectEntry e;
+  ASSERT_EQ(0, ctx.state->get_state(dpp, tb.bucket.get(), rgw_obj_key("weekly"), &e,
+                                    null_yield));
+  EXPECT_TRUE(e.ite.fft_periodic);
+  EXPECT_EQ(7u, e.ite.fft_period_days);
+  const Window next{Granularity::Day, today.index - 1 + 7};
+  EXPECT_EQ(to_epoch_secs(next.start(ts)), e.ite.fft_next_access);
+  EXPECT_EQ(0.0, e.ite.temperature); // only the FFT fields are written
+  ASSERT_EQ(0, ctx.state->get_state(dpp, tb.bucket.get(), rgw_obj_key("burst"), &e,
+                                    null_yield));
+  EXPECT_FALSE(e.ite.fft_periodic);
+
+  ASSERT_EQ(0, ctx.agg->get_bucket(dpp, key, &p, null_yield));
+  EXPECT_EQ(noon, p.last_fft);
 }
 
 int main(int argc, const char** argv)

@@ -9,6 +9,7 @@
 #include "common/errno.h"
 #include "common/random_string.h"
 #include "rgw_ite_aggregator.h"
+#include "rgw_ite_fft_detector.h"
 #include "rgw_ite_temperature.h"
 #include "rgw_sal.h"
 
@@ -98,6 +99,17 @@ uint64_t Context::retention(Granularity g) const
 {
   return retention_windows(cct->_conf.get_val<int64_t>("rgw_ite_fft_span"),
                            cct->_conf.get_val<int64_t>("rgw_ite_agg_retention_margin"), g);
+}
+
+std::optional<Window> Context::settled_window(ceph::real_time now) const
+{
+  const Granularity g = granularity();
+  const auto settled = now - 2 * period("rgw_ite_agg_period");
+  const uint64_t open = Window::of(settled, g, timescale()).index;
+  if (open == 0) {
+    return std::nullopt;
+  }
+  return Window{g, open - 1};
 }
 
 int Context::load_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& b,
@@ -353,12 +365,17 @@ void Manager::stop()
 }
 
 void Manager::add_worker(std::string name, WorkerThread::Cycle cycle,
+                         WorkerThread::Period period)
+{
+  workers.push_back(std::make_unique<WorkerThread>(
+      cct, std::move(name), std::move(cycle), std::move(period)));
+}
+
+void Manager::add_worker(std::string name, WorkerThread::Cycle cycle,
                          std::string_view period_key)
 {
   const std::string key(period_key);
-  workers.push_back(std::make_unique<WorkerThread>(
-      cct, std::move(name), std::move(cycle),
-      [this, key] { return ctx.period(key); }));
+  add_worker(std::move(name), std::move(cycle), [this, key] { return ctx.period(key); });
 }
 
 int Manager::start_workers()
@@ -373,6 +390,16 @@ int Manager::start_workers()
     TemperatureScorer scorer(ctx);
     return scorer.process(dpp, y);
   }, "rgw_ite_temperature_period");
+  // the detector runs each bucket once per rgw_ite_fft_period, checked per
+  // bucket; it wakes at the scorer's cadence so that a restart or a second
+  // gateway never pushes a bucket's run back by a whole period
+  add_worker("fft", [this](const DoutPrefixProvider* dpp, optional_yield y) {
+    FFTDetector detector(ctx);
+    return detector.process(dpp, y);
+  }, [this] {
+    return std::min(ctx.period("rgw_ite_fft_period"),
+                    ctx.period("rgw_ite_temperature_period"));
+  });
 
   for (auto& w : workers) {
     w->start();

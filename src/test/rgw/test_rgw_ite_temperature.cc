@@ -96,12 +96,7 @@ struct TemperatureTest : public ::testing::Test {
 
   void count(const rgw_bucket& b, const Window& w, const std::string& name,
              uint64_t gen, Op op, uint64_t n, CallerType caller = CallerType::User) {
-    CountKey k;
-    k.obj = InstanceId(name, "", gen);
-    k.op = op;
-    k.caller = caller;
-    const uint32_t shard = agg_shard_of(name, agg->num_shards());
-    agg->windows[MemAggStore::Key{b.get_key(), w, shard}].counts[k.to_str()] += n;
+    add_count(*agg, b, w, name, gen, op, n, caller);
   }
 
   const rgw_bucket_ite_state& ite(const std::string& name) {
