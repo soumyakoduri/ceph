@@ -77,6 +77,8 @@ set(librgw_common_srcs
   rgw_lc_s3.cc
   rgw_restore.cc
   rgw_ite_types.cc
+  rgw_ite_sink.cc
+  rgw_ite.cc
   rgw_restore_waiter.cc
   rgw_metadata.cc
   rgw_multi.cc
@@ -241,6 +243,7 @@ list(APPEND librgw_rados_srcs
   driver/rados/rgw_rest_realm.cc
   driver/rados/rgw_rest_user.cc
   driver/rados/rgw_sal_rados.cc
+  driver/rados/rgw_sal_rados_ite.cc
   driver/rados/rgw_service.cc
   driver/rados/rgw_sync.cc
   driver/rados/rgw_sync_counters.cc

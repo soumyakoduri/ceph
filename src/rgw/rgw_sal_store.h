@@ -559,6 +559,11 @@ class StoreITEWriteBuffer : public ITEWriteBuffer {
 public:
   StoreITEWriteBuffer() = default;
   virtual ~StoreITEWriteBuffer() = default;
+
+  /* a backend that appends synchronously has nothing to flush */
+  virtual int flush(const DoutPrefixProvider* dpp, optional_yield y) override {
+    return 0;
+  }
 };
 
 class StoreITEAggStore : public ITEAggStore {

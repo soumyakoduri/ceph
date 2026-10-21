@@ -24,6 +24,9 @@ namespace rgw::lua {
 namespace rgw::dedup {
   class Background;
 }
+namespace rgw::ite {
+  class Sink;
+}
 namespace rgw::sal {
   class ConfigStore;
   class Driver;
@@ -52,6 +55,8 @@ struct RGWProcessEnv {
   std::unique_ptr<rgw::auth::StrategyRegistry> auth_registry;
   ActiveRateLimiter* ratelimiting = nullptr;
   std::unique_ptr<rgw::kms::KMSCache> kms_cache;
+  // the ITE access-log sink, when ITE runs in this gateway
+  rgw::ite::Sink* ite_sink = nullptr;
 
 #ifdef WITH_ARROW_FLIGHT
   // managed by rgw:flight::FlightFrontend in rgw_flight_frontend.cc

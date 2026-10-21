@@ -651,6 +651,9 @@ int rgw::AppMain::init_frontends2(RGWLib* rgwlib)
     if (dedup_background) {
       rgw_pauser->add_pauser(dedup_background.get());
     }
+    if (ite) {
+      rgw_pauser->add_pauser(ite.get());
+    }
 #ifdef WITH_RADOSGW_LANCEDB
     if (s3vector_pauser) {
       rgw_pauser->add_pauser(s3vector_pauser.get());
@@ -743,6 +746,22 @@ void rgw::AppMain::init_dedup()
 }
 #endif
 
+void rgw::AppMain::init_ite()
+{
+  if (!g_conf().get_val<bool>("rgw_ite_enabled")) {
+    return;
+  }
+  ite = std::make_unique<rgw::ite::Manager>(dpp->get_cct(), env.driver);
+  int r = ite->start();
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << "WARNING: intelligent tiering is enabled but failed to start: "
+                      << cpp_strerror(-r) << dendl;
+    ite.reset();
+    return;
+  }
+  env.ite_sink = ite->get_sink();
+} /* init_ite */
+
 void rgw::AppMain::init_kms_cache()
 {
   if (!g_conf().get_val<bool>("rgw_crypt_s3_kms_cache_enabled")) {
@@ -798,6 +817,12 @@ void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
 
   if (lua_background) {
     lua_background->shutdown();
+  }
+
+  if (ite) {
+    env.ite_sink = nullptr;
+    ite->stop();
+    ite.reset();
   }
 
 #ifdef WITH_RADOSGW_LANCEDB

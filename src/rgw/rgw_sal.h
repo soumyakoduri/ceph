@@ -1846,14 +1846,19 @@ public:
   /** Number of shards */
   virtual uint32_t num_shards() const = 0;
   /** Append one event. Must be cheap: this runs for every recorded
-   * request. */
+   * request, so a backend may batch events in memory. */
   virtual int append(const DoutPrefixProvider* dpp,
                      const rgw::ite::AccessEvent& event, optional_yield y) = 0;
-  /** Read up to max entries of a shard after cursor ("" for the start) */
+  /** Make every event appended so far durable */
+  virtual int flush(const DoutPrefixProvider* dpp, optional_yield y) = 0;
+  /** Read up to max entries of a shard after cursor ("" for the start).
+   * next_cursor is the position of the last entry read, including any
+   * entry that could not be decoded, so a consumer can always advance. */
   virtual int list(const DoutPrefixProvider* dpp, uint32_t shard,
                    const std::string& cursor, uint32_t max,
                    std::vector<rgw::ite::AccessEventEntry>& entries,
-                   bool* truncated, optional_yield y) = 0;
+                   std::string* next_cursor, bool* truncated,
+                   optional_yield y) = 0;
   /** Trim a shard up to and including cursor */
   virtual int trim(const DoutPrefixProvider* dpp, uint32_t shard,
                    const std::string& cursor, optional_yield y) = 0;
@@ -1970,10 +1975,13 @@ public:
   virtual uint32_t num_shards() const = 0;
   virtual int append(const DoutPrefixProvider* dpp,
                      const rgw::ite::MoveAction& action, optional_yield y) = 0;
+  /** Read up to max actions of a shard after cursor; next_cursor as for
+   * ITEWriteBuffer::list() */
   virtual int list(const DoutPrefixProvider* dpp, uint32_t shard,
                    const std::string& cursor, uint32_t max,
                    std::vector<rgw::ite::MoveActionEntry>& entries,
-                   bool* truncated, optional_yield y) = 0;
+                   std::string* next_cursor, bool* truncated,
+                   optional_yield y) = 0;
   /** Acknowledge (trim) actions up to and including cursor */
   virtual int ack(const DoutPrefixProvider* dpp, uint32_t shard,
                   const std::string& cursor, optional_yield y) = 0;

@@ -516,6 +516,7 @@ done:
   }
   if (should_log) {
     rgw_log_op(rest, s, op, penv.olog.get());
+    rgw_log_ite_access(s, op);
   }
 
   if (op && op->always_do_bucket_logging()) {

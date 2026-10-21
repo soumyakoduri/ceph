@@ -158,7 +158,9 @@ add_ceph_unittest(unittest_rgw_ite_types)
 target_link_libraries(unittest_rgw_ite_types ${rgw_libs})
 
 # unittest_rgw_ite_sal
-add_executable(unittest_rgw_ite_sal test_rgw_ite_sal.cc)
+add_executable(unittest_rgw_ite_sal
+  test_rgw_ite_sal.cc
+  $<TARGET_OBJECTS:unit-main>)
 add_ceph_unittest(unittest_rgw_ite_sal)
 target_link_libraries(unittest_rgw_ite_sal ${rgw_libs})
 
@@ -459,6 +461,14 @@ target_link_libraries(unittest_log_backing
 endif()
 
 if(WITH_RADOSGW_RADOS)
+add_executable(unittest_rgw_ite_sink test_rgw_ite_sink.cc)
+add_ceph_unittest(unittest_rgw_ite_sink)
+target_include_directories(unittest_rgw_ite_sink
+  SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
+target_link_libraries(unittest_rgw_ite_sink unit-main ${rgw_libs})
+endif()
+
+if(WITH_RADOSGW_RADOS)
 add_executable(unittest_rgw_lua test_rgw_lua.cc)
 add_ceph_unittest(unittest_rgw_lua)
 target_include_directories(unittest_rgw_lua
@@ -467,6 +477,16 @@ target_link_libraries(unittest_rgw_lua unit-main ${rgw_libs})
 endif()
 
 if(WITH_RADOSGW_RADOS)
+add_executable(ceph_test_rgw_ite test_rgw_ite_rados.cc)
+target_include_directories(ceph_test_rgw_ite
+  SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
+target_link_libraries(ceph_test_rgw_ite ${rgw_libs} librados
+  cls_rgw_client cls_lock_client
+  global ${LIB_RESOLV}
+  ${CURL_LIBRARIES} ${EXPAT_LIBRARIES} ${BLKID_LIBRARIES}
+  GTest::GTest)
+install(TARGETS ceph_test_rgw_ite DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 add_executable(radosgw-cr-test rgw_cr_test.cc)
 target_link_libraries(radosgw-cr-test ${rgw_libs} librados
   cls_rgw_client cls_otp_client cls_lock_client cls_refcount_client

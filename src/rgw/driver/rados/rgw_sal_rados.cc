@@ -3889,6 +3889,7 @@ int RadosObject::RadosReadOp::prepare(optional_yield y, const DoutPrefixProvider
 {
   uint64_t obj_size;
   ceph::real_time mtime;
+  uint64_t epoch = 0;
 
   if (!params.lastmod) {
     params.lastmod = &mtime;
@@ -3906,6 +3907,7 @@ int RadosObject::RadosReadOp::prepare(optional_yield y, const DoutPrefixProvider
   parent_op.params.part_num = params.part_num;
   parent_op.params.obj_size = &obj_size;
   parent_op.params.attrs = &source->get_attrs();
+  parent_op.params.epoch = &epoch;
 
   int ret = parent_op.prepare(y, dpp);
   if (ret < 0)
@@ -3914,6 +3916,9 @@ int RadosObject::RadosReadOp::prepare(optional_yield y, const DoutPrefixProvider
   source->set_instance(parent_op.state.obj.key.instance);
   source->set_obj_size(obj_size);
   source->set_mtime(*params.lastmod);
+  // the generation ITE attributes this read to; a part read is served from
+  // the part's own head, whose version is not the instance's
+  source->state.epoch = params.part_num ? 0 : epoch;
   params.parts_count = parent_op.params.parts_count;
 
   return ret;

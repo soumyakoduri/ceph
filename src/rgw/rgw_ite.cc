@@ -1,0 +1,228 @@
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:nil -*-
+// vim: ts=8 sw=2 sts=2 expandtab ft=cpp
+
+#include "rgw_ite.h"
+
+#include <algorithm>
+
+#include "common/Thread.h"
+#include "common/random_string.h"
+#include "rgw_sal.h"
+
+#define dout_subsys ceph_subsys_rgw
+
+namespace rgw::ite {
+
+Context::Context() = default;
+Context::~Context() = default;
+
+int Context::init(const DoutPrefixProvider* dpp, CephContext* _cct,
+                  rgw::sal::Driver* _driver, optional_yield y)
+{
+  cct = _cct;
+  driver = _driver;
+  zone_id = driver->get_zone()->get_id();
+  cookie = gen_rand_alphanumeric(cct, 16);
+
+  buffer = driver->get_ite_write_buffer();
+  agg = driver->get_ite_agg_store();
+  state = driver->get_ite_state_store();
+  moves = driver->get_ite_move_queue();
+  if (!buffer || !agg || !state || !moves) {
+    ldpp_dout(dpp, 0) << "ERROR: driver " << driver->get_name()
+                      << " does not implement the ITE contracts" << dendl;
+    reset(dpp);
+    return -EOPNOTSUPP;
+  }
+
+  int r = buffer->initialize(dpp, y);
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << "ERROR: failed to initialize the ITE write buffer: "
+                      << cpp_strerror(-r) << dendl;
+    reset(dpp);
+    return r;
+  }
+  r = agg->initialize(dpp, y);
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << "ERROR: failed to initialize the ITE aggregated store: "
+                      << cpp_strerror(-r) << dendl;
+    reset(dpp);
+    return r;
+  }
+  r = moves->initialize(dpp, y);
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << "ERROR: failed to initialize the ITE move queue: "
+                      << cpp_strerror(-r) << dendl;
+    reset(dpp);
+    return r;
+  }
+  return 0;
+}
+
+void Context::reset(const DoutPrefixProvider* dpp)
+{
+  if (buffer) {
+    int r = buffer->flush(dpp, null_yield);
+    if (r < 0) {
+      ldpp_dout(dpp, 1) << "WARNING: failed to flush the ITE write buffer: "
+                        << cpp_strerror(-r) << dendl;
+    }
+  }
+  buffer.reset();
+  agg.reset();
+  state.reset();
+  moves.reset();
+}
+
+Granularity Context::granularity() const
+{
+  const auto g = parse_granularity(
+      cct->_conf.get_val<std::string>("rgw_ite_window_granularity"));
+  return g.value_or(Granularity::Day);
+}
+
+ceph::timespan scaled_period(const TimeScale& ts, uint64_t secs)
+{
+  const uint64_t scaled = secs * ts.secs_per_day / 86400;
+  return std::chrono::seconds(std::max<uint64_t>(1, scaled));
+}
+
+WorkerThread::WorkerThread(CephContext* cct, std::string name,
+                           Cycle cycle, Period period)
+  : cct(cct), name(std::move(name)),
+    cycle(std::move(cycle)), period(std::move(period))
+{}
+
+WorkerThread::~WorkerThread()
+{
+  stop();
+}
+
+unsigned WorkerThread::get_subsys() const
+{
+  return dout_subsys;
+}
+
+std::ostream& WorkerThread::gen_prefix(std::ostream& out) const
+{
+  return out << "rgw ite " << name << ": ";
+}
+
+void WorkerThread::start()
+{
+  std::lock_guard l{lock};
+  stopping = false;
+  const std::string tname = "ite_" + name;
+  thread = make_named_thread(tname.substr(0, 15), &WorkerThread::run, this);
+}
+
+void WorkerThread::stop()
+{
+  {
+    std::lock_guard l{lock};
+    stopping = true;
+    cond.notify_all();
+  }
+  if (thread.joinable()) {
+    thread.join();
+  }
+}
+
+void WorkerThread::run()
+{
+  std::unique_lock l{lock};
+  while (!stopping) {
+    const auto start = ceph::coarse_mono_clock::now();
+    l.unlock();
+    int r = cycle(this, null_yield);
+    if (r < 0) {
+      ldpp_dout(this, 1) << "cycle failed: " << cpp_strerror(-r) << dendl;
+    }
+    l.lock();
+    cond.wait_until(l, start + period(), [this] { return stopping; });
+  }
+}
+
+Manager::Manager(CephContext* cct, rgw::sal::Driver* driver)
+  : cct(cct), driver(driver), sink(cct)
+{}
+
+Manager::~Manager()
+{
+  stop();
+}
+
+unsigned Manager::get_subsys() const
+{
+  return dout_subsys;
+}
+
+std::ostream& Manager::gen_prefix(std::ostream& out) const
+{
+  return out << "rgw ite: ";
+}
+
+int Manager::start()
+{
+  if (running) {
+    return 0;
+  }
+  int r = ctx.init(this, cct, driver, null_yield);
+  if (r < 0) {
+    return r;
+  }
+  sink.set_buffer(ctx.buffer.get());
+  r = start_workers();
+  if (r < 0) {
+    sink.set_buffer(nullptr);
+    ctx.reset(this);
+    return r;
+  }
+  running = true;
+  ldpp_dout(this, 1) << "started with " << workers.size() << " workers" << dendl;
+  return 0;
+}
+
+void Manager::stop()
+{
+  if (!running) {
+    return;
+  }
+  sink.set_buffer(nullptr);
+  stop_workers();
+  ctx.reset(this);
+  running = false;
+}
+
+int Manager::start_workers()
+{
+  for (auto& w : workers) {
+    w->start();
+  }
+  return 0;
+}
+
+void Manager::stop_workers()
+{
+  for (auto& w : workers) {
+    w->stop();
+  }
+  workers.clear();
+}
+
+void Manager::pause()
+{
+  stop();
+}
+
+void Manager::resume(rgw::sal::Driver* _driver)
+{
+  driver = _driver;
+  int r = start();
+  if (r < 0) {
+    ldpp_dout(this, 0) << "ERROR: failed to restart after realm reload: "
+                       << cpp_strerror(-r) << dendl;
+  }
+}
+
+} // namespace rgw::ite

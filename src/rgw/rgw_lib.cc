@@ -315,6 +315,7 @@ namespace rgw {
     }
     if (should_log) {
       rgw_log_op(nullptr /* !rest */, s, op, env.olog.get());
+      rgw_log_ite_access(s, op);
     }
 
     int http_ret = s->err.http_ret;

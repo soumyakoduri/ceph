@@ -9,6 +9,8 @@
 
 #include "rgw_bucket.h"
 #include "rgw_log.h"
+#include "rgw_ite_sink.h"
+#include "rgw_process_env.h"
 #include "rgw_acl.h"
 #include "rgw_client_io.h"
 #include "rgw_rest.h"
@@ -553,6 +555,13 @@ int OpsLogRados::log(req_state* s, struct rgw_log_entry& entry)
     return -1;
   }
   return 0;
+}
+
+void rgw_log_ite_access(req_state* s, RGWOp* op)
+{
+  if (s->penv.ite_sink) {
+    s->penv.ite_sink->log(s, op);
+  }
 }
 
 int rgw_log_op(RGWREST* const rest, req_state *s, const RGWOp* op, OpsLogSink *olog)

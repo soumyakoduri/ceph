@@ -172,6 +172,7 @@ int main(int argc, char *argv[])
 #ifdef WITH_RADOSGW_RADOS
   main.init_dedup();
 #endif
+  main.init_ite();
   r = main.init_frontends2(nullptr /* RGWLib */);
   if (r != 0) {
     derr << "ERROR:  initialize frontend fail, r = " << r << dendl;

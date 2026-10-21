@@ -310,6 +310,9 @@ class RGWREST;
 
 int rgw_log_op(RGWREST* const rest, struct req_state* s,
 	             const RGWOp* op, OpsLogSink* olog);
+/* hand a finished request to the ITE access-log sink. Unlike the ops log
+ * it does not depend on rgw_enable_ops_log. */
+void rgw_log_ite_access(struct req_state* s, RGWOp* op);
 void rgw_log_usage_init(CephContext* cct, rgw::sal::Driver* driver);
 void rgw_log_usage_finalize();
 void rgw_format_ops_log_entry(struct rgw_log_entry& entry,

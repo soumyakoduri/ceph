@@ -1182,11 +1182,15 @@ public:
                      const rgw::ite::AccessEvent& event, optional_yield y) override {
     return next->append(dpp, event, y);
   }
+  virtual int flush(const DoutPrefixProvider* dpp, optional_yield y) override {
+    return next->flush(dpp, y);
+  }
   virtual int list(const DoutPrefixProvider* dpp, uint32_t shard,
                    const std::string& cursor, uint32_t max,
                    std::vector<rgw::ite::AccessEventEntry>& entries,
-                   bool* truncated, optional_yield y) override {
-    return next->list(dpp, shard, cursor, max, entries, truncated, y);
+                   std::string* next_cursor, bool* truncated,
+                   optional_yield y) override {
+    return next->list(dpp, shard, cursor, max, entries, next_cursor, truncated, y);
   }
   virtual int trim(const DoutPrefixProvider* dpp, uint32_t shard,
                    const std::string& cursor, optional_yield y) override {
@@ -1306,8 +1310,9 @@ public:
   virtual int list(const DoutPrefixProvider* dpp, uint32_t shard,
                    const std::string& cursor, uint32_t max,
                    std::vector<rgw::ite::MoveActionEntry>& entries,
-                   bool* truncated, optional_yield y) override {
-    return next->list(dpp, shard, cursor, max, entries, truncated, y);
+                   std::string* next_cursor, bool* truncated,
+                   optional_yield y) override {
+    return next->list(dpp, shard, cursor, max, entries, next_cursor, truncated, y);
   }
   virtual int ack(const DoutPrefixProvider* dpp, uint32_t shard,
                   const std::string& cursor, optional_yield y) override {

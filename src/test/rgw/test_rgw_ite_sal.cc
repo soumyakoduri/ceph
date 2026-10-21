@@ -31,6 +31,7 @@ struct FakeWriteBuffer : public StoreITEWriteBuffer {
   std::vector<AccessEvent> appended;
   std::string trimmed;
   int locks = 0;
+  int flushes = 0;
 
   int initialize(const DoutPrefixProvider*, optional_yield) override { return 0; }
   uint32_t num_shards() const override { return 4; }
@@ -38,13 +39,18 @@ struct FakeWriteBuffer : public StoreITEWriteBuffer {
     appended.push_back(e);
     return 0;
   }
+  int flush(const DoutPrefixProvider*, optional_yield) override {
+    ++flushes;
+    return 0;
+  }
   int list(const DoutPrefixProvider*, uint32_t shard, const std::string& cursor,
-           uint32_t max, std::vector<AccessEventEntry>& entries, bool* truncated,
-           optional_yield) override {
+           uint32_t max, std::vector<AccessEventEntry>& entries,
+           std::string* next, bool* truncated, optional_yield) override {
     entries.clear();
     for (const auto& e : appended) {
       entries.push_back({cursor + "+" + std::to_string(shard), e});
     }
+    *next = cursor + "+end";
     *truncated = false;
     return 0;
   }
@@ -169,12 +175,13 @@ struct FakeMoveQueue : public StoreITEMoveQueue {
     return 0;
   }
   int list(const DoutPrefixProvider*, uint32_t, const std::string&, uint32_t,
-           std::vector<MoveActionEntry>& entries, bool* truncated,
-           optional_yield) override {
+           std::vector<MoveActionEntry>& entries, std::string* next,
+           bool* truncated, optional_yield) override {
     entries.clear();
     for (const auto& a : actions) {
       entries.push_back({"m", a});
     }
+    *next = "m";
     *truncated = false;
     return 0;
   }
@@ -204,11 +211,16 @@ TEST(ITESal, FilterWriteBufferForwards)
   EXPECT_EQ(0, f.append(nullptr, e, null_yield));
   ASSERT_EQ(1u, raw->appended.size());
 
+  EXPECT_EQ(0, f.flush(nullptr, null_yield));
+  EXPECT_EQ(1, raw->flushes);
+
   std::vector<AccessEventEntry> entries;
+  std::string next;
   bool truncated = true;
-  EXPECT_EQ(0, f.list(nullptr, 3, "c", 10, entries, &truncated, null_yield));
+  EXPECT_EQ(0, f.list(nullptr, 3, "c", 10, entries, &next, &truncated, null_yield));
   ASSERT_EQ(1u, entries.size());
   EXPECT_EQ("c+3", entries[0].marker);
+  EXPECT_EQ("c+end", next);
   EXPECT_FALSE(truncated);
 
   EXPECT_EQ(0, f.trim(nullptr, 3, "c+3", null_yield));
@@ -303,8 +315,10 @@ TEST(ITESal, FilterMoveQueueForwards)
   a.target = Placement::Hot;
   EXPECT_EQ(0, f.append(nullptr, a, null_yield));
   std::vector<MoveActionEntry> entries;
+  std::string next;
   bool truncated = true;
-  EXPECT_EQ(0, f.list(nullptr, 0, "", 10, entries, &truncated, null_yield));
+  EXPECT_EQ(0, f.list(nullptr, 0, "", 10, entries, &next, &truncated, null_yield));
+  EXPECT_EQ("m", next);
   ASSERT_EQ(1u, entries.size());
   EXPECT_EQ(MoveKind::Restore, entries[0].action.kind);
   EXPECT_EQ(0, f.ack(nullptr, 0, "m", null_yield));

@@ -26,6 +26,7 @@
 #include "rgw_frontend.h"
 #include "rgw_period_pusher.h"
 #include "rgw_realm_reloader.h"
+#include "rgw_ite.h"
 #include "rgw_ldap.h"
 #include "rgw_lua.h"
 #ifdef WITH_RADOSGW_RADOS
@@ -112,6 +113,7 @@ class AppMain {
 #ifdef WITH_RADOSGW_RADOS
   std::unique_ptr<rgw::dedup::Background> dedup_background;
 #endif
+  std::unique_ptr<rgw::ite::Manager> ite;
   std::unique_ptr<rgw::auth::ImplicitTenants> implicit_tenant_context;
   std::unique_ptr<rgw::dmclock::SchedulerCtx> sched_ctx;
   std::unique_ptr<ActiveRateLimiter> ratelimiter;
@@ -191,6 +193,7 @@ public:
 #ifdef WITH_RADOSGW_RADOS
   void init_dedup();
 #endif
+  void init_ite();
 
   bool have_http() {
     return have_http_frontend;
