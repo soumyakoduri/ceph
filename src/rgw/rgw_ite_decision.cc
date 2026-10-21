@@ -78,7 +78,8 @@ Verdict decide(const ObjectEntry& e, const DecisionInputs& in)
 
   switch (e.ite.tier_state) {
   case RGWITETierState::Committed:
-    // promotion reuses the warm threshold; one stray read does not reach it
+    // promotion reuses the warm threshold. With the default weights one GET
+    // (1.0) already passes it (0.3); only HEADs (0.1) fall short
     if (temp >= k.warm_threshold) {
       return {Decision::Restore, "hot again"};
     }
