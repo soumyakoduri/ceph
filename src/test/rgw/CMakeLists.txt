@@ -466,16 +466,18 @@ add_ceph_unittest(unittest_rgw_ite_sink)
 target_include_directories(unittest_rgw_ite_sink
   SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
 target_link_libraries(unittest_rgw_ite_sink unit-main ${rgw_libs})
-endif()
 
-# unittest_rgw_ite_aggregator
-add_executable(unittest_rgw_ite_aggregator
-  test_rgw_ite_aggregator.cc
-  $<TARGET_OBJECTS:unit-main>)
-add_ceph_unittest(unittest_rgw_ite_aggregator)
-target_include_directories(unittest_rgw_ite_aggregator
-  SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
-target_link_libraries(unittest_rgw_ite_aggregator ${rgw_libs})
+# the ITE workers, over in-memory contracts (test/rgw/ite_fakes.h)
+foreach(worker aggregator temperature)
+  add_executable(unittest_rgw_ite_${worker}
+    test_rgw_ite_${worker}.cc
+    $<TARGET_OBJECTS:unit-main>)
+  add_ceph_unittest(unittest_rgw_ite_${worker})
+  target_include_directories(unittest_rgw_ite_${worker}
+    SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
+  target_link_libraries(unittest_rgw_ite_${worker} ${rgw_libs})
+endforeach()
+endif()
 
 if(WITH_RADOSGW_RADOS)
 add_executable(unittest_rgw_lua test_rgw_lua.cc)

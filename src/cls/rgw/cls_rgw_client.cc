@@ -383,6 +383,18 @@ void cls_rgw_bucket_ite_set_state(librados::ObjectWriteOperation& op,
   op.exec(method::bucket_ite_set_state, in);
 }
 
+void cls_rgw_bucket_ite_get_entry(librados::ObjectReadOperation& op,
+                                  const cls_rgw_obj_key& key,
+                                  rgw_cls_ite_get_entry_ret* result, int* prval)
+{
+  bufferlist in;
+  rgw_cls_ite_get_entry_op call;
+  call.key = key;
+  encode(call, in);
+  op.exec(method::bucket_ite_get_entry, in,
+          new ClsBucketIndexOpCtx<rgw_cls_ite_get_entry_ret>(result, prval));
+}
+
 void cls_rgw_ite_agg_add(librados::ObjectWriteOperation& op,
                          const string& marker_key,
                          const string& expected_marker,

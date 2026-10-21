@@ -15,8 +15,10 @@
 #pragma once
 
 #include <atomic>
+#include <cerrno>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -37,6 +39,7 @@ class ITEWriteBuffer;
 class ITEAggStore;
 class ITEStateStore;
 class ITEMoveQueue;
+class ITESerializer;
 }
 
 namespace rgw::ite {
@@ -54,6 +57,9 @@ struct Context {
   /* set while the hosting gateway shuts down; long cycles check it between
    * units of work so that shutdown never waits for a whole cycle */
   std::atomic<bool> going_down{false};
+  /* how the workers load a bucket; the driver unless a test replaces it */
+  std::function<int(const DoutPrefixProvider*, const rgw_bucket&,
+                    std::unique_ptr<rgw::sal::Bucket>*, optional_yield)> bucket_loader;
 
   Context();
   ~Context();
@@ -68,7 +74,66 @@ struct Context {
   TimeScale timescale() const { return TimeScale::from_conf(cct); }
   Granularity granularity() const;
   Knobs defaults() const { return Knobs::from_conf(cct); }
+  /* lifetime of a processing lock, shard or bucket */
+  ceph::timespan lock_time() const;
+  /* a period key's value, scaled by the time scale */
+  ceph::timespan period(std::string_view key) const;
+  /* windows the aggregated store keeps at granularity g */
+  uint64_t retention(Granularity g) const;
+
+  int load_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& b,
+                  std::unique_ptr<rgw::sal::Bucket>* bucket, optional_yield y);
+  /* the knobs in effect for a bucket, or nullopt unless ITE is enabled on it */
+  std::optional<Knobs> bucket_knobs(rgw::sal::Bucket* bucket) const;
 };
+
+/* a bucket's exclusive lock for one worker run, renewed while it lasts */
+class BucketLock {
+  std::unique_ptr<rgw::sal::ITESerializer> ser;
+  ceph::timespan dur;
+  ceph::coarse_mono_time renew_at;
+  bool held = false;
+
+public:
+  BucketLock(std::unique_ptr<rgw::sal::ITESerializer> ser, ceph::timespan dur);
+  ~BucketLock();
+  BucketLock(const BucketLock&) = delete;
+  BucketLock& operator=(const BucketLock&) = delete;
+
+  /* take the lock; -EBUSY when another gateway holds it */
+  int lock(const DoutPrefixProvider* dpp, optional_yield y);
+  /* whether the lock is still ours, renewing it once a third of its life
+   * has passed. A run that loses it stops: another gateway took over. */
+  bool keep(const DoutPrefixProvider* dpp, optional_yield y);
+  void unlock(const DoutPrefixProvider* dpp, optional_yield y);
+};
+
+/* how a per-bucket run ended */
+enum class BucketRun {
+  Done,     // the work ran
+  Busy,     // another gateway is working on the bucket
+  Gone,     // the bucket no longer exists
+  Disabled, // ITE is not enabled on the bucket
+  Failed,   // an error came before the work could start
+};
+
+using BucketWork = std::function<int(rgw::sal::Bucket* bucket, const Knobs& knobs,
+                                     BucketLock& lock)>;
+
+/* run work over one bucket under its exclusive lock, once the bucket is
+ * loaded and ITE is enabled on it */
+int run_on_bucket(const DoutPrefixProvider* dpp, Context& ctx, const rgw_bucket& b,
+                  const BucketWork& work, BucketRun* run, optional_yield y);
+
+/* call fn for every bucket in the ITE directory. A bucket whose fn fails
+ * does not stop the rest; the last failure is returned. */
+int for_each_bucket(const DoutPrefixProvider* dpp, Context& ctx,
+                    const std::function<int(const BucketProgress&)>& fn,
+                    optional_yield y);
+
+/* -EINTR from a worker step: it stopped early, on shutdown or because its
+ * lock moved to another gateway, and left no partial progress behind */
+inline constexpr int STOPPED = -EINTR;
 
 /* a thread running one periodic worker cycle after another */
 class WorkerThread : public DoutPrefixProvider {

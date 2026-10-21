@@ -286,6 +286,47 @@ struct rgw_cls_ite_set_state_op {
 };
 WRITE_CLASS_ENCODER(rgw_cls_ite_set_state_op)
 
+/* read the index entry that bucket_ite_set_state addresses for a key */
+struct rgw_cls_ite_get_entry_op {
+  cls_rgw_obj_key key;
+
+  void encode(ceph::buffer::list& bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(key, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(ceph::buffer::list::const_iterator& bl) {
+    DECODE_START(1, bl);
+    decode(key, bl);
+    DECODE_FINISH(bl);
+  }
+
+  static std::list<rgw_cls_ite_get_entry_op> generate_test_instances();
+  void dump(ceph::Formatter *f) const;
+};
+WRITE_CLASS_ENCODER(rgw_cls_ite_get_entry_op)
+
+struct rgw_cls_ite_get_entry_ret {
+  rgw_bucket_dir_entry entry;
+
+  void encode(ceph::buffer::list& bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(entry, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(ceph::buffer::list::const_iterator& bl) {
+    DECODE_START(1, bl);
+    decode(entry, bl);
+    DECODE_FINISH(bl);
+  }
+
+  static std::list<rgw_cls_ite_get_entry_ret> generate_test_instances();
+  void dump(ceph::Formatter *f) const;
+};
+WRITE_CLASS_ENCODER(rgw_cls_ite_get_entry_ret)
+
 /* add count deltas to an ITE aggregated window object and advance one write
  * buffer shard's progress marker, atomically. Refused with -ECANCELED, and
  * nothing changes, unless the stored marker is expected_marker (a missing
@@ -1992,6 +2033,7 @@ constexpr auto bucket_trim_olh_log = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_TRIM
 constexpr auto bucket_clear_olh = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_CLEAR_OLH);
 constexpr auto bucket_refresh_instance = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_REFRESH_INSTANCE);
 constexpr auto bucket_ite_set_state = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_ITE_SET_STATE);
+constexpr auto bucket_ite_get_entry = ClsMethod<RdTag, ClassId>(RGW_BUCKET_ITE_GET_ENTRY);
 
 // ITE
 constexpr auto ite_agg_add = ClsMethod<RdWrTag, ClassId>(RGW_ITE_AGG_ADD);

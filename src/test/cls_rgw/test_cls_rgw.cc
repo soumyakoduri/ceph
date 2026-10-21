@@ -1653,9 +1653,9 @@ TEST_P(TestClsRgw, ite_set_state_masks)
 
   cls_rgw_obj_key obj("obj");
   rgw_bucket_ite_state st;
-  // no entry yet
-  ASSERT_EQ(-ENOENT, ite_set(ioctx, bucket_oid, obj, st,
-                             rgw_bucket_ite_state::MASK_ALL));
+  // no entry yet; reported apart from a missing index shard
+  ASSERT_EQ(RGWITENoEntryError, ite_set(ioctx, bucket_oid, obj, st,
+                                        rgw_bucket_ite_state::MASK_ALL));
 
   index_prepare(ioctx, bucket_oid, CLS_RGW_OP_ADD, "tag1", obj, "");
   rgw_bucket_dir_entry_meta meta;
@@ -1760,6 +1760,58 @@ TEST_P(TestClsRgw, ite_preserve_or_reset)
   // the scorer's numbers for the replaced instance are refused
   ASSERT_EQ(-ECANCELED, ite_set(ioctx, bucket_oid, obj, st,
                                 rgw_bucket_ite_state::MASK_TEMPERATURE, 1));
+}
+
+static int ite_get(librados::IoCtx& ioctx, const string& oid,
+                   const cls_rgw_obj_key& key, rgw_bucket_dir_entry* entry)
+{
+  ObjectReadOperation op;
+  op.assert_exists(); // as RGW does: the index shard must exist
+  rgw_cls_ite_get_entry_ret ret;
+  int rval = 0;
+  cls_rgw_bucket_ite_get_entry(op, key, &ret, &rval);
+  int r = ioctx.operate(oid, &op, nullptr);
+  if (r < 0) {
+    return r;
+  }
+  *entry = ret.entry;
+  return rval;
+}
+
+TEST_P(TestClsRgw, ite_get_entry)
+{
+  const string bucket_oid = "ite_get";
+  ObjectWriteOperation op;
+  cls_rgw_bucket_init_index(op);
+  ASSERT_EQ(0, ioctx.operate(bucket_oid, &op));
+
+  cls_rgw_obj_key obj("obj");
+  rgw_bucket_dir_entry e;
+  ASSERT_EQ(RGWITENoEntryError, ite_get(ioctx, bucket_oid, obj, &e));
+  // a missing index shard is still -ENOENT
+  ASSERT_EQ(-ENOENT, ite_get(ioctx, "ite_get_no_such_shard", obj, &e));
+
+  rgw_bucket_dir_entry_meta meta;
+  meta.size = 4096;
+  meta.accounted_size = 4096;
+  meta.storage_class = "INTELLIGENT_TIER";
+  index_prepare(ioctx, bucket_oid, CLS_RGW_OP_ADD, "t1", obj, "");
+  index_complete(ioctx, bucket_oid, CLS_RGW_OP_ADD, "t1", 9, obj, meta);
+
+  rgw_bucket_ite_state st;
+  st.temperature = 0.25;
+  st.temp_updated_at = 77;
+  ASSERT_EQ(0, ite_set(ioctx, bucket_oid, obj, st,
+                       rgw_bucket_ite_state::MASK_TEMPERATURE, 9));
+  ASSERT_EQ(0, ite_get(ioctx, bucket_oid, obj, &e));
+  EXPECT_EQ("obj", e.key.name);
+  EXPECT_TRUE(e.exists);
+  EXPECT_EQ(9u, e.ver.epoch);
+  EXPECT_EQ(4096u, e.meta.accounted_size);
+  EXPECT_EQ("INTELLIGENT_TIER", e.meta.storage_class);
+  EXPECT_DOUBLE_EQ(0.25, e.ite.temperature);
+  EXPECT_EQ(77u, e.ite.temp_updated_at);
+  EXPECT_EQ(9u, e.ite.base_gen);
 }
 
 static int ite_agg_add(librados::IoCtx& ioctx, const string& oid,

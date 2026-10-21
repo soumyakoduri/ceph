@@ -253,6 +253,38 @@ void rgw_cls_ite_set_state_op::dump(Formatter *f) const
   encode_json("expected_gen", expected_gen, f);
 }
 
+list<rgw_cls_ite_get_entry_op> rgw_cls_ite_get_entry_op::generate_test_instances()
+{
+  list<rgw_cls_ite_get_entry_op> o;
+  rgw_cls_ite_get_entry_op op;
+  op.key.name = "name";
+  op.key.instance = "instance";
+  o.push_back(std::move(op));
+  o.emplace_back();
+  return o;
+}
+
+void rgw_cls_ite_get_entry_op::dump(Formatter *f) const
+{
+  encode_json("key", key, f);
+}
+
+list<rgw_cls_ite_get_entry_ret> rgw_cls_ite_get_entry_ret::generate_test_instances()
+{
+  list<rgw_cls_ite_get_entry_ret> o;
+  rgw_cls_ite_get_entry_ret r;
+  r.entry = rgw_bucket_dir_entry::generate_test_instances().front();
+  r.entry.ite = rgw_bucket_ite_state::generate_test_instances().back();
+  o.push_back(std::move(r));
+  o.emplace_back();
+  return o;
+}
+
+void rgw_cls_ite_get_entry_ret::dump(Formatter *f) const
+{
+  encode_json("entry", entry, f);
+}
+
 list<rgw_cls_ite_agg_add_op> rgw_cls_ite_agg_add_op::generate_test_instances()
 {
   list<rgw_cls_ite_agg_add_op> o;

@@ -111,7 +111,6 @@ private:
   AggregatorStats st;
   std::set<std::string> registered; // buckets known to be in the directory
 
-  uint64_t retention(Granularity g) const;
   int consume_shard(const DoutPrefixProvider* dpp, uint32_t shard,
                     ceph::coarse_mono_time deadline, optional_yield y);
   void group(const std::vector<AccessEventEntry>& entries, Granularity g,

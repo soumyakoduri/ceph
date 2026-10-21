@@ -1819,7 +1819,9 @@ public:
 						const std::string& cookie) = 0;
 };
   
-/** @brief Abstraction of a serializer for ITE per-shard processing
+/** @brief Abstraction of a serializer for ITE per-shard and per-bucket
+ * processing. try_lock() by the current holder renews the lock for dur, so
+ * a long run can keep it; any other holder gets -EBUSY.
  */
 class ITESerializer : public Serializer {
 public:
@@ -1908,6 +1910,13 @@ public:
                           const rgw::ite::Window& window,
                           std::map<std::string, uint64_t>& counts,
                           optional_yield y) = 0;
+  /** Read the counts of one shard of a bucket window. An object's counts
+   * for a window are all in the shard its name hashes to, so a consumer
+   * can work through a window one bounded shard at a time. */
+  virtual int read_shard_counts(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                                const rgw::ite::Window& window, uint32_t agg_shard,
+                                std::map<std::string, uint64_t>& counts,
+                                optional_yield y) = 0;
   /** List the windows that exist for a bucket in [from, to], in order */
   virtual int list_windows(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
                            const rgw::ite::Window& from, const rgw::ite::Window& to,

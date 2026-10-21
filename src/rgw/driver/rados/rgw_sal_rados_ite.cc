@@ -61,6 +61,7 @@ RadosITESerializer::RadosITESerializer(const librados::IoCtx& _ioctx,
   : StoreITESerializer(_oid), ioctx(_ioctx), lock(lock_name)
 {
   lock.set_cookie(cookie);
+  lock.set_may_renew(true); // the holder renews by locking again
 }
 
 int RadosITESerializer::try_lock(const DoutPrefixProvider* dpp,
@@ -578,40 +579,65 @@ int RadosITEAggStore::read_counts(const DoutPrefixProvider* dpp,
     return r;
   }
   for (const auto& [w, shard] : idx) {
-    const std::string oid = window_oid(bucket, w, shard);
-    std::string after;
-    bool more = true;
-    while (more) {
-      std::map<std::string, ceph::buffer::list> vals;
-      int rval = 0;
-      librados::ObjectReadOperation op;
-      op.omap_get_vals2(after, ITE_OMAP_PAGE, &vals, &more, &rval);
-      r = rgw_rados_operate(dpp, ioctx, oid, std::move(op), nullptr, y);
-      if (r == -ENOENT) {
-        break;
-      }
-      if (r < 0) {
-        return r;
-      }
-      for (const auto& [key, bl] : vals) {
-        if (rgw::ite::is_marker_key(key)) {
-          continue;
-        }
-        uint64_t n = 0;
-        try {
-          auto p = bl.cbegin();
-          decode(n, p);
-        } catch (const ceph::buffer::error& e) {
-          ldpp_dout(dpp, 0) << "ERROR: corrupt count " << key << " in " << oid << dendl;
-          continue;
-        }
-        counts[key] += n;
-      }
-      if (vals.empty()) {
-        break;
-      }
-      after = vals.rbegin()->first;
+    r = read_window_object(dpp, window_oid(bucket, w, shard), counts, y);
+    if (r < 0) {
+      return r;
     }
+  }
+  return 0;
+}
+
+int RadosITEAggStore::read_shard_counts(const DoutPrefixProvider* dpp,
+                                        const rgw_bucket& bucket,
+                                        const rgw::ite::Window& window,
+                                        uint32_t agg_shard,
+                                        std::map<std::string, uint64_t>& counts,
+                                        optional_yield y)
+{
+  if (!initialized) {
+    return -EINVAL;
+  }
+  counts.clear();
+  return read_window_object(dpp, window_oid(bucket, window, agg_shard), counts, y);
+}
+
+int RadosITEAggStore::read_window_object(const DoutPrefixProvider* dpp,
+                                         const std::string& oid,
+                                         std::map<std::string, uint64_t>& counts,
+                                         optional_yield y)
+{
+  std::string after;
+  bool more = true;
+  while (more) {
+    std::map<std::string, ceph::buffer::list> vals;
+    int rval = 0;
+    librados::ObjectReadOperation op;
+    op.omap_get_vals2(after, ITE_OMAP_PAGE, &vals, &more, &rval);
+    int r = rgw_rados_operate(dpp, ioctx, oid, std::move(op), nullptr, y);
+    if (r == -ENOENT) {
+      return 0;
+    }
+    if (r < 0) {
+      return r;
+    }
+    for (const auto& [key, bl] : vals) {
+      if (rgw::ite::is_marker_key(key)) {
+        continue;
+      }
+      uint64_t n = 0;
+      try {
+        auto p = bl.cbegin();
+        decode(n, p);
+      } catch (const ceph::buffer::error& e) {
+        ldpp_dout(dpp, 0) << "ERROR: corrupt count " << key << " in " << oid << dendl;
+        continue;
+      }
+      counts[key] += n;
+    }
+    if (vals.empty()) {
+      break;
+    }
+    after = vals.rbegin()->first;
   }
   return 0;
 }
@@ -791,6 +817,125 @@ RadosITEAggStore::get_bucket_serializer(const rgw_bucket& bucket,
                                               ITE_BUCKET_LOCK_NAME, cookie);
 }
 
+/* the index addresses the null version with an empty instance */
+static rgw_obj index_obj(const RGWBucketInfo& info, const rgw_obj_key& key)
+{
+  rgw_obj obj(info.bucket, key);
+  if (obj.key.have_null_instance()) {
+    obj.key.instance.clear();
+  }
+  return obj;
+}
+
+static cls_rgw_obj_key index_key(const rgw_obj& obj)
+{
+  return cls_rgw_obj_key(obj.key.get_index_key_name(), obj.key.instance);
+}
+
+rgw::ite::ObjectEntry RadosITEStateStore::to_object_entry(const rgw_bucket_dir_entry& e)
+{
+  rgw::ite::ObjectEntry o;
+  o.key = rgw_obj_key(e.key); // unescapes the index name
+  o.gen = e.ver.epoch;
+  o.size = e.meta.accounted_size;
+  o.mtime = e.meta.mtime;
+  o.storage_class = e.meta.storage_class;
+  o.exists = e.exists;
+  o.current = e.is_current();
+  o.delete_marker = e.is_delete_marker();
+  o.ite = e.ite;
+  return o;
+}
+
+int RadosITEStateStore::get_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                                  const rgw_obj_key& key,
+                                  rgw::ite::ObjectEntry* entry, optional_yield y)
+{
+  RGWBucketInfo& info = bucket->get_info();
+  const rgw_obj obj = index_obj(info, key);
+  RGWRados::BucketShard bs(store->getRados());
+  rgw_cls_ite_get_entry_ret ret;
+  // a missing entry is an outcome; a missing shard means a reshard has
+  // finished, which guard_reshard retries on the new layout
+  bool found = false;
+  int r = store->getRados()->guard_reshard(dpp, &bs, obj, info,
+      [&](RGWRados::BucketShard* bs) -> int {
+        librados::ObjectReadOperation op;
+        op.assert_exists(); // the index shard must exist
+        int rval = 0;
+        cls_rgw_bucket_ite_get_entry(op, index_key(obj), &ret, &rval);
+        int rc = rgw_rados_operate(dpp, bs->bucket_obj.ioctx, bs->bucket_obj.obj.oid,
+                                   std::move(op), nullptr, y);
+        found = (rc == 0);
+        return rc == RGWITENoEntryError ? 0 : rc;
+      }, y);
+  if (r < 0) {
+    return r;
+  }
+  if (!found || !ret.entry.exists) {
+    return -ENOENT; // a pending entry has no instance yet
+  }
+  *entry = to_object_entry(ret.entry);
+  return 0;
+}
+
+int RadosITEStateStore::set_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                                  const rgw_obj_key& key,
+                                  const rgw_bucket_ite_state& state,
+                                  uint32_t mask, uint64_t expected_gen,
+                                  optional_yield y)
+{
+  RGWBucketInfo& info = bucket->get_info();
+  const rgw_obj obj = index_obj(info, key);
+  RGWRados::BucketShard bs(store->getRados());
+  // a replaced or vanished instance is an outcome, not a failure; only the
+  // reshard signals go back to guard_reshard, which retries those
+  int outcome = 0;
+  int r = store->getRados()->guard_reshard(dpp, &bs, obj, info,
+      [&](RGWRados::BucketShard* bs) -> int {
+        librados::ObjectWriteOperation op;
+        op.assert_exists(); // the index shard must exist
+        cls_rgw_guard_bucket_resharding(op, -ERR_BUSY_RESHARDING);
+        cls_rgw_bucket_ite_set_state(op, index_key(obj), state, mask, expected_gen);
+        int ret = rgw_rados_operate(dpp, bs->bucket_obj.ioctx, bs->bucket_obj.obj.oid,
+                                    std::move(op), y);
+        if (ret == -ECANCELED || ret == RGWITENoEntryError) {
+          outcome = ret;
+          return 0;
+        }
+        outcome = 0;
+        return ret;
+      }, y);
+  if (r < 0) {
+    return r;
+  }
+  return outcome == RGWITENoEntryError ? -ENOENT : outcome;
+}
+
+int RadosITEStateStore::list_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                                   const rgw_obj_key& marker, uint32_t max,
+                                   std::vector<rgw::ite::ObjectEntry>& entries,
+                                   rgw_obj_key* next_marker, bool* truncated,
+                                   optional_yield y)
+{
+  entries.clear();
+  Bucket::ListParams params;
+  params.marker = marker;
+  params.list_versions = true;
+  Bucket::ListResults results;
+  int r = bucket->list(dpp, params, std::max<uint32_t>(1, max), results, y);
+  if (r < 0) {
+    return r;
+  }
+  entries.reserve(results.objs.size());
+  for (const auto& e : results.objs) {
+    entries.push_back(to_object_entry(e));
+  }
+  *next_marker = results.next_marker;
+  *truncated = results.is_truncated;
+  return 0;
+}
+
 std::unique_ptr<ITEWriteBuffer> RadosStore::get_ite_write_buffer()
 {
   return std::make_unique<RadosITEWriteBuffer>(this);
@@ -799,6 +944,11 @@ std::unique_ptr<ITEWriteBuffer> RadosStore::get_ite_write_buffer()
 std::unique_ptr<ITEAggStore> RadosStore::get_ite_agg_store()
 {
   return std::make_unique<RadosITEAggStore>(this);
+}
+
+std::unique_ptr<ITEStateStore> RadosStore::get_ite_state_store()
+{
+  return std::make_unique<RadosITEStateStore>(this);
 }
 
 } // namespace rgw::sal

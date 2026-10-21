@@ -10,6 +10,10 @@
  * entries in the call. */
 constexpr int RGWBIAdvanceAndRetryError = -EFBIG;
 
+/* the ITE state methods report a missing index entry with this rather than
+ * -ENOENT, which callers retry as a missing (resharded) index shard */
+constexpr int RGWITENoEntryError = -ENODATA;
+
 /* bucket index */
 #define RGW_BUCKET_INIT_INDEX "bucket_init_index"
 #define RGW_BUCKET_INIT_INDEX2 "bucket_init_index2"
@@ -28,6 +32,7 @@ constexpr int RGWBIAdvanceAndRetryError = -EFBIG;
 #define RGW_BUCKET_CLEAR_OLH "bucket_clear_olh"
 #define RGW_BUCKET_REFRESH_INSTANCE "bucket_refresh_instance"
 #define RGW_BUCKET_ITE_SET_STATE "bucket_ite_set_state"
+#define RGW_BUCKET_ITE_GET_ENTRY "bucket_ite_get_entry"
 
 /* ITE aggregated count store */
 #define RGW_ITE_AGG_ADD "ite_agg_add"

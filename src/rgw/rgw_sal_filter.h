@@ -1236,6 +1236,12 @@ public:
                           optional_yield y) override {
     return next->read_counts(dpp, bucket, window, counts, y);
   }
+  virtual int read_shard_counts(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                                const rgw::ite::Window& window, uint32_t agg_shard,
+                                std::map<std::string, uint64_t>& counts,
+                                optional_yield y) override {
+    return next->read_shard_counts(dpp, bucket, window, agg_shard, counts, y);
+  }
   virtual int list_windows(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
                            const rgw::ite::Window& from, const rgw::ite::Window& to,
                            std::vector<rgw::ite::Window>& windows,

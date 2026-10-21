@@ -2157,13 +2157,16 @@ static int rgw_bucket_ite_set_state(cls_method_context_t hctx, bufferlist *in, b
   rgw_bucket_dir_entry entry;
   string idx;
   rc = read_key_entry(hctx, op.key, &idx, &entry);
+  if (rc == -ENOENT) {
+    return RGWITENoEntryError;
+  }
   if (rc < 0) {
     CLS_LOG(10, "%s: read_key_entry key=%s rc=%d",
             __func__, op.key.to_string().c_str(), rc);
     return rc;
   }
   if (!entry.exists) {
-    return -ENOENT;
+    return RGWITENoEntryError;
   }
 
   /* refuse to score a new instance with the previous instance's numbers;
@@ -2214,6 +2217,35 @@ static int rgw_bucket_ite_set_state(cls_method_context_t hctx, bufferlist *in, b
   /* not a modification of object data or stats; no bilog entry, and the
    * header is only rewritten while a reshard is logging */
   return write_header_while_logrecord(hctx, header);
+}
+
+/* read the entry bucket_ite_set_state addresses for a key: the plain or
+ * instance entry, or for a null version behind a version marker, its
+ * versioned data entry */
+static int rgw_bucket_ite_get_entry(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+{
+  CLS_LOG(10, "entered %s", __func__);
+
+  rgw_cls_ite_get_entry_op op;
+  auto iter = in->cbegin();
+  try {
+    decode(op, iter);
+  } catch (ceph::buffer::error& err) {
+    CLS_LOG(1, "ERROR: %s: failed to decode request", __func__);
+    return -EINVAL;
+  }
+
+  rgw_cls_ite_get_entry_ret ret;
+  string idx;
+  int rc = read_key_entry(hctx, op.key, &idx, &ret.entry);
+  if (rc == -ENOENT) {
+    return RGWITENoEntryError;
+  }
+  if (rc < 0) {
+    return rc;
+  }
+  encode(ret, *out);
+  return 0;
 }
 
 /* ITE aggregated store: one window shard object holds count keys
@@ -5550,6 +5582,7 @@ CLS_INIT(rgw)
   cls_method_handle_t h_rgw_bucket_clear_olh;
   cls_method_handle_t h_rgw_bucket_refresh_instance;
   cls_method_handle_t h_rgw_bucket_ite_set_state;
+  cls_method_handle_t h_rgw_bucket_ite_get_entry;
   cls_method_handle_t h_rgw_ite_agg_add;
   cls_method_handle_t h_rgw_obj_remove;
   cls_method_handle_t h_rgw_obj_store_pg_ver;
@@ -5616,6 +5649,7 @@ CLS_INIT(rgw)
   cls.register_cxx_method(bucket_clear_olh, rgw_bucket_clear_olh, &h_rgw_bucket_clear_olh);
   cls.register_cxx_method(bucket_refresh_instance, rgw_bucket_refresh_instance, &h_rgw_bucket_refresh_instance);
   cls.register_cxx_method(bucket_ite_set_state, rgw_bucket_ite_set_state, &h_rgw_bucket_ite_set_state);
+  cls.register_cxx_method(bucket_ite_get_entry, rgw_bucket_ite_get_entry, &h_rgw_bucket_ite_get_entry);
   cls.register_cxx_method(ite_agg_add, rgw_ite_agg_add, &h_rgw_ite_agg_add);
 
   // Object

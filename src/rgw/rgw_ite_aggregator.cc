@@ -47,13 +47,6 @@ void AggregatorStats::dump(ceph::Formatter* f) const
 
 Aggregator::Aggregator(Context& ctx) : ctx(ctx) {}
 
-uint64_t Aggregator::retention(Granularity g) const
-{
-  const auto& conf = ctx.cct->_conf;
-  return retention_windows(conf.get_val<int64_t>("rgw_ite_fft_span"),
-                           conf.get_val<int64_t>("rgw_ite_agg_retention_margin"), g);
-}
-
 int Aggregator::process(const DoutPrefixProvider* dpp, optional_yield y)
 {
   int ret = 0;
@@ -87,8 +80,7 @@ int Aggregator::process(const DoutPrefixProvider* dpp, optional_yield y)
 int Aggregator::process_shard(const DoutPrefixProvider* dpp, uint32_t shard,
                               optional_yield y)
 {
-  const auto lock_time = std::chrono::seconds(
-      ctx.cct->_conf.get_val<int64_t>("rgw_ite_lock_max_time"));
+  const auto lock_time = ctx.lock_time();
   auto lock = ctx.buffer->get_serializer(shard, ctx.cookie);
   int r = lock->try_lock(dpp, lock_time, y);
   if (r == -EBUSY || r == -EEXIST) {
@@ -155,7 +147,7 @@ int Aggregator::consume_shard(const DoutPrefixProvider* dpp, uint32_t shard,
   const TimeScale ts = ctx.timescale();
   const Granularity g = ctx.granularity();
   const uint64_t current = Window::of(ceph::real_clock::now(), g, ts).index;
-  const uint64_t oldest = oldest_accepted(current, retention(g));
+  const uint64_t oldest = oldest_accepted(current, ctx.retention(g));
 
   MarkerCache markers;
   std::string cursor;
@@ -305,33 +297,9 @@ int Aggregator::ensure_registered(const DoutPrefixProvider* dpp,
 int Aggregator::expire(const DoutPrefixProvider* dpp, ceph::real_time now,
                        optional_yield y)
 {
-  int ret = 0;
-  std::string marker;
-  bool truncated = true;
-  while (truncated) {
-    if (ctx.going_down) {
-      break;
-    }
-    std::vector<BucketProgress> buckets;
-    std::string next;
-    int r = ctx.agg->list_buckets(dpp, marker, 100, buckets, &next, &truncated, y);
-    if (r < 0) {
-      return r;
-    }
-    for (const auto& b : buckets) {
-      r = expire_bucket(dpp, b.bucket, now, y);
-      if (r < 0) {
-        ldpp_dout(dpp, 1) << "ERROR: failed to expire windows of " << b.bucket
-                          << ": " << cpp_strerror(-r) << dendl;
-        ret = r;
-      }
-    }
-    if (buckets.empty() || next == marker) {
-      break;
-    }
-    marker = std::move(next);
-  }
-  return ret;
+  return for_each_bucket(dpp, ctx, [&](const BucketProgress& p) {
+    return expire_bucket(dpp, p.bucket, now, y);
+  }, y);
 }
 
 int Aggregator::expire_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
@@ -340,7 +308,7 @@ int Aggregator::expire_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& b
   const TimeScale ts = ctx.timescale();
   // both granularities: windows written before a granularity change age out too
   for (auto g : {Granularity::Day, Granularity::Week}) {
-    const uint64_t keep = retention(g);
+    const uint64_t keep = ctx.retention(g);
     const uint64_t current = Window::of(now, g, ts).index;
     if (current <= keep) {
       continue;

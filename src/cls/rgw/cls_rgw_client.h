@@ -184,6 +184,12 @@ void cls_rgw_bucket_refresh_instance(librados::ObjectWriteOperation& op, const c
 /* write the ITE field groups in mask onto the index entry for key; with a
  * nonzero expected_gen the write is refused (-ECANCELED) if a new data
  * instance has replaced the one the caller scored */
+/* ITE: read the index entry the ITE state setter addresses for key; a
+ * missing entry completes with RGWITENoEntryError */
+void cls_rgw_bucket_ite_get_entry(librados::ObjectReadOperation& op,
+                                  const cls_rgw_obj_key& key,
+                                  rgw_cls_ite_get_entry_ret* result, int* prval);
+
 /* ITE aggregated store: add deltas and advance a progress marker, atomically
  * guarded by the marker's expected value */
 void cls_rgw_ite_agg_add(librados::ObjectWriteOperation& op,

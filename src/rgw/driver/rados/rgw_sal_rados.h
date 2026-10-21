@@ -285,6 +285,7 @@ class RadosStore : public StoreDriver {
     virtual std::unique_ptr<Restore> get_restore(void) override;
     virtual std::unique_ptr<ITEWriteBuffer> get_ite_write_buffer(void) override;
     virtual std::unique_ptr<ITEAggStore> get_ite_agg_store(void) override;
+    virtual std::unique_ptr<ITEStateStore> get_ite_state_store(void) override;
     virtual bool process_expired_objects(const DoutPrefixProvider *dpp, optional_yield y) override;
     virtual std::unique_ptr<Notification> get_notification(rgw::sal::Object* obj, rgw::sal::Object* src_obj, req_state* s, rgw::notify::EventType event_type, optional_yield y, const std::string* object_name=nullptr) override;
     virtual std::unique_ptr<Notification> get_notification(

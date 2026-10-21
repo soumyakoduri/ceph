@@ -6,8 +6,10 @@
 #include <algorithm>
 
 #include "common/Thread.h"
+#include "common/errno.h"
 #include "common/random_string.h"
 #include "rgw_ite_aggregator.h"
+#include "rgw_ite_temperature.h"
 #include "rgw_sal.h"
 
 #define dout_subsys ceph_subsys_rgw
@@ -80,6 +82,159 @@ Granularity Context::granularity() const
   const auto g = parse_granularity(
       cct->_conf.get_val<std::string>("rgw_ite_window_granularity"));
   return g.value_or(Granularity::Day);
+}
+
+ceph::timespan Context::lock_time() const
+{
+  return std::chrono::seconds(cct->_conf.get_val<int64_t>("rgw_ite_lock_max_time"));
+}
+
+ceph::timespan Context::period(std::string_view key) const
+{
+  return scaled_period(timescale(), cct->_conf.get_val<int64_t>(std::string(key)));
+}
+
+uint64_t Context::retention(Granularity g) const
+{
+  return retention_windows(cct->_conf.get_val<int64_t>("rgw_ite_fft_span"),
+                           cct->_conf.get_val<int64_t>("rgw_ite_agg_retention_margin"), g);
+}
+
+int Context::load_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& b,
+                         std::unique_ptr<rgw::sal::Bucket>* bucket, optional_yield y)
+{
+  if (bucket_loader) {
+    return bucket_loader(dpp, b, bucket, y);
+  }
+  if (!driver) {
+    return -EINVAL;
+  }
+  return driver->load_bucket(dpp, b, bucket, y);
+}
+
+std::optional<Knobs> Context::bucket_knobs(rgw::sal::Bucket* bucket) const
+{
+  const auto config = get_bucket_config(bucket->get_attrs());
+  if (!config || !config->enabled) {
+    return std::nullopt;
+  }
+  return config->effective(defaults());
+}
+
+BucketLock::BucketLock(std::unique_ptr<rgw::sal::ITESerializer> ser, ceph::timespan dur)
+  : ser(std::move(ser)), dur(dur)
+{}
+
+BucketLock::~BucketLock() = default; // a lock still held expires on its own
+
+int BucketLock::lock(const DoutPrefixProvider* dpp, optional_yield y)
+{
+  int r = ser->try_lock(dpp, dur, y);
+  if (r == -EEXIST) {
+    r = -EBUSY;
+  }
+  if (r < 0) {
+    return r;
+  }
+  held = true;
+  renew_at = ceph::coarse_mono_clock::now() + dur / 3;
+  return 0;
+}
+
+bool BucketLock::keep(const DoutPrefixProvider* dpp, optional_yield y)
+{
+  if (!held) {
+    return false;
+  }
+  const auto now = ceph::coarse_mono_clock::now();
+  if (now < renew_at) {
+    return true;
+  }
+  int r = ser->try_lock(dpp, dur, y);
+  if (r < 0) {
+    ldpp_dout(dpp, 1) << "WARNING: lost the lock on " << *ser << ": "
+                      << cpp_strerror(-r) << dendl;
+    held = false;
+    return false;
+  }
+  renew_at = now + dur / 3;
+  return true;
+}
+
+void BucketLock::unlock(const DoutPrefixProvider* dpp, optional_yield y)
+{
+  if (!held) {
+    return;
+  }
+  held = false;
+  int r = ser->unlock(dpp, y);
+  if (r < 0 && r != -ENOENT) {
+    ldpp_dout(dpp, 1) << "WARNING: failed to unlock " << *ser << ": "
+                      << cpp_strerror(-r) << dendl;
+  }
+}
+
+int run_on_bucket(const DoutPrefixProvider* dpp, Context& ctx, const rgw_bucket& b,
+                  const BucketWork& work, BucketRun* run, optional_yield y)
+{
+  *run = BucketRun::Failed;
+  BucketLock lock(ctx.agg->get_bucket_serializer(b, ctx.cookie), ctx.lock_time());
+  int r = lock.lock(dpp, y);
+  if (r == -EBUSY) {
+    *run = BucketRun::Busy;
+    return 0;
+  }
+  if (r < 0) {
+    return r;
+  }
+  std::unique_ptr<rgw::sal::Bucket> bucket;
+  r = ctx.load_bucket(dpp, b, &bucket, y);
+  if (r == -ENOENT) {
+    *run = BucketRun::Gone;
+    r = 0;
+  } else if (r == 0) {
+    if (auto knobs = ctx.bucket_knobs(bucket.get()); knobs) {
+      *run = BucketRun::Done;
+      r = work(bucket.get(), *knobs, lock);
+    } else {
+      *run = BucketRun::Disabled;
+    }
+  }
+  lock.unlock(dpp, y);
+  return r;
+}
+
+int for_each_bucket(const DoutPrefixProvider* dpp, Context& ctx,
+                    const std::function<int(const BucketProgress&)>& fn,
+                    optional_yield y)
+{
+  int ret = 0;
+  std::string marker;
+  bool truncated = true;
+  while (truncated && !ctx.going_down) {
+    std::vector<BucketProgress> buckets;
+    std::string next;
+    int r = ctx.agg->list_buckets(dpp, marker, 100, buckets, &next, &truncated, y);
+    if (r < 0) {
+      return r;
+    }
+    for (const auto& p : buckets) {
+      if (ctx.going_down) {
+        break;
+      }
+      r = fn(p);
+      if (r < 0) {
+        ldpp_dout(dpp, 1) << "ERROR: failed on ITE bucket " << p.bucket << ": "
+                          << cpp_strerror(-r) << dendl;
+        ret = r;
+      }
+    }
+    if (buckets.empty() || next == marker) {
+      break;
+    }
+    marker = std::move(next);
+  }
+  return ret;
 }
 
 ceph::timespan scaled_period(const TimeScale& ts, uint64_t secs)
@@ -203,9 +358,7 @@ void Manager::add_worker(std::string name, WorkerThread::Cycle cycle,
   const std::string key(period_key);
   workers.push_back(std::make_unique<WorkerThread>(
       cct, std::move(name), std::move(cycle),
-      [this, key] {
-        return scaled_period(ctx.timescale(), cct->_conf.get_val<int64_t>(key));
-      }));
+      [this, key] { return ctx.period(key); }));
 }
 
 int Manager::start_workers()
@@ -216,6 +369,10 @@ int Manager::start_workers()
     Aggregator agg(ctx);
     return agg.process(dpp, y);
   }, "rgw_ite_agg_period");
+  add_worker("temp", [this](const DoutPrefixProvider* dpp, optional_yield y) {
+    TemperatureScorer scorer(ctx);
+    return scorer.process(dpp, y);
+  }, "rgw_ite_temperature_period");
 
   for (auto& w : workers) {
     w->start();

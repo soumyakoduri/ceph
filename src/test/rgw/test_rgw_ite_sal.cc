@@ -96,6 +96,13 @@ struct FakeAggStore : public StoreITEAggStore {
     out = counts;
     return 0;
   }
+  int read_shard_counts(const DoutPrefixProvider*, const rgw_bucket&, const Window&,
+                        uint32_t shard, std::map<std::string, uint64_t>& out,
+                        optional_yield) override {
+    out = counts;
+    out["shard"] = shard;
+    return 0;
+  }
   int list_windows(const DoutPrefixProvider*, const rgw_bucket&, const Window& from,
                    const Window& to, std::vector<Window>& windows,
                    optional_yield) override {
@@ -260,6 +267,9 @@ TEST(ITESal, FilterAggStoreForwardsAndKeepsCAS)
   std::map<std::string, uint64_t> counts;
   EXPECT_EQ(0, f.read_counts(nullptr, b, w, counts, null_yield));
   EXPECT_EQ(2u, counts["k"]);
+  EXPECT_EQ(0, f.read_shard_counts(nullptr, b, w, 6, counts, null_yield));
+  EXPECT_EQ(2u, counts["k"]);
+  EXPECT_EQ(6u, counts["shard"]);
 
   std::vector<Window> windows;
   EXPECT_EQ(0, f.list_windows(nullptr, b, w, w.next(), windows, null_yield));

@@ -10,13 +10,16 @@
 #include <gtest/gtest.h>
 #include <fmt/format.h>
 
+#include "cls/rgw/cls_rgw_client.h"
 #include "common/async/context_pool.h"
 #include "common/ceph_argparse.h"
 #include "global/global_init.h"
 #include "rgw_common.h"
 #include "rgw_ite.h"
 #include "rgw_ite_aggregator.h"
+#include "rgw_ite_temperature.h"
 #include "rgw_ite_types.h"
+#include "rgw_zone.h"
 #include "rgw_sal.h"
 #include "rgw_sal_config.h"
 #include "rgw_sal_rados.h"
@@ -31,6 +34,7 @@ namespace {
 
 sal::Driver* driver = nullptr;
 DoutPrefix* dpp = nullptr;
+rgw::SiteConfig* site = nullptr;
 
 struct ITERados : public ::testing::Test {
   std::string saved_pool;
@@ -57,6 +61,102 @@ AccessEvent event(const rgw_bucket& b, const std::string& name, Op op)
   e.timestamp = ceph::real_clock::now();
   e.op = op;
   return e;
+}
+
+/* a bucket created for one test, with index entries written the way a
+ * completed PUT leaves them but without any data */
+struct TestBucket {
+  std::unique_ptr<sal::Bucket> bucket;
+  std::map<std::string, uint64_t> entries; // name -> newest epoch
+
+  int create(const std::string& prefix, uint32_t shards, bool ite) {
+    rgw_bucket b;
+    b.name = fmt::format("{}-{}", prefix, ceph::real_clock::now().time_since_epoch().count());
+    int r = driver->load_bucket(dpp, b, &bucket, null_yield);
+    if (!bucket) {
+      return r < 0 ? r : -EIO;
+    }
+    sal::Bucket::CreateParams params;
+    params.owner = rgw_user{"", "ceph-test-rgw-ite"};
+    params.zonegroup_id = site->get_zonegroup().get_id();
+    params.placement_rule = site->get_zonegroup().default_placement;
+    params.zone_placement = rgw::find_zone_placement(
+        dpp, site->get_zone_params(), params.placement_rule);
+    params.index_shards = shards;
+    if (ite) {
+      BucketConfig c;
+      c.enabled = true;
+      encode(c, params.attrs[std::string(ATTR_ITE)]);
+    }
+    r = bucket->create(dpp, params, null_yield);
+    if (r < 0) {
+      return r;
+    }
+    // reload, so the bucket carries its stored info and attributes
+    const rgw_bucket key = bucket->get_key();
+    return driver->load_bucket(dpp, key, &bucket, null_yield);
+  }
+
+  ~TestBucket() {
+    if (!bucket) {
+      return;
+    }
+    // the entries have no head objects for the bucket removal to delete,
+    // so drop them from the index first; all of it best effort
+    for (const auto& [name, epoch] : entries) {
+      index_op(CLS_RGW_OP_DEL, name, epoch + 1, 0);
+    }
+    bucket->remove(dpp, false, null_yield);
+  }
+
+  int add_entry(const std::string& name, uint64_t epoch, uint64_t size) {
+    int r = index_op(CLS_RGW_OP_ADD, name, epoch, size);
+    if (r == 0) {
+      entries[name] = epoch;
+    }
+    return r;
+  }
+
+  int index_op(RGWModifyOp op, const std::string& name, uint64_t epoch, uint64_t size) {
+    auto rados = static_cast<sal::RadosStore*>(driver)->getRados();
+    rgw_obj obj(bucket->get_key(), rgw_obj_key(name));
+    RGWRados::BucketShard bs(rados);
+    int r = bs.init(dpp, bucket->get_info(), obj, null_yield);
+    if (r < 0) {
+      return r;
+    }
+    const cls_rgw_obj_key key(rgw_obj_key(name).get_index_key_name());
+    const std::string tag = fmt::format("ite-test-{}-{}", name, epoch);
+    librados::ObjectWriteOperation prepare;
+    cls_rgw_bucket_prepare_op(prepare, op, tag, key, "");
+    r = bs.bucket_obj.ioctx.operate(bs.bucket_obj.obj.oid, &prepare);
+    if (r < 0) {
+      return r;
+    }
+    // the epoch is the write version a real PUT would carry; it must grow
+    rgw_bucket_entry_ver ver;
+    ver.pool = bs.bucket_obj.ioctx.get_id();
+    ver.epoch = epoch;
+    rgw_bucket_dir_entry_meta meta;
+    meta.category = RGWObjCategory::Main;
+    meta.size = size;
+    meta.accounted_size = size;
+    meta.mtime = ceph::real_clock::now();
+    meta.storage_class = "INTELLIGENT_TIER";
+    librados::ObjectWriteOperation complete;
+    cls_rgw_bucket_complete_op(complete, op, tag, ver, key, meta,
+                               nullptr, false, 0, nullptr);
+    return bs.bucket_obj.ioctx.operate(bs.bucket_obj.obj.oid, &complete);
+  }
+};
+
+std::string count_key(const std::string& name, uint64_t gen, Op op)
+{
+  CountKey k;
+  k.obj = InstanceId(name, "", gen);
+  k.op = op;
+  k.caller = CallerType::User;
+  return k.to_str();
 }
 
 } // anonymous namespace
@@ -160,6 +260,7 @@ TEST_F(ITERados, WriteBufferShardLockIsExclusive)
   ASSERT_EQ(0, a->try_lock(dpp, std::chrono::seconds(30), null_yield));
   EXPECT_EQ(-EBUSY, b->try_lock(dpp, std::chrono::seconds(30), null_yield));
   EXPECT_EQ(0, other->try_lock(dpp, std::chrono::seconds(30), null_yield));
+  EXPECT_EQ(0, a->try_lock(dpp, std::chrono::seconds(60), null_yield)); // renewal
   ASSERT_EQ(0, a->unlock(dpp, null_yield));
   EXPECT_EQ(0, b->try_lock(dpp, std::chrono::seconds(30), null_yield));
   EXPECT_EQ(0, b->unlock(dpp, null_yield));
@@ -378,6 +479,143 @@ TEST_F(ITERados, AggregatorFoldsTheWriteBuffer)
   EXPECT_EQ(3u, counts[ka.to_str()]);
 }
 
+TEST_F(ITERados, StateStoreReadsAndWritesIndexEntries)
+{
+  TestBucket tb;
+  ASSERT_EQ(0, tb.create("ite-state", 3, true));
+  ASSERT_EQ(0, tb.add_entry("a", 5, 4096));
+  ASSERT_EQ(0, tb.add_entry("b", 6, 1 << 20));
+  auto state = driver->get_ite_state_store();
+  ASSERT_TRUE(state);
+  sal::Bucket* b = tb.bucket.get();
+
+  ObjectEntry e;
+  ASSERT_EQ(0, state->get_state(dpp, b, rgw_obj_key("a"), &e, null_yield));
+  EXPECT_EQ("a", e.key.name);
+  EXPECT_EQ(5u, e.gen);
+  EXPECT_EQ(4096u, e.size);
+  EXPECT_EQ("INTELLIGENT_TIER", e.storage_class);
+  EXPECT_TRUE(e.exists);
+  EXPECT_TRUE(e.current);
+  EXPECT_FALSE(e.delete_marker);
+  EXPECT_EQ(5u, e.ite.base_gen); // a fresh instance is stamped
+  EXPECT_EQ(0.0, e.ite.temperature);
+  EXPECT_EQ(-ENOENT, state->get_state(dpp, b, rgw_obj_key("missing"), &e, null_yield));
+
+  rgw_bucket_ite_state s;
+  s.temperature = 0.7;
+  s.temp_updated_at = 123;
+  s.tier_state = RGWITETierState::Committed; // not in the mask
+  ASSERT_EQ(0, state->set_state(dpp, b, rgw_obj_key("a"), s,
+                                rgw_bucket_ite_state::MASK_TEMPERATURE, 5, null_yield));
+  ASSERT_EQ(0, state->get_state(dpp, b, rgw_obj_key("a"), &e, null_yield));
+  EXPECT_DOUBLE_EQ(0.7, e.ite.temperature);
+  EXPECT_EQ(123u, e.ite.temp_updated_at);
+  EXPECT_EQ(RGWITETierState::Hot, e.ite.tier_state);
+
+  // a stale generation, and a missing object, are outcomes, not errors
+  EXPECT_EQ(-ECANCELED, state->set_state(dpp, b, rgw_obj_key("a"), s,
+                                         rgw_bucket_ite_state::MASK_TEMPERATURE, 4,
+                                         null_yield));
+  EXPECT_EQ(-ENOENT, state->set_state(dpp, b, rgw_obj_key("missing"), s,
+                                      rgw_bucket_ite_state::MASK_TEMPERATURE, 0,
+                                      null_yield));
+
+  // an overwrite starts a new instance, cold
+  ASSERT_EQ(0, tb.add_entry("a", 9, 4096));
+  ASSERT_EQ(0, state->get_state(dpp, b, rgw_obj_key("a"), &e, null_yield));
+  EXPECT_EQ(0.0, e.ite.temperature);
+  EXPECT_EQ(9u, e.ite.base_gen);
+}
+
+TEST_F(ITERados, StateStoreListsEveryEntryAcrossShards)
+{
+  TestBucket tb;
+  ASSERT_EQ(0, tb.create("ite-list", 7, true));
+  for (int i = 0; i < 25; ++i) {
+    ASSERT_EQ(0, tb.add_entry(fmt::format("o{:02}", i), 100 + i, 10));
+  }
+  ASSERT_EQ(0, tb.add_entry("_under", 99, 10)); // escaped in the index
+  auto state = driver->get_ite_state_store();
+  std::vector<ObjectEntry> all, page;
+  rgw_obj_key marker, next;
+  bool truncated = true;
+  while (truncated) {
+    ASSERT_EQ(0, state->list_state(dpp, tb.bucket.get(), marker, 10, page, &next,
+                                   &truncated, null_yield));
+    all.insert(all.end(), page.begin(), page.end());
+    marker = next;
+  }
+  ASSERT_EQ(26u, all.size());
+  EXPECT_EQ("_under", all[0].key.name); // its index name "__under" sorts first
+  EXPECT_EQ(99u, all[0].gen);
+  for (int i = 0; i < 25; ++i) {
+    EXPECT_EQ(fmt::format("o{:02}", i), all[i + 1].key.name); // in key order
+    EXPECT_EQ(100u + i, all[i + 1].gen);
+  }
+
+  // the listed key addresses the entry again
+  ObjectEntry e;
+  ASSERT_EQ(0, state->get_state(dpp, tb.bucket.get(), all[0].key, &e, null_yield));
+  EXPECT_EQ("_under", e.key.name);
+  rgw_bucket_ite_state s;
+  s.temperature = 0.5;
+  ASSERT_EQ(0, state->set_state(dpp, tb.bucket.get(), all[0].key, s,
+                                rgw_bucket_ite_state::MASK_TEMPERATURE, 99, null_yield));
+}
+
+TEST_F(ITERados, TemperatureScorerScoresIndexEntries)
+{
+  TestBucket tb;
+  ASSERT_EQ(0, tb.create("ite-temp", 3, true));
+  ASSERT_EQ(0, tb.add_entry("a", 5, 4096));
+  ASSERT_EQ(0, tb.add_entry("b", 5, 4096));
+  const rgw_bucket key = tb.bucket->get_key();
+
+  Context ctx;
+  ctx.cct = g_ceph_context;
+  ctx.driver = driver;
+  ctx.cookie = "ceph_test_rgw_ite";
+  ctx.agg = driver->get_ite_agg_store();
+  ctx.state = driver->get_ite_state_store();
+  ASSERT_EQ(0, ctx.agg->initialize(dpp, null_yield));
+
+  const TimeScale ts = ctx.timescale();
+  const Window today = Window::of(ceph::real_clock::now(), Granularity::Day, ts);
+  const Window yesterday = today.prev();
+  const auto noon = today.start(ts) + std::chrono::hours(12);
+  BucketProgress p;
+  p.bucket = key;
+  p.enabled_at = noon - std::chrono::hours(24 * 30);
+  ASSERT_EQ(0, ctx.agg->put_bucket(dpp, p, null_yield));
+  const uint32_t shards = ctx.agg->num_shards();
+  ASSERT_EQ(0, ctx.agg->add_counts(dpp, key, yesterday, agg_shard_of("a", shards), 0,
+                                   "", "m", {{count_key("a", 5, Op::Head), 3}}, null_yield));
+  ASSERT_EQ(0, ctx.agg->add_counts(dpp, key, yesterday, agg_shard_of("b", shards), 1,
+                                   "", "m", {{count_key("b", 0, Op::Put), 1}}, null_yield));
+
+  TemperatureScorer scorer(ctx);
+  ASSERT_EQ(0, scorer.process_bucket(dpp, key, noon, null_yield));
+  EXPECT_EQ(1u, scorer.stats().buckets);
+  EXPECT_EQ(2u, scorer.stats().objects);
+  ObjectEntry e;
+  ASSERT_EQ(0, ctx.state->get_state(dpp, tb.bucket.get(), rgw_obj_key("a"), &e, null_yield));
+  EXPECT_NEAR(0.3, e.ite.temperature, 1e-9);
+  EXPECT_EQ(to_epoch_secs(yesterday.end(ts)), e.ite.temp_updated_at);
+  ASSERT_EQ(0, ctx.state->get_state(dpp, tb.bucket.get(), rgw_obj_key("b"), &e, null_yield));
+  EXPECT_NEAR(0.5, e.ite.temperature, 1e-9);
+
+  // the progress is saved, and a rerun changes nothing
+  ASSERT_EQ(0, ctx.agg->get_bucket(dpp, key, &p, null_yield));
+  ASSERT_TRUE(p.last_scored);
+  EXPECT_EQ(yesterday, *p.last_scored);
+  TemperatureScorer again(ctx);
+  ASSERT_EQ(0, again.process_bucket(dpp, key, noon, null_yield));
+  EXPECT_EQ(0u, again.stats().objects);
+  ASSERT_EQ(0, ctx.state->get_state(dpp, tb.bucket.get(), rgw_obj_key("a"), &e, null_yield));
+  EXPECT_NEAR(0.3, e.ite.temperature, 1e-9);
+}
+
 int main(int argc, const char** argv)
 {
   auto args = argv_to_vec(argc, argv);
@@ -395,13 +633,14 @@ int main(int argc, const char** argv)
     std::cerr << "unable to initialize the config store" << std::endl;
     return EXIT_FAILURE;
   }
-  rgw::SiteConfig site;
-  if (int r = site.load(dpp, null_yield, cfgstore.get()); r < 0) {
+  rgw::SiteConfig site_config;
+  site = &site_config;
+  if (int r = site_config.load(dpp, null_yield, cfgstore.get()); r < 0) {
     std::cerr << "unable to load the site config: " << cpp_strerror(-r) << std::endl;
     return EXIT_FAILURE;
   }
   // as radosgw-cr-test does: no gc, lc, restore, quota, sync or reshard threads
-  driver = DriverManager::get_storage(dpp, g_ceph_context, cfg, context_pool, site,
+  driver = DriverManager::get_storage(dpp, g_ceph_context, cfg, context_pool, site_config,
                                       false, false, false, false, false, false,
                                       true, true, true, null_yield,
                                       cfgstore.get(), false);

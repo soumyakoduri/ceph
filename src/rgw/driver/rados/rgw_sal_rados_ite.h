@@ -148,6 +148,9 @@ class RadosITEAggStore : public StoreITEAggStore {
                          uint32_t shard) const;
   int index_window(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
                    const rgw::ite::Window& w, uint32_t shard, optional_yield y);
+  /* add the counts held by one window shard object to counts */
+  int read_window_object(const DoutPrefixProvider* dpp, const std::string& oid,
+                         std::map<std::string, uint64_t>& counts, optional_yield y);
   /* the (window, shard) objects recorded for a bucket whose index keys
    * follow start_after and begin with prefix, in key order */
   int read_index(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
@@ -180,6 +183,10 @@ public:
                   const rgw::ite::Window& window,
                   std::map<std::string, uint64_t>& counts,
                   optional_yield y) override;
+  int read_shard_counts(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                        const rgw::ite::Window& window, uint32_t agg_shard,
+                        std::map<std::string, uint64_t>& counts,
+                        optional_yield y) override;
   int list_windows(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
                    const rgw::ite::Window& from, const rgw::ite::Window& to,
                    std::vector<rgw::ite::Window>& windows,
@@ -199,6 +206,31 @@ public:
                    optional_yield y) override;
   std::unique_ptr<ITESerializer> get_bucket_serializer(
       const rgw_bucket& bucket, const std::string& cookie) override;
+};
+
+/* contract three. The ITE block lives on the object's bucket index entry
+ * (decision D1). get and set address one entry through cls_rgw, the same
+ * entry for both, including a null version behind a version marker; list
+ * is an ordered bucket listing with every version, one sequential pass. */
+class RadosITEStateStore : public StoreITEStateStore {
+  RadosStore* const store;
+
+public:
+  explicit RadosITEStateStore(RadosStore* store) : store(store) {}
+
+  static rgw::ite::ObjectEntry to_object_entry(const rgw_bucket_dir_entry& e);
+
+  int get_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                const rgw_obj_key& key, rgw::ite::ObjectEntry* entry,
+                optional_yield y) override;
+  int set_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                const rgw_obj_key& key, const rgw_bucket_ite_state& state,
+                uint32_t mask, uint64_t expected_gen, optional_yield y) override;
+  int list_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                 const rgw_obj_key& marker, uint32_t max,
+                 std::vector<rgw::ite::ObjectEntry>& entries,
+                 rgw_obj_key* next_marker, bool* truncated,
+                 optional_yield y) override;
 };
 
 } // namespace rgw::sal

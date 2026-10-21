@@ -12,6 +12,7 @@
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -20,6 +21,7 @@
 #include <fmt/format.h>
 
 #include "rgw_ite_types.h"
+#include "rgw_sal_rados.h"
 #include "rgw_sal_store.h"
 
 namespace rgw::ite::test {
@@ -29,6 +31,7 @@ struct MemLocks {
   std::map<std::string, std::string> held; // lock name -> cookie
   std::set<std::string> busy; // held by "another gateway"
   int taken = 0;
+  int renewed = 0;
 };
 
 class MemSerializer : public rgw::sal::StoreITESerializer {
@@ -45,7 +48,11 @@ public:
     }
     auto [i, inserted] = locks->held.try_emplace(oid, cookie);
     if (!inserted) {
-      return i->second == cookie ? -EEXIST : -EBUSY; // as cls_lock
+      if (i->second != cookie) {
+        return -EBUSY;
+      }
+      ++locks->renewed; // the holder renews
+      return 0;
     }
     ++locks->taken;
     return 0;
@@ -203,6 +210,15 @@ struct MemAggStore : public rgw::sal::StoreITEAggStore {
     }
     return 0;
   }
+  int read_shard_counts(const DoutPrefixProvider*, const rgw_bucket& b, const Window& w,
+                        uint32_t agg_shard, std::map<std::string, uint64_t>& counts,
+                        optional_yield) override {
+    counts.clear();
+    if (auto i = windows.find(Key{b.get_key(), w, agg_shard}); i != windows.end()) {
+      counts = i->second.counts;
+    }
+    return 0;
+  }
   int list_windows(const DoutPrefixProvider*, const rgw_bucket& b, const Window& from,
                    const Window& to, std::vector<Window>& out, optional_yield) override {
     out.clear();
@@ -274,5 +290,117 @@ struct MemAggStore : public rgw::sal::StoreITEAggStore {
     return n;
   }
 };
+
+/* contract three, with the cls setter's rules: masks, the generation
+ * check, and base_gen stamped on first write */
+struct MemStateStore : public rgw::sal::StoreITEStateStore {
+  // bucket key -> object key -> entry
+  std::map<std::string, std::map<rgw_obj_key, ObjectEntry>> objects;
+  int set_ret = 0;
+  int sets = 0;
+  int gets = 0;
+  std::function<void(const rgw_obj_key&)> before_set;
+
+  ObjectEntry& put(const rgw_bucket& b, const std::string& name, uint64_t gen,
+                   uint64_t size = 1 << 20, std::string instance = "") {
+    ObjectEntry e;
+    e.key = rgw_obj_key(name, instance);
+    e.gen = gen;
+    e.size = size;
+    e.mtime = ceph::real_clock::now();
+    e.storage_class = "INTELLIGENT_TIER";
+    e.ite.base_gen = gen; // a fresh instance, as complete_op stamps it
+    return objects[b.get_key()][e.key] = e;
+  }
+  ObjectEntry* find(const rgw_bucket& b, const rgw_obj_key& k) {
+    auto i = objects.find(b.get_key());
+    if (i == objects.end()) {
+      return nullptr;
+    }
+    auto j = i->second.find(k);
+    return j == i->second.end() ? nullptr : &j->second;
+  }
+
+  int get_state(const DoutPrefixProvider*, rgw::sal::Bucket* bucket,
+                const rgw_obj_key& key, ObjectEntry* entry, optional_yield) override {
+    ++gets;
+    auto e = find(bucket->get_key(), key);
+    if (!e || !e->exists) {
+      return -ENOENT;
+    }
+    *entry = *e;
+    return 0;
+  }
+  int set_state(const DoutPrefixProvider*, rgw::sal::Bucket* bucket,
+                const rgw_obj_key& key, const rgw_bucket_ite_state& state,
+                uint32_t mask, uint64_t expected_gen, optional_yield) override {
+    if (before_set) {
+      before_set(key);
+    }
+    if (set_ret < 0) {
+      return set_ret;
+    }
+    auto e = find(bucket->get_key(), key);
+    if (!e || !e->exists) {
+      return -ENOENT;
+    }
+    if (expected_gen && e->ite.base_gen && e->ite.base_gen != expected_gen) {
+      return -ECANCELED;
+    }
+    e->ite.apply(state, mask);
+    if (!e->ite.base_gen) {
+      e->ite.base_gen = expected_gen ? expected_gen : e->gen;
+    }
+    ++sets;
+    return 0;
+  }
+  int list_state(const DoutPrefixProvider*, rgw::sal::Bucket* bucket,
+                 const rgw_obj_key& marker, uint32_t max,
+                 std::vector<ObjectEntry>& entries, rgw_obj_key* next,
+                 bool* truncated, optional_yield) override {
+    entries.clear();
+    *next = marker;
+    *truncated = false;
+    auto& m = objects[bucket->get_key().get_key()];
+    auto i = marker.empty() ? m.begin() : m.upper_bound(marker);
+    for (; i != m.end(); ++i) {
+      if (entries.size() == max) {
+        *truncated = true;
+        break;
+      }
+      entries.push_back(i->second);
+      *next = i->first;
+    }
+    return 0;
+  }
+
+  /* an overwrite: a new instance at generation gen, starting cold */
+  void overwrite(const rgw_bucket& b, const std::string& name, uint64_t gen) {
+    auto e = find(b, rgw_obj_key(name));
+    ceph_assert(e);
+    e->gen = gen;
+    e->mtime = ceph::real_clock::now();
+    e->ite = rgw_bucket_ite_state();
+    e->ite.base_gen = gen;
+  }
+};
+
+/* a plain bucket carrying info and attributes, for the bucket loader */
+inline std::unique_ptr<rgw::sal::Bucket> make_bucket(const rgw_bucket& b, bool enabled,
+                                                     std::optional<double> half_life = {})
+{
+  RGWBucketInfo info;
+  info.bucket = b;
+  auto bucket = std::make_unique<rgw::sal::RadosBucket>(nullptr, info);
+  BucketConfig c;
+  c.enabled = enabled;
+  c.half_life_days = half_life;
+  ceph::buffer::list bl;
+  encode(c, bl);
+  rgw::sal::Attrs attrs;
+  attrs[std::string(ATTR_ITE)] = bl;
+  bucket->set_attrs(attrs);
+  return bucket;
+}
 
 } // namespace rgw::ite::test
