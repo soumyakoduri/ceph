@@ -27,7 +27,7 @@ constexpr auto DAY = std::chrono::hours(24);
 
 struct TemperatureTest : public ::testing::Test {
   DoutPrefix dpp{g_ceph_context, ceph_subsys_rgw, "temperature test: "};
-  Context ctx;
+  rgw::ite::Context ctx;
   MemAggStore* agg = nullptr;
   MemStateStore* state = nullptr;
   const rgw_bucket b1{"", "hot", "hot-id"};

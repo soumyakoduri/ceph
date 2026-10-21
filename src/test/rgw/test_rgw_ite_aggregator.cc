@@ -20,7 +20,7 @@ namespace {
 
 struct AggregatorTest : public ::testing::Test {
   DoutPrefix dpp{g_ceph_context, ceph_subsys_rgw, "aggregator test: "};
-  Context ctx;
+  rgw::ite::Context ctx;
   MemWriteBuffer* buffer = nullptr;
   MemAggStore* agg = nullptr;
   const rgw_bucket b1{"", "b1", "b1-id"};

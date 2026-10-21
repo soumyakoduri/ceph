@@ -497,7 +497,7 @@ class MemObject : public rgw::sal::RadosObject {
   MemPlacements* p;
 
   /* the index addresses the null version with an empty instance */
-  rgw_obj_key index_key() const {
+  rgw_obj_key index_key() {
     rgw_obj_key k = get_key();
     if (k.have_null_instance()) {
       k.instance.clear();

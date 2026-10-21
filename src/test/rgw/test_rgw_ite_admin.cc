@@ -34,7 +34,7 @@ long long num(const JSONFormattable& v)
 
 struct AdminTest : public ::testing::Test {
   DoutPrefix dpp{g_ceph_context, ceph_subsys_rgw, "admin test: "};
-  Context ctx;
+  rgw::ite::Context ctx;
   MemWriteBuffer* buffer = nullptr;
   MemAggStore* agg = nullptr;
   MemStateStore* state = nullptr;

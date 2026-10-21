@@ -6,6 +6,7 @@
  * were asked. */
 
 #include "rgw_sal_filter.h"
+#include "rgw_sal_store.h"
 
 #include <gtest/gtest.h>
 

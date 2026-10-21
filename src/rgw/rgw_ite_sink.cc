@@ -6,6 +6,7 @@
 #include <mutex>
 #include <shared_mutex>
 
+#include "common/errno.h"
 #include "rgw_common.h"
 #include "rgw_op.h"
 #include "rgw_sal.h"

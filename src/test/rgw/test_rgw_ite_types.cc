@@ -101,7 +101,7 @@ TEST(ITETypes, DayWindows)
   EXPECT_GT(w.end(ts), t);
   EXPECT_EQ(w, Window::parse_stamp("20261021", ts));
   EXPECT_EQ("20261020", w.prev().stamp(ts));
-  EXPECT_EQ("20261101", Window{Granularity::Day, w.index + 11}.stamp(ts));
+  EXPECT_EQ("20261101", (Window{Granularity::Day, w.index + 11}).stamp(ts));
 }
 
 TEST(ITETypes, WeekWindowsStartOnMonday)

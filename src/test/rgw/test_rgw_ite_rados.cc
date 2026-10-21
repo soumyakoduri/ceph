@@ -558,7 +558,7 @@ TEST_F(ITERados, AggStoreBucketLockIsExclusive)
 
 TEST_F(ITERados, AggregatorFoldsTheWriteBuffer)
 {
-  Context ctx;
+  rgw::ite::Context ctx;
   ctx.cct = g_ceph_context;
   ctx.driver = driver;
   ctx.cookie = "ceph_test_rgw_ite";
@@ -705,7 +705,7 @@ TEST_F(ITERados, TemperatureScorerScoresIndexEntries)
   ASSERT_EQ(0, tb.add_entry("b", 5, 4096));
   const rgw_bucket key = tb.bucket->get_key();
 
-  Context ctx;
+  rgw::ite::Context ctx;
   ctx.cct = g_ceph_context;
   ctx.driver = driver;
   ctx.cookie = "ceph_test_rgw_ite";
@@ -759,7 +759,7 @@ TEST_F(ITERados, FFTDetectorWritesVerdictsToIndexEntries)
   ASSERT_EQ(0, tb.add_entry("burst", 5, 4096));
   const rgw_bucket key = tb.bucket->get_key();
 
-  Context ctx;
+  rgw::ite::Context ctx;
   ctx.cct = g_ceph_context;
   ctx.driver = driver;
   ctx.cookie = "ceph_test_rgw_ite";
@@ -870,7 +870,7 @@ TEST_F(ITERados, DecisionEngineOnIndexEntries)
   ASSERT_EQ(0, tb.add_entry("tiny", 5, 10, old));
   const rgw_bucket key = tb.bucket->get_key();
 
-  Context ctx;
+  rgw::ite::Context ctx;
   ctx.cct = g_ceph_context;
   ctx.driver = driver;
   ctx.cookie = "ceph_test_rgw_ite";
@@ -1047,7 +1047,7 @@ TEST_F(ITERados, MoverCommitsAndRestores)
   ASSERT_EQ(0, put_object(bucket, "obj", data, &mtime));
   auto cleanup = make_scope_guard([&] { delete_object(bucket, "obj"); });
 
-  Context ctx;
+  rgw::ite::Context ctx;
   ctx.cct = g_ceph_context;
   ctx.driver = driver;
   ctx.cookie = "ceph_test_rgw_ite";
@@ -1125,7 +1125,7 @@ TEST_F(ITERados, AdminEnablesABucket)
   TieredPlacement tiered;
   TestBucket tb;
   ASSERT_EQ(0, tb.create("ite-admin", 1, false));
-  Context ctx;
+  rgw::ite::Context ctx;
   ASSERT_EQ(0, ctx.init(dpp, g_ceph_context, driver, null_yield));
 
   // enabled with a knob: the config is stored with the bucket, and the

@@ -24,7 +24,7 @@ namespace {
 
 struct MoverTest : public ::testing::Test {
   DoutPrefix dpp{g_ceph_context, ceph_subsys_rgw, "mover test: "};
-  Context ctx;
+  rgw::ite::Context ctx;
   MemStateStore* state = nullptr;
   MemMoveQueue* moves = nullptr;
   std::unique_ptr<MemPlacements> placements;

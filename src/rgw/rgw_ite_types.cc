@@ -376,17 +376,37 @@ void BucketConfig::dump(ceph::Formatter* f) const
   if (min_fft_confidence) f->dump_float("min_fft_confidence", *min_fft_confidence);
 }
 
+/* ceph_json decodes no doubles, so a number is decoded from its text */
+static void decode_json_double(const char* name, std::optional<double>& val, JSONObj* obj)
+{
+  std::optional<std::string> s;
+  JSONDecoder::decode_json(name, s, obj);
+  if (!s) {
+    val.reset();
+    return;
+  }
+  size_t end = 0;
+  try {
+    val = std::stod(*s, &end);
+  } catch (const std::logic_error&) {
+    end = 0;
+  }
+  if (end == 0 || end != s->size()) {
+    throw JSONDecoder::err(fmt::format("{} is not a number: {}", name, *s));
+  }
+}
+
 void BucketConfig::decode_json(JSONObj* obj)
 {
   JSONDecoder::decode_json("enabled", enabled, obj);
-  JSONDecoder::decode_json("half_life_days", half_life_days, obj);
-  JSONDecoder::decode_json("warm_threshold", warm_threshold, obj);
-  JSONDecoder::decode_json("cool_threshold", cool_threshold, obj);
+  decode_json_double("half_life_days", half_life_days, obj);
+  decode_json_double("warm_threshold", warm_threshold, obj);
+  decode_json_double("cool_threshold", cool_threshold, obj);
   JSONDecoder::decode_json("cold_after_days", cold_after_days, obj);
   JSONDecoder::decode_json("prewarm", prewarm, obj);
   JSONDecoder::decode_json("prewarm_lead_days", prewarm_lead_days, obj);
   JSONDecoder::decode_json("min_tier_size", min_tier_size, obj);
-  JSONDecoder::decode_json("min_fft_confidence", min_fft_confidence, obj);
+  decode_json_double("min_fft_confidence", min_fft_confidence, obj);
 }
 
 std::list<BucketConfig> BucketConfig::generate_test_instances()

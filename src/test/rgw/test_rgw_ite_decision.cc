@@ -179,7 +179,7 @@ namespace {
 
 struct EngineTest : public ::testing::Test {
   DoutPrefix dpp{g_ceph_context, ceph_subsys_rgw, "decision test: "};
-  Context ctx;
+  rgw::ite::Context ctx;
   MemAggStore* agg = nullptr;
   MemStateStore* state = nullptr;
   MemMoveQueue* moves = nullptr;

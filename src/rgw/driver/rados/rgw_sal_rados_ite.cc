@@ -627,7 +627,7 @@ int RadosITEAggStore::read_window_object(const DoutPrefixProvider* dpp,
       uint64_t n = 0;
       try {
         auto p = bl.cbegin();
-        decode(n, p);
+        ceph::decode(n, p);
       } catch (const ceph::buffer::error& e) {
         ldpp_dout(dpp, 0) << "ERROR: corrupt count " << key << " in " << oid << dendl;
         continue;

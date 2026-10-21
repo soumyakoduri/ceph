@@ -197,7 +197,7 @@ namespace {
 
 struct FFTTest : public ::testing::Test {
   DoutPrefix dpp{g_ceph_context, ceph_subsys_rgw, "fft test: "};
-  Context ctx;
+  rgw::ite::Context ctx;
   MemAggStore* agg = nullptr;
   MemStateStore* state = nullptr;
   const rgw_bucket b1{"", "periodic", "periodic-id"};

@@ -326,7 +326,12 @@ void WorkerThread::run()
       ldpp_dout(this, 1) << "cycle failed: " << cpp_strerror(-r) << dendl;
     }
     l.lock();
-    cond.wait_until(l, start + period(), [this] { return stopping; });
+    // the rest of the period; a timespan is unsigned, so never subtract past it
+    const auto deadline = start + period();
+    const auto now = ceph::coarse_mono_clock::now();
+    if (now < deadline) {
+      cond.wait_for(l, deadline - now, [this] { return stopping; });
+    }
   }
 }
 

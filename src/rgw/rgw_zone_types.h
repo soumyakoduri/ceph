@@ -339,7 +339,7 @@ struct RGWZonePlacementInfo {
 
   /* the cold pool of a two-placement class, or nullptr */
   const rgw_pool* get_cold_data_pool(const std::string& sc) const {
-    const RGWZoneStorageClass *storage_class;
+    const RGWZoneStorageClass *storage_class = nullptr;
     if (!storage_classes.find(std::string{rgw_advertised_storage_class(sc)},
                               &storage_class) ||
         !storage_class->cold_data_pool ||
