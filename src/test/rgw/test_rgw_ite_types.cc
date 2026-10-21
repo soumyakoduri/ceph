@@ -204,7 +204,32 @@ TEST(ITETypes, EventAndActionEncoding)
     EXPECT_EQ(a.kind, d.kind);
     EXPECT_EQ(a.target, d.target);
     EXPECT_EQ(a.zone_id, d.zone_id);
+    EXPECT_EQ(a.queued_at, d.queued_at);
+    EXPECT_EQ(a.attempts, d.attempts);
   }
+}
+
+TEST(ITETypes, MoveActionV1Decodes)
+{
+  // as queued before actions counted their attempts
+  const MoveAction a = MoveAction::generate_test_instances().back();
+  ceph::buffer::list bl;
+  ENCODE_START(1, 1, bl);
+  encode(a.bucket, bl);
+  encode(a.obj, bl);
+  encode(static_cast<uint8_t>(a.kind), bl);
+  encode(static_cast<uint8_t>(a.target), bl);
+  encode(a.zone_id, bl);
+  encode(a.queued_at, bl);
+  ENCODE_FINISH(bl);
+  MoveAction d;
+  d.attempts = 9;
+  auto p = bl.cbegin();
+  decode(d, p);
+  EXPECT_EQ(a.obj, d.obj);
+  EXPECT_EQ(a.kind, d.kind);
+  EXPECT_EQ(a.queued_at, d.queued_at);
+  EXPECT_EQ(0u, d.attempts);
 }
 
 TEST(ITETypes, MoveKinds)

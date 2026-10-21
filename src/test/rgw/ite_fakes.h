@@ -468,13 +468,111 @@ struct MemStateStore : public rgw::sal::StoreITEStateStore {
   }
 };
 
-/* a plain bucket carrying info and attributes, for the bucket loader */
+/* where each instance's bytes are, behind the object calls of the mover.
+ * Moves are checked against the state store's generations, as a backend
+ * checks them against its index. */
+struct MemPlacements {
+  MemStateStore* state = nullptr;
+  // bucket key -> object key -> placement; hot unless moved
+  std::map<std::string, std::map<rgw_obj_key, Placement>> where;
+  int get_ret = 0;
+  int move_ret = 0;
+  int moves = 0;
+  bool stuck = false; // moves report success but leave the bytes in place
+  std::function<void(const rgw_obj_key&)> before_move;
+
+  explicit MemPlacements(MemStateStore* state) : state(state) {}
+
+  Placement at(const rgw_bucket& b, const std::string& name) {
+    auto& m = where[b.get_key()];
+    auto i = m.find(rgw_obj_key(name));
+    return i == m.end() ? Placement::Hot : i->second;
+  }
+  void set(const rgw_bucket& b, const std::string& name, Placement p) {
+    where[b.get_key()][rgw_obj_key(name)] = p;
+  }
+};
+
+class MemObject : public rgw::sal::RadosObject {
+  MemPlacements* p;
+
+  /* the index addresses the null version with an empty instance */
+  rgw_obj_key index_key() const {
+    rgw_obj_key k = get_key();
+    if (k.have_null_instance()) {
+      k.instance.clear();
+    }
+    return k;
+  }
+
+public:
+  MemObject(MemPlacements* p, const rgw_obj_key& k, rgw::sal::Bucket* b)
+    : RadosObject(nullptr, k, b), p(p) {}
+
+  int ite_get_placement(const DoutPrefixProvider*, Placement* placement,
+                        optional_yield) override {
+    if (p->get_ret < 0) {
+      return p->get_ret;
+    }
+    auto e = p->state->find(get_bucket()->get_key(), index_key());
+    if (!e || !e->exists) {
+      return -ENOENT;
+    }
+    auto& m = p->where[get_bucket()->get_key().get_key()];
+    auto i = m.find(index_key());
+    *placement = i == m.end() ? Placement::Hot : i->second;
+    return 0;
+  }
+  int ite_move_placement(const DoutPrefixProvider*, Placement target,
+                         uint64_t expected_gen, optional_yield) override {
+    if (p->before_move) {
+      p->before_move(get_key());
+    }
+    if (p->move_ret < 0) {
+      return p->move_ret;
+    }
+    auto e = p->state->find(get_bucket()->get_key(), index_key());
+    if (!e || !e->exists) {
+      return -ENOENT;
+    }
+    if (expected_gen && e->instance().gen != expected_gen) {
+      return -ECANCELED;
+    }
+    ++p->moves;
+    if (!p->stuck) {
+      p->where[get_bucket()->get_key().get_key()][index_key()] = target;
+    }
+    return 0;
+  }
+};
+
+/* a bucket whose objects keep their placements in a MemPlacements */
+class MemBucket : public rgw::sal::RadosBucket {
+  MemPlacements* p;
+
+public:
+  MemBucket(MemPlacements* p, const RGWBucketInfo& info)
+    : RadosBucket(nullptr, info), p(p) {}
+
+  std::unique_ptr<rgw::sal::Object> get_object(const rgw_obj_key& k) override {
+    return std::make_unique<MemObject>(p, k, this);
+  }
+};
+
+/* a plain bucket carrying info and attributes, for the bucket loader; with
+ * placements, one whose objects move between them */
 inline std::unique_ptr<rgw::sal::Bucket> make_bucket(const rgw_bucket& b, bool enabled,
-                                                     std::optional<double> half_life = {})
+                                                     std::optional<double> half_life = {},
+                                                     MemPlacements* placements = nullptr)
 {
   RGWBucketInfo info;
   info.bucket = b;
-  auto bucket = std::make_unique<rgw::sal::RadosBucket>(nullptr, info);
+  std::unique_ptr<rgw::sal::Bucket> bucket;
+  if (placements) {
+    bucket = std::make_unique<MemBucket>(placements, info);
+  } else {
+    bucket = std::make_unique<rgw::sal::RadosBucket>(nullptr, info);
+  }
   BucketConfig c;
   c.enabled = enabled;
   c.half_life_days = half_life;

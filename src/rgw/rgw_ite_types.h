@@ -371,19 +371,21 @@ struct MoveAction {
   Placement target = Placement::Cold;
   std::string zone_id;
   ceph::real_time queued_at;
+  uint32_t attempts = 0; // failed tries so far; the mover puts it back after one
 
   void encode(ceph::buffer::list& bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(2, 1, bl);
     encode(bucket, bl);
     encode(obj, bl);
     encode(static_cast<uint8_t>(kind), bl);
     encode(static_cast<uint8_t>(target), bl);
     encode(zone_id, bl);
     encode(queued_at, bl);
+    encode(attempts, bl);
     ENCODE_FINISH(bl);
   }
   void decode(ceph::buffer::list::const_iterator& bl) {
-    DECODE_START(1, bl);
+    DECODE_START(2, bl);
     decode(bucket, bl);
     decode(obj, bl);
     uint8_t v;
@@ -393,6 +395,9 @@ struct MoveAction {
     target = static_cast<Placement>(v);
     decode(zone_id, bl);
     decode(queued_at, bl);
+    if (struct_v >= 2) {
+      decode(attempts, bl);
+    }
     DECODE_FINISH(bl);
   }
   void dump(ceph::Formatter* f) const;

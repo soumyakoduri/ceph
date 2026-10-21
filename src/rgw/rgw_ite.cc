@@ -11,6 +11,7 @@
 #include "rgw_ite_aggregator.h"
 #include "rgw_ite_decision.h"
 #include "rgw_ite_fft_detector.h"
+#include "rgw_ite_mover.h"
 #include "rgw_ite_temperature.h"
 #include "rgw_sal.h"
 
@@ -425,6 +426,17 @@ int Manager::start_workers()
   }, [this] {
     return std::min(ctx.period("rgw_ite_decision_period"),
                     ctx.period("rgw_ite_agg_period"));
+  });
+  // the mover throttles by the wall clock, so its period is not scaled; each
+  // cycle starts a shard further on, so that a full shard cannot starve the
+  // rest of the batch
+  add_worker("move", [this, first = uint32_t(0)](const DoutPrefixProvider* dpp,
+                                                optional_yield y) mutable {
+    Mover mover(ctx);
+    return mover.process(dpp, y, first++);
+  }, [this] {
+    return ceph::timespan(std::chrono::seconds(
+        cct->_conf.get_val<int64_t>("rgw_ite_mover_period")));
   });
 
   for (auto& w : workers) {

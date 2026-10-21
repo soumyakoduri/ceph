@@ -459,6 +459,7 @@ void MoveAction::dump(ceph::Formatter* f) const
   encode_json("target", to_string(target), f);
   encode_json("zone_id", zone_id, f);
   encode_json("queued_at", queued_at, f);
+  encode_json("attempts", attempts, f);
 }
 
 std::list<MoveAction> MoveAction::generate_test_instances()
@@ -472,6 +473,7 @@ std::list<MoveAction> MoveAction::generate_test_instances()
   a.target = Placement::Hot;
   a.zone_id = "zone";
   a.queued_at = from_epoch_secs(1700000000);
+  a.attempts = 2;
   return o;
 }
 

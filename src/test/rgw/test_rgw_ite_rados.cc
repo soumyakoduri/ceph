@@ -20,6 +20,7 @@
 #include "rgw_ite_aggregator.h"
 #include "rgw_ite_decision.h"
 #include "rgw_ite_fft_detector.h"
+#include "rgw_ite_mover.h"
 #include "rgw_ite_temperature.h"
 #include "rgw_ite_types.h"
 #include "rgw_zone.h"
@@ -1031,6 +1032,90 @@ TEST_F(ITERados, MoveNeedsAColdPlacement)
   EXPECT_EQ(-EOPNOTSUPP, bucket->get_object(rgw_obj_key("plain"))->ite_move_placement(
                              dpp, Placement::Cold, e.instance().gen, null_yield));
   EXPECT_EQ(std::string(8192, 'x'), read_object(bucket, "plain", 8192));
+}
+
+TEST_F(ITERados, MoverCommitsAndRestores)
+{
+  TieredPlacement tiered;
+  TestBucket tb;
+  ASSERT_EQ(0, tb.create("ite-mover", 3, true));
+  sal::Bucket* bucket = tb.bucket.get();
+  const std::string data(1 << 20, 'm');
+  ceph::real_time mtime;
+  ASSERT_EQ(0, put_object(bucket, "obj", data, &mtime));
+  auto cleanup = make_scope_guard([&] { delete_object(bucket, "obj"); });
+
+  Context ctx;
+  ctx.cct = g_ceph_context;
+  ctx.driver = driver;
+  ctx.cookie = "ceph_test_rgw_ite";
+  ctx.zone_id = driver->get_zone()->get_id();
+  ctx.state = driver->get_ite_state_store();
+  ctx.moves = driver->get_ite_move_queue();
+  ASSERT_EQ(0, ctx.moves->initialize(dpp, null_yield));
+
+  const rgw_obj_key key("obj");
+  ObjectEntry e;
+  ASSERT_EQ(0, ctx.state->get_state(dpp, bucket, key, &e, null_yield));
+  const uint64_t gen = e.instance().gen;
+
+  // as the engine leaves it: PSEUDO past grace, its commit queued and marked
+  rgw_bucket_ite_state s;
+  s.tier_state = RGWITETierState::Pseudo;
+  s.pseudo_since = 1;
+  s.move_pending = RGWITEMovePending::Commit;
+  ASSERT_EQ(0, ctx.state->set_state(dpp, bucket, key, s,
+                                    rgw_bucket_ite_state::MASK_TIER |
+                                    rgw_bucket_ite_state::MASK_MOVE, gen, null_yield));
+  MoveAction a;
+  a.bucket = bucket->get_key();
+  a.obj = InstanceId("obj", "", gen);
+  a.kind = MoveKind::Commit;
+  a.target = Placement::Cold;
+  a.zone_id = ctx.zone_id;
+  a.queued_at = ceph::real_clock::now() - std::chrono::hours(1);
+  ASSERT_EQ(0, ctx.moves->append(dpp, a, null_yield));
+  const uint32_t shard = move_shard_of(a, ctx.moves->num_shards());
+  {
+    Mover mover(ctx);
+    ASSERT_EQ(0, mover.process_shard(dpp, shard, ceph::real_clock::now(), null_yield));
+    EXPECT_EQ(1u, mover.stats().started);
+    EXPECT_EQ(1u, mover.stats().commits);
+  }
+  EXPECT_EQ(std::set<std::string>{tiered.cold.name}, data_pools(bucket, "obj"));
+  ASSERT_EQ(0, ctx.state->get_state(dpp, bucket, key, &e, null_yield));
+  EXPECT_EQ(gen, e.instance().gen);
+  EXPECT_EQ(RGWITETierState::Committed, e.ite.tier_state);
+  EXPECT_EQ(RGWITEMovePending::None, e.ite.move_pending);
+  EXPECT_EQ(1u, e.ite.commit_count);
+
+  // promoted on demand
+  s = rgw_bucket_ite_state();
+  s.move_pending = RGWITEMovePending::Restore;
+  ASSERT_EQ(0, ctx.state->set_state(dpp, bucket, key, s, rgw_bucket_ite_state::MASK_MOVE,
+                                    gen, null_yield));
+  a.kind = MoveKind::Restore;
+  a.target = Placement::Hot;
+  ASSERT_EQ(0, ctx.moves->append(dpp, a, null_yield));
+  {
+    Mover mover(ctx);
+    ASSERT_EQ(0, mover.process_shard(dpp, shard, ceph::real_clock::now(), null_yield));
+    EXPECT_EQ(1u, mover.stats().restores);
+  }
+  EXPECT_EQ(std::set<std::string>{tiered.hot.name}, data_pools(bucket, "obj"));
+  EXPECT_EQ(data, read_object(bucket, "obj", data.size()));
+  ASSERT_EQ(0, ctx.state->get_state(dpp, bucket, key, &e, null_yield));
+  EXPECT_EQ(RGWITETierState::Hot, e.ite.tier_state);
+  EXPECT_EQ(1u, e.ite.commit_count);
+  EXPECT_EQ(1u, e.ite.restore_count);
+  EXPECT_EQ(RGWITEMovePending::None, e.ite.move_pending);
+
+  // nothing is left on the queue
+  std::vector<MoveActionEntry> entries;
+  std::string next;
+  bool truncated;
+  ASSERT_EQ(0, ctx.moves->list(dpp, shard, "", 100, entries, &next, &truncated, null_yield));
+  EXPECT_TRUE(entries.empty());
 }
 
 int main(int argc, const char** argv)
