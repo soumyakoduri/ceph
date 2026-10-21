@@ -1762,6 +1762,69 @@ TEST_P(TestClsRgw, ite_preserve_or_reset)
                                 rgw_bucket_ite_state::MASK_TEMPERATURE, 1));
 }
 
+static int ite_agg_add(librados::IoCtx& ioctx, const string& oid,
+                       const string& expected, const string& next,
+                       const map<string, uint64_t>& deltas)
+{
+  ObjectWriteOperation op;
+  cls_rgw_ite_agg_add(op, "__mkr__:3", expected, next, deltas);
+  return ioctx.operate(oid, &op);
+}
+
+static map<string, uint64_t> ite_agg_counts(librados::IoCtx& ioctx, const string& oid,
+                                            string* marker)
+{
+  map<string, bufferlist> vals;
+  bool more = false;
+  EXPECT_EQ(0, ioctx.omap_get_vals2(oid, "", 1000, &vals, &more));
+  map<string, uint64_t> counts;
+  for (auto& [k, bl] : vals) {
+    if (k == "__mkr__:3") {
+      *marker = bl.to_str();
+      continue;
+    }
+    uint64_t v;
+    auto p = bl.cbegin();
+    decode(v, p);
+    counts[k] = v;
+  }
+  return counts;
+}
+
+TEST_P(TestClsRgw, ite_agg_add)
+{
+  const string oid = "ite-agg.b.20261021.0";
+  const string k1 = "a:v1:7:GET:USER";
+  const string k2 = "b::0:PUT:USER";
+
+  // the window object does not exist yet; the first batch creates it
+  ASSERT_EQ(0, ite_agg_add(ioctx, oid, "", "m1", {{k1, 3}, {k2, 1}}));
+  // a replay of the same batch is refused and changes nothing
+  ASSERT_EQ(-ECANCELED, ite_agg_add(ioctx, oid, "", "m1", {{k1, 3}, {k2, 1}}));
+  ASSERT_EQ(-ECANCELED, ite_agg_add(ioctx, oid, "m0", "m2", {{k1, 1}}));
+  // the next batch adds on top
+  ASSERT_EQ(0, ite_agg_add(ioctx, oid, "m1", "m2", {{k1, 4}}));
+
+  string marker;
+  auto counts = ite_agg_counts(ioctx, oid, &marker);
+  EXPECT_EQ("m2", marker);
+  ASSERT_EQ(2u, counts.size());
+  EXPECT_EQ(7u, counts[k1]);
+  EXPECT_EQ(1u, counts[k2]);
+
+  // markers of other buffer shards are independent
+  ObjectWriteOperation op;
+  cls_rgw_ite_agg_add(op, "__mkr__:4", "", "x1", {{k2, 10}});
+  ASSERT_EQ(0, ioctx.operate(oid, &op));
+  counts = ite_agg_counts(ioctx, oid, &marker);
+  EXPECT_EQ("m2", marker);
+  EXPECT_EQ(11u, counts[k2]);
+
+  // a marker-only advance is allowed; a delta on the marker key is not
+  ASSERT_EQ(0, ite_agg_add(ioctx, oid, "m2", "m3", {}));
+  ASSERT_EQ(-EINVAL, ite_agg_add(ioctx, oid, "m3", "m4", {{"__mkr__:3", 1}}));
+}
+
 TEST(cls_rgw, ite_state_encoding_compat)
 {
   // an entry written before ITE (struct v8) decodes with an empty block

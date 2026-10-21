@@ -19,6 +19,8 @@
 #pragma once
 
 #include <deque>
+#include <optional>
+#include <set>
 #include <thread>
 
 #include "rgw_sal_rados.h"
@@ -120,6 +122,83 @@ public:
            const std::string& cursor, optional_yield y) override;
   std::unique_ptr<ITESerializer> get_serializer(uint32_t shard,
                                                 const std::string& cookie) override;
+};
+
+/* contract two. Each bucket window shard is one object,
+ * ite-agg.<bucket>.<stamp>.<shard>, whose omap holds the window's count keys
+ * and the progress marker of every write-buffer shard that contributed. The
+ * cls_rgw method ite_agg_add applies a batch and advances its marker in one
+ * atomic step, so a replay cannot double-count. ite-agg-idx.<bucket> indexes
+ * the window shard objects that exist, written before the first count lands
+ * in one, so expiry never misses an object. ite-buckets is the directory of
+ * ITE buckets with each worker's progress. */
+class RadosITEAggStore : public StoreITEAggStore {
+  RadosStore* const store;
+  CephContext* const cct;
+  const uint32_t shards;
+  librados::IoCtx ioctx;
+  neorados::IOContext neo_ioctx;
+  bool initialized = false;
+
+  // index entries this process already wrote
+  ceph::mutex lock = ceph::make_mutex("RadosITEAggStore");
+  std::set<std::string> indexed;
+
+  std::string window_oid(const rgw_bucket& bucket, const rgw::ite::Window& w,
+                         uint32_t shard) const;
+  int index_window(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                   const rgw::ite::Window& w, uint32_t shard, optional_yield y);
+  /* the (window, shard) objects recorded for a bucket whose index keys
+   * follow start_after and begin with prefix, in key order */
+  int read_index(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                 const std::string& start_after, const std::string& prefix,
+                 std::vector<std::pair<rgw::ite::Window, uint32_t>>& out,
+                 optional_yield y);
+
+public:
+  static constexpr const char* dir_oid = "ite-buckets";
+  static std::string index_oid(const rgw_bucket& bucket);
+  static std::string index_key(const rgw::ite::Window& w, uint32_t shard);
+  static std::optional<std::pair<rgw::ite::Window, uint32_t>>
+  parse_index_key(const std::string& key);
+
+  explicit RadosITEAggStore(RadosStore* store);
+
+  int initialize(const DoutPrefixProvider* dpp, optional_yield y) override;
+  uint32_t num_shards() const override { return shards; }
+  int get_marker(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                 const rgw::ite::Window& window, uint32_t agg_shard,
+                 uint32_t buffer_shard, std::string* marker,
+                 optional_yield y) override;
+  int add_counts(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                 const rgw::ite::Window& window, uint32_t agg_shard,
+                 uint32_t buffer_shard, const std::string& expected_marker,
+                 const std::string& new_marker,
+                 const std::map<std::string, uint64_t>& deltas,
+                 optional_yield y) override;
+  int read_counts(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                  const rgw::ite::Window& window,
+                  std::map<std::string, uint64_t>& counts,
+                  optional_yield y) override;
+  int list_windows(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                   const rgw::ite::Window& from, const rgw::ite::Window& to,
+                   std::vector<rgw::ite::Window>& windows,
+                   optional_yield y) override;
+  int remove_window(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                    const rgw::ite::Window& window, optional_yield y) override;
+  int put_bucket(const DoutPrefixProvider* dpp,
+                 const rgw::ite::BucketProgress& progress,
+                 optional_yield y) override;
+  int get_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                 rgw::ite::BucketProgress* progress, optional_yield y) override;
+  int remove_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                    optional_yield y) override;
+  int list_buckets(const DoutPrefixProvider* dpp, const std::string& marker,
+                   uint32_t max, std::vector<rgw::ite::BucketProgress>& buckets,
+                   std::string* next_marker, bool* truncated,
+                   optional_yield y) override;
+  std::unique_ptr<ITESerializer> get_bucket_serializer(
+      const rgw_bucket& bucket, const std::string& cookie) override;
 };
 
 } // namespace rgw::sal

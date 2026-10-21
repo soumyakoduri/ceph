@@ -286,6 +286,39 @@ struct rgw_cls_ite_set_state_op {
 };
 WRITE_CLASS_ENCODER(rgw_cls_ite_set_state_op)
 
+/* add count deltas to an ITE aggregated window object and advance one write
+ * buffer shard's progress marker, atomically. Refused with -ECANCELED, and
+ * nothing changes, unless the stored marker is expected_marker (a missing
+ * marker key reads as ""), so a replayed batch cannot count twice. */
+struct rgw_cls_ite_agg_add_op {
+  std::string marker_key;
+  std::string expected_marker;
+  std::string new_marker;
+  std::map<std::string, uint64_t> deltas;
+
+  void encode(ceph::buffer::list& bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(marker_key, bl);
+    encode(expected_marker, bl);
+    encode(new_marker, bl);
+    encode(deltas, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(ceph::buffer::list::const_iterator& bl) {
+    DECODE_START(1, bl);
+    decode(marker_key, bl);
+    decode(expected_marker, bl);
+    decode(new_marker, bl);
+    decode(deltas, bl);
+    DECODE_FINISH(bl);
+  }
+
+  static std::list<rgw_cls_ite_agg_add_op> generate_test_instances();
+  void dump(ceph::Formatter *f) const;
+};
+WRITE_CLASS_ENCODER(rgw_cls_ite_agg_add_op)
+
 struct rgw_cls_unlink_instance_op : cls_rgw_bi_log_related_op {
   // this represents a remote epoch during multisite sync
   uint64_t olh_epoch{0};
@@ -1959,6 +1992,9 @@ constexpr auto bucket_trim_olh_log = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_TRIM
 constexpr auto bucket_clear_olh = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_CLEAR_OLH);
 constexpr auto bucket_refresh_instance = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_REFRESH_INSTANCE);
 constexpr auto bucket_ite_set_state = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_ITE_SET_STATE);
+
+// ITE
+constexpr auto ite_agg_add = ClsMethod<RdWrTag, ClassId>(RGW_ITE_AGG_ADD);
 
 // Object
 constexpr auto obj_remove = ClsMethod<RdWrTag, ClassId>(RGW_OBJ_REMOVE);

@@ -14,12 +14,15 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
+#include "common/async/yield_context.h"
 #include "common/ceph_mutex.h"
 #include "common/dout.h"
 #include "rgw_ite_sink.h"
@@ -48,6 +51,9 @@ struct Context {
   std::unique_ptr<rgw::sal::ITEMoveQueue> moves;
   std::string zone_id;
   std::string cookie; // lock cookie of this process
+  /* set while the hosting gateway shuts down; long cycles check it between
+   * units of work so that shutdown never waits for a whole cycle */
+  std::atomic<bool> going_down{false};
 
   Context();
   ~Context();
@@ -105,6 +111,8 @@ class Manager : public RGWRealmReloader::Pauser, public DoutPrefixProvider {
   std::vector<std::unique_ptr<WorkerThread>> workers;
   bool running = false;
 
+  void add_worker(std::string name, WorkerThread::Cycle cycle,
+                  std::string_view period_key);
   int start_workers();
   void stop_workers();
 

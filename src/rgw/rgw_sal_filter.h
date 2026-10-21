@@ -1266,6 +1266,10 @@ public:
                            optional_yield y) override {
     return next->list_buckets(dpp, marker, max, buckets, next_marker, truncated, y);
   }
+  virtual std::unique_ptr<ITESerializer> get_bucket_serializer(
+      const rgw_bucket& bucket, const std::string& cookie) override {
+    return std::make_unique<FilterITESerializer>(next->get_bucket_serializer(bucket, cookie));
+  }
 };
 
 class FilterITEStateStore : public ITEStateStore {

@@ -2216,6 +2216,71 @@ static int rgw_bucket_ite_set_state(cls_method_context_t hctx, bufferlist *in, b
   return write_header_while_logrecord(hctx, header);
 }
 
+/* ITE aggregated store: one window shard object holds count keys
+ * (instance:op:caller -> encoded uint64) and one progress marker per write
+ * buffer shard. The deltas and the marker move together or not at all. */
+static int rgw_ite_agg_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+{
+  CLS_LOG(10, "entered %s", __func__);
+
+  rgw_cls_ite_agg_add_op op;
+  auto iter = in->cbegin();
+  try {
+    decode(op, iter);
+  } catch (ceph::buffer::error& err) {
+    CLS_LOG(1, "ERROR: %s: failed to decode request", __func__);
+    return -EINVAL;
+  }
+  if (op.marker_key.empty() || op.deltas.count(op.marker_key)) {
+    return -EINVAL;
+  }
+
+  bufferlist marker_bl;
+  int rc = cls_cxx_map_get_val(hctx, op.marker_key, &marker_bl);
+  if (rc < 0 && rc != -ENOENT) {
+    CLS_LOG(1, "ERROR: %s: failed to read marker %s: %d",
+            __func__, op.marker_key.c_str(), rc);
+    return rc;
+  }
+  const string stored = rc < 0 ? string() : marker_bl.to_str();
+  if (stored != op.expected_marker) {
+    CLS_LOG(10, "%s: marker %s is %s, expected %s", __func__,
+            op.marker_key.c_str(), stored.c_str(), op.expected_marker.c_str());
+    return -ECANCELED;
+  }
+
+  std::set<string> keys;
+  for (const auto& [key, delta] : op.deltas) {
+    keys.insert(key);
+  }
+  map<string, bufferlist> current;
+  if (!keys.empty()) {
+    rc = cls_cxx_map_get_vals_by_keys(hctx, keys, &current);
+    if (rc < 0 && rc != -ENOENT) {
+      CLS_LOG(1, "ERROR: %s: failed to read counts: %d", __func__, rc);
+      return rc;
+    }
+  }
+
+  map<string, bufferlist> updates;
+  for (const auto& [key, delta] : op.deltas) {
+    uint64_t count = 0;
+    if (auto i = current.find(key); i != current.end()) {
+      try {
+        auto p = i->second.cbegin();
+        decode(count, p);
+      } catch (ceph::buffer::error& err) {
+        CLS_LOG(1, "ERROR: %s: corrupt count for %s", __func__, key.c_str());
+        return -EIO;
+      }
+    }
+    count += delta;
+    encode(count, updates[key]);
+  }
+  updates[op.marker_key].append(op.new_marker);
+  return cls_cxx_map_set_vals(hctx, &updates);
+}
+
 static int rgw_bucket_unlink_instance(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
   CLS_LOG(10, "entered %s", __func__);
@@ -5485,6 +5550,7 @@ CLS_INIT(rgw)
   cls_method_handle_t h_rgw_bucket_clear_olh;
   cls_method_handle_t h_rgw_bucket_refresh_instance;
   cls_method_handle_t h_rgw_bucket_ite_set_state;
+  cls_method_handle_t h_rgw_ite_agg_add;
   cls_method_handle_t h_rgw_obj_remove;
   cls_method_handle_t h_rgw_obj_store_pg_ver;
   cls_method_handle_t h_rgw_obj_check_attrs_prefix;
@@ -5550,6 +5616,7 @@ CLS_INIT(rgw)
   cls.register_cxx_method(bucket_clear_olh, rgw_bucket_clear_olh, &h_rgw_bucket_clear_olh);
   cls.register_cxx_method(bucket_refresh_instance, rgw_bucket_refresh_instance, &h_rgw_bucket_refresh_instance);
   cls.register_cxx_method(bucket_ite_set_state, rgw_bucket_ite_set_state, &h_rgw_bucket_ite_set_state);
+  cls.register_cxx_method(ite_agg_add, rgw_ite_agg_add, &h_rgw_ite_agg_add);
 
   // Object
   cls.register_cxx_method(obj_remove, rgw_obj_remove, &h_rgw_obj_remove);

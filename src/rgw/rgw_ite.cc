@@ -7,6 +7,7 @@
 
 #include "common/Thread.h"
 #include "common/random_string.h"
+#include "rgw_ite_aggregator.h"
 #include "rgw_sal.h"
 
 #define dout_subsys ceph_subsys_rgw
@@ -167,6 +168,7 @@ int Manager::start()
   if (running) {
     return 0;
   }
+  ctx.going_down = false;
   int r = ctx.init(this, cct, driver, null_yield);
   if (r < 0) {
     return r;
@@ -189,13 +191,32 @@ void Manager::stop()
     return;
   }
   sink.set_buffer(nullptr);
+  ctx.going_down = true;
   stop_workers();
   ctx.reset(this);
   running = false;
 }
 
+void Manager::add_worker(std::string name, WorkerThread::Cycle cycle,
+                         std::string_view period_key)
+{
+  const std::string key(period_key);
+  workers.push_back(std::make_unique<WorkerThread>(
+      cct, std::move(name), std::move(cycle),
+      [this, key] {
+        return scaled_period(ctx.timescale(), cct->_conf.get_val<int64_t>(key));
+      }));
+}
+
 int Manager::start_workers()
 {
+  // each cycle builds a fresh worker over the shared context, so no state
+  // outlives a cycle except what the contracts hold
+  add_worker("agg", [this](const DoutPrefixProvider* dpp, optional_yield y) {
+    Aggregator agg(ctx);
+    return agg.process(dpp, y);
+  }, "rgw_ite_agg_period");
+
   for (auto& w : workers) {
     w->start();
   }

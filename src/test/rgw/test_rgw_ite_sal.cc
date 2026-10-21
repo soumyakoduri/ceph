@@ -69,6 +69,7 @@ struct FakeAggStore : public StoreITEAggStore {
   std::map<std::string, uint64_t> counts;
   std::string marker;
   std::vector<BucketProgress> dir;
+  int locks = 0;
 
   int initialize(const DoutPrefixProvider*, optional_yield) override { return 0; }
   uint32_t num_shards() const override { return 8; }
@@ -130,6 +131,10 @@ struct FakeAggStore : public StoreITEAggStore {
     next->clear();
     *truncated = false;
     return 0;
+  }
+  std::unique_ptr<ITESerializer> get_bucket_serializer(const rgw_bucket& b,
+                                                       const std::string&) override {
+    return std::make_unique<FakeSerializer>("bucket." + b.name, &locks);
   }
 };
 
@@ -275,6 +280,13 @@ TEST(ITESal, FilterAggStoreForwardsAndKeepsCAS)
   EXPECT_EQ(1u, dir.size());
   EXPECT_EQ(0, f.remove_bucket(nullptr, b, null_yield));
   EXPECT_EQ(-ENOENT, f.get_bucket(nullptr, b, &got, null_yield));
+
+  auto s = f.get_bucket_serializer(b, "c");
+  EXPECT_EQ(0, s->try_lock(nullptr, std::chrono::seconds(1), null_yield));
+  EXPECT_EQ(1, raw->locks);
+  std::ostringstream os;
+  s->print(os);
+  EXPECT_EQ("bucket.b", os.str());
 }
 
 TEST(ITESal, FilterStateStoreForwardsMaskAndGeneration)

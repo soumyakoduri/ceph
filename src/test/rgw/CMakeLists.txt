@@ -468,6 +468,15 @@ target_include_directories(unittest_rgw_ite_sink
 target_link_libraries(unittest_rgw_ite_sink unit-main ${rgw_libs})
 endif()
 
+# unittest_rgw_ite_aggregator
+add_executable(unittest_rgw_ite_aggregator
+  test_rgw_ite_aggregator.cc
+  $<TARGET_OBJECTS:unit-main>)
+add_ceph_unittest(unittest_rgw_ite_aggregator)
+target_include_directories(unittest_rgw_ite_aggregator
+  SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
+target_link_libraries(unittest_rgw_ite_aggregator ${rgw_libs})
+
 if(WITH_RADOSGW_RADOS)
 add_executable(unittest_rgw_lua test_rgw_lua.cc)
 add_ceph_unittest(unittest_rgw_lua)

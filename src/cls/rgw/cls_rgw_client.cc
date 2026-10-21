@@ -383,6 +383,22 @@ void cls_rgw_bucket_ite_set_state(librados::ObjectWriteOperation& op,
   op.exec(method::bucket_ite_set_state, in);
 }
 
+void cls_rgw_ite_agg_add(librados::ObjectWriteOperation& op,
+                         const string& marker_key,
+                         const string& expected_marker,
+                         const string& new_marker,
+                         const map<string, uint64_t>& deltas)
+{
+  bufferlist in;
+  rgw_cls_ite_agg_add_op call;
+  call.marker_key = marker_key;
+  call.expected_marker = expected_marker;
+  call.new_marker = new_marker;
+  call.deltas = deltas;
+  encode(call, in);
+  op.exec(method::ite_agg_add, in);
+}
+
 int cls_rgw_bucket_unlink_instance(librados::IoCtx& io_ctx, const string& oid,
                                    const cls_rgw_obj_key& key, const string& op_tag,
                                    const string& olh_tag, uint64_t olh_epoch, bool log_op,

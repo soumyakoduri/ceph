@@ -253,6 +253,28 @@ void rgw_cls_ite_set_state_op::dump(Formatter *f) const
   encode_json("expected_gen", expected_gen, f);
 }
 
+list<rgw_cls_ite_agg_add_op> rgw_cls_ite_agg_add_op::generate_test_instances()
+{
+  list<rgw_cls_ite_agg_add_op> o;
+  rgw_cls_ite_agg_add_op op;
+  op.marker_key = "__mkr__:3";
+  op.expected_marker = "00000000000000000001:00000000000000000100";
+  op.new_marker = "00000000000000000001:00000000000000000200";
+  op.deltas["report.pdf:vABC:42:GET:USER"] = 4200;
+  op.deltas["report.pdf:vABC:42:HEAD:USER"] = 7;
+  o.push_back(std::move(op));
+  o.emplace_back();
+  return o;
+}
+
+void rgw_cls_ite_agg_add_op::dump(Formatter *f) const
+{
+  encode_json("marker_key", marker_key, f);
+  encode_json("expected_marker", expected_marker, f);
+  encode_json("new_marker", new_marker, f);
+  encode_json("deltas", deltas, f);
+}
+
 list<rgw_cls_unlink_instance_op> rgw_cls_unlink_instance_op::generate_test_instances()
 {
   list<rgw_cls_unlink_instance_op> o;

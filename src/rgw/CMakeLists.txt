@@ -79,6 +79,7 @@ set(librgw_common_srcs
   rgw_ite_types.cc
   rgw_ite_sink.cc
   rgw_ite.cc
+  rgw_ite_aggregator.cc
   rgw_restore_waiter.cc
   rgw_metadata.cc
   rgw_multi.cc

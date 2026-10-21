@@ -1834,7 +1834,9 @@ public:
  * buckets. An event lands on the shard chosen by hashing its bucket and
  * object, so all events of one object are on one shard. Readers consume a
  * shard after a cursor and trim it only up to a cursor they have durably
- * committed; nothing is ever deleted on a timer.
+ * committed; nothing is ever deleted on a timer. The cursors of one shard
+ * compare as strings in append order, so a consumer can tell whether an
+ * entry lies before a committed cursor.
  */
 class ITEWriteBuffer {
 public:
@@ -1928,6 +1930,10 @@ public:
                            std::vector<rgw::ite::BucketProgress>& buckets,
                            std::string* next_marker, bool* truncated,
                            optional_yield y) = 0;
+  /** Get a serializer for exclusive per-bucket work, so that only one
+   * gateway scores or decides a bucket at a time */
+  virtual std::unique_ptr<ITESerializer> get_bucket_serializer(
+      const rgw_bucket& bucket, const std::string& cookie) = 0;
 };
 
 /**
