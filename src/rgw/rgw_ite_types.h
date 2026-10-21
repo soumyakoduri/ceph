@@ -399,6 +399,8 @@ struct MoveAction {
     decode(queued_at, bl);
     if (struct_v >= 2) {
       decode(attempts, bl);
+    } else {
+      attempts = 0;
     }
     DECODE_FINISH(bl);
   }
