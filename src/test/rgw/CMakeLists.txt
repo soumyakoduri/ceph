@@ -150,6 +150,13 @@ add_executable(unittest_rgw_zone test_rgw_zone.cc)
 add_ceph_unittest(unittest_rgw_zone)
 target_link_libraries(unittest_rgw_zone ${rgw_libs})
 
+# unittest_rgw_ite_types
+add_executable(unittest_rgw_ite_types
+  test_rgw_ite_types.cc
+  $<TARGET_OBJECTS:unit-main>)
+add_ceph_unittest(unittest_rgw_ite_types)
+target_link_libraries(unittest_rgw_ite_types ${rgw_libs})
+
 # unittest_rgw_compression
 add_executable(unittest_rgw_compression
   test_rgw_compression.cc

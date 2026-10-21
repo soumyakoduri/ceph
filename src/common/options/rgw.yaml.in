@@ -664,6 +664,317 @@ options:
   services:
   - rgw
   with_legacy: true
+- name: rgw_ite_enabled
+  type: bool
+  level: advanced
+  desc: Enable the Intelligent Tiering Engine (ITE)
+  long_desc: Master switch for the Intelligent Tiering Engine. When enabled, accesses to
+    objects in ITE-enabled buckets are recorded, scored for temperature and
+    periodicity, and cold instances are relocated between the hot and cold
+    placements of the INTELLIGENT_TIER storage class by background workers.
+    ITE also has to be enabled on each bucket.
+  default: false
+  services:
+  - rgw
+  see_also:
+  - rgw_ite_pool
+  with_legacy: true
+- name: rgw_ite_pool
+  type: str
+  level: advanced
+  desc: RADOS pool holding ITE state
+  long_desc: Pool for the ITE access-log write buffer, aggregated counts and move queue.
+    Objects are kept in a namespace named after the zone id, so zones sharing
+    a cluster do not see each other's state. It holds small omap and FIFO
+    objects and should be a replicated pool.
+  default: .rgw.ite
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_ite_storage_class
+  type: str
+  level: advanced
+  desc: Storage class assigned to every object in an ITE bucket
+  long_desc: The storage class every object in an ITE-enabled bucket is assigned at PUT.
+    It is never changed by tiering; the zone placement configures it with a
+    hot data pool and a cold data pool.
+  default: INTELLIGENT_TIER
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_ite_log_num_shards
+  type: int
+  level: advanced
+  desc: Number of ITE access-log write buffer shards
+  long_desc: The access-log write buffer is global and sharded by a hash of bucket and
+    object, so all events for one object land on the same shard.
+  default: 32
+  services:
+  - rgw
+  min: 1
+  max: 1024
+  with_legacy: true
+- name: rgw_ite_agg_period
+  type: int
+  level: advanced
+  desc: Interval between ITE aggregator runs, in seconds
+  default: 3600
+  services:
+  - rgw
+  see_also:
+  - rgw_ite_log_num_shards
+  min: 1
+  with_legacy: true
+- name: rgw_ite_agg_num_shards
+  type: int
+  level: advanced
+  desc: Number of aggregate hash shards per bucket and window
+  default: 8
+  services:
+  - rgw
+  min: 1
+  max: 1024
+  with_legacy: true
+- name: rgw_ite_window_granularity
+  type: str
+  level: advanced
+  desc: Granularity of an ITE aggregated count window
+  default: day
+  services:
+  - rgw
+  enum_values:
+  - day
+  - week
+  with_legacy: true
+- name: rgw_ite_lock_max_time
+  type: int
+  level: advanced
+  desc: Lifetime of an ITE per-shard processing lock, in seconds
+  long_desc: The aggregator and the lazy mover take this lock on a shard before
+    processing it and skip a shard owned by another gateway.
+  default: 300
+  services:
+  - rgw
+  min: 1
+  with_legacy: true
+- name: rgw_ite_temperature_period
+  type: int
+  level: advanced
+  desc: Interval between ITE temperature scorer runs, in seconds
+  default: 86400
+  services:
+  - rgw
+  min: 1
+  with_legacy: true
+- name: rgw_ite_temperature_sweep_period
+  type: int
+  level: advanced
+  desc: Interval between full temperature decay sweeps, in seconds
+  long_desc: Objects with no access in a window are not touched by the daily scorer;
+    this sweep decays the stored temperature of every object in the bucket.
+  default: 604800
+  services:
+  - rgw
+  min: 1
+  with_legacy: true
+- name: rgw_ite_fft_period
+  type: int
+  level: advanced
+  desc: Interval between ITE FFT periodicity detector runs, in seconds
+  default: 604800
+  services:
+  - rgw
+  min: 1
+  with_legacy: true
+- name: rgw_ite_fft_span
+  type: int
+  level: advanced
+  desc: Number of trailing windows the FFT detector analyses
+  long_desc: The longest detectable period is the span divided by the minimum number of
+    cycles. Aggregated windows are retained for the span plus
+    rgw_ite_agg_retention_margin days.
+  default: 90
+  services:
+  - rgw
+  see_also:
+  - rgw_ite_fft_min_cycles
+  - rgw_ite_agg_retention_margin
+  min: 8
+  max: 4096
+  with_legacy: true
+- name: rgw_ite_fft_warmup
+  type: int
+  level: advanced
+  desc: Windows of history a bucket needs before the FFT detector runs on it
+  long_desc: 0 means one FFT span.
+  default: 0
+  services:
+  - rgw
+  see_also:
+  - rgw_ite_fft_span
+  min: 0
+  with_legacy: true
+- name: rgw_ite_fft_min_cycles
+  type: int
+  level: advanced
+  desc: Minimum number of full cycles inside the span to trust a period
+  default: 3
+  services:
+  - rgw
+  min: 2
+  with_legacy: true
+- name: rgw_ite_agg_retention_margin
+  type: int
+  level: advanced
+  desc: Days aggregated windows are kept beyond the FFT span
+  default: 7
+  services:
+  - rgw
+  see_also:
+  - rgw_ite_fft_span
+  min: 0
+  with_legacy: true
+- name: rgw_ite_decision_period
+  type: int
+  level: advanced
+  desc: Interval between ITE decision engine runs, in seconds
+  default: 86400
+  services:
+  - rgw
+  min: 1
+  with_legacy: true
+- name: rgw_ite_move_batch_cap
+  type: int
+  level: advanced
+  desc: Maximum number of byte moves the ITE lazy mover starts per cycle
+  default: 100
+  services:
+  - rgw
+  min: 1
+  with_legacy: true
+- name: rgw_ite_max_age
+  type: int
+  level: advanced
+  desc: Age in days past which an instance is demoted regardless of temperature
+  long_desc: 0 disables the backstop.
+  default: 0
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_ite_demotion_enabled
+  type: bool
+  level: advanced
+  desc: Allow ITE to demote instances in this zone
+  long_desc: When disabled the zone scores temperature but never marks or commits
+    instances cold, keeping its data in the hot placement.
+  default: true
+  services:
+  - rgw
+  flags:
+  - runtime
+  with_legacy: true
+- name: rgw_ite_move_num_shards
+  type: int
+  level: advanced
+  desc: Number of ITE move queue shards
+  default: 32
+  services:
+  - rgw
+  min: 1
+  max: 1024
+  with_legacy: true
+- name: rgw_ite_mover_period
+  type: int
+  level: advanced
+  desc: Interval between ITE lazy mover runs, in seconds
+  default: 60
+  services:
+  - rgw
+  min: 1
+  with_legacy: true
+- name: rgw_ite_half_life
+  type: float
+  level: advanced
+  desc: Default temperature half-life, in days
+  default: 7
+  services:
+  - rgw
+  min: 0.001
+  with_legacy: true
+- name: rgw_ite_warm_threshold
+  type: float
+  level: advanced
+  desc: Default temperature above which an instance is hot
+  default: 0.3
+  services:
+  - rgw
+  min: 0
+  max: 1
+  with_legacy: true
+- name: rgw_ite_cool_threshold
+  type: float
+  level: advanced
+  desc: Default temperature at or below which an instance is cold
+  default: 0.1
+  services:
+  - rgw
+  min: 0
+  max: 1
+  with_legacy: true
+- name: rgw_ite_cold_after
+  type: int
+  level: advanced
+  desc: Default minimum residency in days before an instance can be demoted
+  default: 30
+  services:
+  - rgw
+  min: 0
+  with_legacy: true
+- name: rgw_ite_prewarm
+  type: bool
+  level: advanced
+  desc: Default for pre-warming instances ahead of a predicted access
+  default: true
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_ite_prewarm_lead
+  type: int
+  level: advanced
+  desc: Default pre-warm lead time, in days
+  default: 7
+  services:
+  - rgw
+  min: 0
+  with_legacy: true
+- name: rgw_ite_min_tier_size
+  type: size
+  level: advanced
+  desc: Default minimum object size eligible for tiering
+  default: 4_K
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_ite_min_fft_confidence
+  type: float
+  level: advanced
+  desc: Default minimum FFT confidence to trust a detected period
+  default: 0.5
+  services:
+  - rgw
+  min: 0
+  max: 1
+  with_legacy: true
+- name: rgw_ite_debug_interval
+  type: int
+  level: dev
+  desc: Length of an ITE day in seconds, for testing
+  long_desc: When positive, every ITE day-based quantity (windows, half-life, cold-after,
+    periods, retention) uses this many seconds as one day.
+  default: -1
+  services:
+  - rgw
+  with_legacy: true
 - name: rgw_mp_lock_max_time
   type: int
   level: advanced
