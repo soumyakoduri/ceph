@@ -233,4 +233,28 @@ public:
                  optional_yield y) override;
 };
 
+/* contract four: cls_fifo objects ite-move.0 .. ite-move.N-1, like the
+ * write buffer but appended synchronously, since the decision engine sets
+ * an instance's move-pending marker only once its action is durable */
+class RadosITEMoveQueue : public StoreITEMoveQueue {
+  RadosITEFifoSet fifos;
+
+public:
+  explicit RadosITEMoveQueue(RadosStore* store);
+
+  int initialize(const DoutPrefixProvider* dpp, optional_yield y) override;
+  uint32_t num_shards() const override { return fifos.num_shards(); }
+  int append(const DoutPrefixProvider* dpp, const rgw::ite::MoveAction& action,
+             optional_yield y) override;
+  int list(const DoutPrefixProvider* dpp, uint32_t shard,
+           const std::string& cursor, uint32_t max,
+           std::vector<rgw::ite::MoveActionEntry>& entries,
+           std::string* next_cursor, bool* truncated,
+           optional_yield y) override;
+  int ack(const DoutPrefixProvider* dpp, uint32_t shard,
+          const std::string& cursor, optional_yield y) override;
+  std::unique_ptr<ITESerializer> get_serializer(uint32_t shard,
+                                                const std::string& cookie) override;
+};
+
 } // namespace rgw::sal

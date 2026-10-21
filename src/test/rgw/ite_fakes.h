@@ -291,6 +291,76 @@ struct MemAggStore : public rgw::sal::StoreITEAggStore {
   }
 };
 
+/* contract four */
+struct MemMoveQueue : public rgw::sal::StoreITEMoveQueue {
+  uint32_t shards;
+  std::vector<std::vector<MoveActionEntry>> data;
+  uint64_t pos = 0;
+  MemLocks locks;
+  int append_ret = 0;
+  int list_ret = 0;
+  int ack_ret = 0;
+  int acks = 0;
+
+  explicit MemMoveQueue(uint32_t shards = 4) : shards(shards), data(shards) {}
+
+  int initialize(const DoutPrefixProvider*, optional_yield) override { return 0; }
+  uint32_t num_shards() const override { return shards; }
+  int append(const DoutPrefixProvider*, const MoveAction& a, optional_yield) override {
+    if (append_ret < 0) {
+      return append_ret;
+    }
+    data[move_shard_of(a, shards)].push_back({mem_cursor(++pos), a});
+    return 0;
+  }
+  int list(const DoutPrefixProvider*, uint32_t shard, const std::string& cursor,
+           uint32_t max, std::vector<MoveActionEntry>& entries,
+           std::string* next_cursor, bool* truncated, optional_yield) override {
+    if (list_ret < 0) {
+      return list_ret;
+    }
+    entries.clear();
+    *next_cursor = cursor;
+    *truncated = false;
+    for (const auto& e : data.at(shard)) {
+      if (e.marker <= cursor) {
+        continue;
+      }
+      if (entries.size() == max) {
+        *truncated = true;
+        break;
+      }
+      entries.push_back(e);
+      *next_cursor = e.marker;
+    }
+    return 0;
+  }
+  int ack(const DoutPrefixProvider*, uint32_t shard, const std::string& cursor,
+          optional_yield) override {
+    if (ack_ret < 0) {
+      return ack_ret;
+    }
+    ++acks;
+    std::erase_if(data.at(shard), [&](const MoveActionEntry& e) { return e.marker <= cursor; });
+    return 0;
+  }
+  std::unique_ptr<rgw::sal::ITESerializer> get_serializer(uint32_t shard,
+                                                          const std::string& cookie) override {
+    return std::make_unique<MemSerializer>(&locks, fmt::format("ite-move.{}", shard), cookie);
+  }
+
+  /* every queued action, in shard then queue order */
+  std::vector<MoveAction> all() const {
+    std::vector<MoveAction> out;
+    for (const auto& d : data) {
+      for (const auto& e : d) {
+        out.push_back(e.action);
+      }
+    }
+    return out;
+  }
+};
+
 /* add n accesses of one instance to a window, in the instance's shard */
 inline void add_count(MemAggStore& agg, const rgw_bucket& b, const Window& w,
                       const std::string& name, uint64_t gen, Op op, uint64_t n,

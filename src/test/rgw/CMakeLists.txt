@@ -468,7 +468,7 @@ target_include_directories(unittest_rgw_ite_sink
 target_link_libraries(unittest_rgw_ite_sink unit-main ${rgw_libs})
 
 # the ITE workers, over in-memory contracts (test/rgw/ite_fakes.h)
-foreach(worker aggregator temperature fft)
+foreach(worker aggregator temperature fft decision)
   add_executable(unittest_rgw_ite_${worker}
     test_rgw_ite_${worker}.cc
     $<TARGET_OBJECTS:unit-main>)

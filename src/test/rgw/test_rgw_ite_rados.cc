@@ -17,6 +17,7 @@
 #include "rgw_common.h"
 #include "rgw_ite.h"
 #include "rgw_ite_aggregator.h"
+#include "rgw_ite_decision.h"
 #include "rgw_ite_fft_detector.h"
 #include "rgw_ite_temperature.h"
 #include "rgw_ite_types.h"
@@ -116,20 +117,22 @@ struct TestBucket {
     // the entries have no head objects for the bucket removal to delete,
     // so drop them from the index first; all of it best effort
     for (const auto& [name, epoch] : entries) {
-      index_op(CLS_RGW_OP_DEL, name, epoch + 1, 0);
+      index_op(CLS_RGW_OP_DEL, name, epoch + 1, 0, ceph::real_clock::now());
     }
     bucket->remove(dpp, false, null_yield);
   }
 
-  int add_entry(const std::string& name, uint64_t epoch, uint64_t size) {
-    int r = index_op(CLS_RGW_OP_ADD, name, epoch, size);
+  int add_entry(const std::string& name, uint64_t epoch, uint64_t size,
+                ceph::real_time mtime = ceph::real_clock::now()) {
+    int r = index_op(CLS_RGW_OP_ADD, name, epoch, size, mtime);
     if (r == 0) {
       entries[name] = epoch;
     }
     return r;
   }
 
-  int index_op(RGWModifyOp op, const std::string& name, uint64_t epoch, uint64_t size) {
+  int index_op(RGWModifyOp op, const std::string& name, uint64_t epoch, uint64_t size,
+               ceph::real_time mtime) {
     auto rados = static_cast<sal::RadosStore*>(driver)->getRados();
     rgw_obj obj(bucket->get_key(), rgw_obj_key(name));
     RGWRados::BucketShard bs(rados);
@@ -153,7 +156,7 @@ struct TestBucket {
     meta.category = RGWObjCategory::Main;
     meta.size = size;
     meta.accounted_size = size;
-    meta.mtime = ceph::real_clock::now();
+    meta.mtime = mtime;
     meta.storage_class = "INTELLIGENT_TIER";
     librados::ObjectWriteOperation complete;
     cls_rgw_bucket_complete_op(complete, op, tag, ver, key, meta,
@@ -687,6 +690,121 @@ TEST_F(ITERados, FFTDetectorWritesVerdictsToIndexEntries)
 
   ASSERT_EQ(0, ctx.agg->get_bucket(dpp, key, &p, null_yield));
   EXPECT_EQ(noon, p.last_fft);
+}
+
+TEST_F(ITERados, MoveQueueAppendListAck)
+{
+  auto mq = driver->get_ite_move_queue();
+  ASSERT_TRUE(mq);
+  MoveAction a;
+  a.bucket = rgw_bucket("", "mq-bucket", "mq-bucket-id");
+  a.obj = InstanceId("cold.bin", "", 7);
+  a.kind = MoveKind::Commit;
+  a.target = Placement::Cold;
+  a.zone_id = "zone-a";
+  a.queued_at = ceph::real_clock::now();
+  EXPECT_EQ(-EINVAL, mq->append(dpp, a, null_yield)); // before initialize
+  ASSERT_EQ(0, mq->initialize(dpp, null_yield));
+  ASSERT_EQ(32u, mq->num_shards());
+
+  const uint32_t shard = move_shard_of(a, mq->num_shards());
+  ASSERT_EQ(0, mq->append(dpp, a, null_yield));
+  a.kind = MoveKind::Restore;
+  a.target = Placement::Hot;
+  ASSERT_EQ(0, mq->append(dpp, a, null_yield)); // durable at once: no flush
+
+  std::vector<MoveActionEntry> entries;
+  std::string next;
+  bool truncated = true;
+  ASSERT_EQ(0, mq->list(dpp, shard, "", 100, entries, &next, &truncated, null_yield));
+  ASSERT_EQ(2u, entries.size());
+  EXPECT_FALSE(truncated);
+  EXPECT_EQ(entries.back().marker, next);
+  EXPECT_EQ(MoveKind::Commit, entries[0].action.kind);
+  EXPECT_EQ(Placement::Cold, entries[0].action.target);
+  EXPECT_EQ("cold.bin", entries[0].action.obj.name);
+  EXPECT_EQ(7u, entries[0].action.obj.gen);
+  EXPECT_EQ("zone-a", entries[0].action.zone_id);
+  EXPECT_EQ(a.bucket, entries[0].action.bucket);
+  EXPECT_EQ(MoveKind::Restore, entries[1].action.kind);
+
+  // acknowledging is inclusive of the cursor
+  ASSERT_EQ(0, mq->ack(dpp, shard, entries[0].marker, null_yield));
+  ASSERT_EQ(0, mq->list(dpp, shard, "", 100, entries, &next, &truncated, null_yield));
+  ASSERT_EQ(1u, entries.size());
+  EXPECT_EQ(MoveKind::Restore, entries[0].action.kind);
+
+  auto lock = mq->get_serializer(shard, "a");
+  auto other = mq->get_serializer(shard, "b");
+  ASSERT_EQ(0, lock->try_lock(dpp, std::chrono::seconds(60), null_yield));
+  EXPECT_EQ(-EBUSY, other->try_lock(dpp, std::chrono::seconds(60), null_yield));
+  EXPECT_EQ(0, lock->unlock(dpp, null_yield));
+}
+
+TEST_F(ITERados, DecisionEngineOnIndexEntries)
+{
+  TestBucket tb;
+  ASSERT_EQ(0, tb.create("ite-decide", 3, true));
+  const auto now = ceph::real_clock::now();
+  const auto old = now - std::chrono::hours(24 * 40);
+  ASSERT_EQ(0, tb.add_entry("cold", 5, 1 << 20, old));
+  ASSERT_EQ(0, tb.add_entry("young", 5, 1 << 20, now));
+  ASSERT_EQ(0, tb.add_entry("tiny", 5, 10, old));
+  const rgw_bucket key = tb.bucket->get_key();
+
+  Context ctx;
+  ctx.cct = g_ceph_context;
+  ctx.driver = driver;
+  ctx.cookie = "ceph_test_rgw_ite";
+  ctx.zone_id = driver->get_zone()->get_id();
+  ctx.agg = driver->get_ite_agg_store();
+  ctx.state = driver->get_ite_state_store();
+  ctx.moves = driver->get_ite_move_queue();
+  ASSERT_EQ(0, ctx.agg->initialize(dpp, null_yield));
+  ASSERT_EQ(0, ctx.moves->initialize(dpp, null_yield));
+  BucketProgress p;
+  p.bucket = key;
+  p.enabled_at = old;
+  ASSERT_EQ(0, ctx.agg->put_bucket(dpp, p, null_yield));
+
+  // first pass: the old cold instance is marked, for free
+  DecisionEngine first(ctx);
+  ASSERT_EQ(0, first.process_bucket(dpp, key, now, null_yield));
+  EXPECT_EQ(3u, first.stats().objects);
+  EXPECT_EQ(1u, first.stats().pseudo);
+  EXPECT_EQ(1u, first.stats().skip);
+  ObjectEntry e;
+  ASSERT_EQ(0, ctx.state->get_state(dpp, tb.bucket.get(), rgw_obj_key("cold"), &e,
+                                    null_yield));
+  EXPECT_EQ(RGWITETierState::Pseudo, e.ite.tier_state);
+  EXPECT_EQ(to_epoch_secs(now), e.ite.pseudo_since);
+  ASSERT_EQ(0, ctx.state->get_state(dpp, tb.bucket.get(), rgw_obj_key("young"), &e,
+                                    null_yield));
+  EXPECT_EQ(RGWITETierState::Hot, e.ite.tier_state);
+
+  // a grace period later it is queued for commit
+  const auto later = now + std::chrono::hours(24 * 8);
+  DecisionEngine second(ctx);
+  ASSERT_EQ(0, second.process_bucket(dpp, key, later, null_yield));
+  EXPECT_EQ(1u, second.stats().commit);
+  ASSERT_EQ(0, ctx.state->get_state(dpp, tb.bucket.get(), rgw_obj_key("cold"), &e,
+                                    null_yield));
+  EXPECT_EQ(RGWITEMovePending::Commit, e.ite.move_pending);
+  EXPECT_EQ(RGWITETierState::Pseudo, e.ite.tier_state);
+
+  MoveAction want;
+  want.bucket = key;
+  want.obj = InstanceId("cold", "", 5);
+  std::vector<MoveActionEntry> entries;
+  std::string next;
+  bool truncated;
+  ASSERT_EQ(0, ctx.moves->list(dpp, move_shard_of(want, ctx.moves->num_shards()), "",
+                               100, entries, &next, &truncated, null_yield));
+  ASSERT_EQ(1u, entries.size());
+  EXPECT_EQ(MoveKind::Commit, entries[0].action.kind);
+  EXPECT_EQ(key, entries[0].action.bucket);
+  EXPECT_EQ(5u, entries[0].action.obj.gen);
+  EXPECT_EQ(ctx.zone_id, entries[0].action.zone_id);
 }
 
 int main(int argc, const char** argv)

@@ -9,6 +9,7 @@
 #include "common/errno.h"
 #include "common/random_string.h"
 #include "rgw_ite_aggregator.h"
+#include "rgw_ite_decision.h"
 #include "rgw_ite_fft_detector.h"
 #include "rgw_ite_temperature.h"
 #include "rgw_sal.h"
@@ -399,6 +400,14 @@ int Manager::start_workers()
   }, [this] {
     return std::min(ctx.period("rgw_ite_fft_period"),
                     ctx.period("rgw_ite_temperature_period"));
+  });
+  // likewise once per rgw_ite_decision_period per bucket, checked hourly
+  add_worker("decide", [this](const DoutPrefixProvider* dpp, optional_yield y) {
+    DecisionEngine engine(ctx);
+    return engine.process(dpp, y);
+  }, [this] {
+    return std::min(ctx.period("rgw_ite_decision_period"),
+                    ctx.period("rgw_ite_agg_period"));
   });
 
   for (auto& w : workers) {

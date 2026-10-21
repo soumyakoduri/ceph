@@ -936,6 +936,80 @@ int RadosITEStateStore::list_state(const DoutPrefixProvider* dpp, Bucket* bucket
   return 0;
 }
 
+RadosITEMoveQueue::RadosITEMoveQueue(RadosStore* store)
+  : fifos(store, "ite-move",
+          std::max<int64_t>(1, store->ctx()->_conf.get_val<int64_t>("rgw_ite_move_num_shards")))
+{}
+
+int RadosITEMoveQueue::initialize(const DoutPrefixProvider* dpp, optional_yield y)
+{
+  return fifos.initialize(dpp, y);
+}
+
+int RadosITEMoveQueue::append(const DoutPrefixProvider* dpp,
+                              const rgw::ite::MoveAction& action, optional_yield y)
+{
+  if (!fifos.initialized()) {
+    return -EINVAL;
+  }
+  ceph::buffer::list bl;
+  encode(action, bl);
+  std::deque<ceph::buffer::list> entries;
+  entries.push_back(std::move(bl));
+  return fifos.push(dpp, rgw::ite::move_shard_of(action, fifos.num_shards()),
+                    std::move(entries), y);
+}
+
+int RadosITEMoveQueue::list(const DoutPrefixProvider* dpp, uint32_t shard,
+                            const std::string& cursor, uint32_t max,
+                            std::vector<rgw::ite::MoveActionEntry>& entries,
+                            std::string* next_cursor, bool* truncated,
+                            optional_yield y)
+{
+  std::vector<fifo::entry> raw;
+  bool more = false;
+  int r = fifos.list(dpp, shard, cursor, max, raw, &more, y);
+  if (r < 0) {
+    return r;
+  }
+  entries.clear();
+  entries.reserve(raw.size());
+  std::string last = cursor;
+  for (auto& f : raw) {
+    last = f.marker;
+    rgw::ite::MoveActionEntry e;
+    e.marker = f.marker;
+    try {
+      auto p = f.data.cbegin();
+      decode(e.action, p);
+    } catch (const ceph::buffer::error& err) {
+      ldpp_dout(dpp, 0) << "ERROR: skipping undecodable move action "
+                        << f.marker << " in " << fifos.oid(shard) << dendl;
+      continue;
+    }
+    entries.push_back(std::move(e));
+  }
+  if (next_cursor) {
+    *next_cursor = std::move(last);
+  }
+  if (truncated) {
+    *truncated = more;
+  }
+  return 0;
+}
+
+int RadosITEMoveQueue::ack(const DoutPrefixProvider* dpp, uint32_t shard,
+                           const std::string& cursor, optional_yield y)
+{
+  return fifos.trim(dpp, shard, cursor, y);
+}
+
+std::unique_ptr<ITESerializer>
+RadosITEMoveQueue::get_serializer(uint32_t shard, const std::string& cookie)
+{
+  return fifos.get_serializer(shard, cookie);
+}
+
 std::unique_ptr<ITEWriteBuffer> RadosStore::get_ite_write_buffer()
 {
   return std::make_unique<RadosITEWriteBuffer>(this);
@@ -949,6 +1023,11 @@ std::unique_ptr<ITEAggStore> RadosStore::get_ite_agg_store()
 std::unique_ptr<ITEStateStore> RadosStore::get_ite_state_store()
 {
   return std::make_unique<RadosITEStateStore>(this);
+}
+
+std::unique_ptr<ITEMoveQueue> RadosStore::get_ite_move_queue()
+{
+  return std::make_unique<RadosITEMoveQueue>(this);
 }
 
 } // namespace rgw::sal
