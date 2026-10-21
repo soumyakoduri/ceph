@@ -376,6 +376,19 @@ void BucketConfig::dump(ceph::Formatter* f) const
   if (min_fft_confidence) f->dump_float("min_fft_confidence", *min_fft_confidence);
 }
 
+void BucketConfig::decode_json(JSONObj* obj)
+{
+  JSONDecoder::decode_json("enabled", enabled, obj);
+  JSONDecoder::decode_json("half_life_days", half_life_days, obj);
+  JSONDecoder::decode_json("warm_threshold", warm_threshold, obj);
+  JSONDecoder::decode_json("cool_threshold", cool_threshold, obj);
+  JSONDecoder::decode_json("cold_after_days", cold_after_days, obj);
+  JSONDecoder::decode_json("prewarm", prewarm, obj);
+  JSONDecoder::decode_json("prewarm_lead_days", prewarm_lead_days, obj);
+  JSONDecoder::decode_json("min_tier_size", min_tier_size, obj);
+  JSONDecoder::decode_json("min_fft_confidence", min_fft_confidence, obj);
+}
+
 std::list<BucketConfig> BucketConfig::generate_test_instances()
 {
   std::list<BucketConfig> o;

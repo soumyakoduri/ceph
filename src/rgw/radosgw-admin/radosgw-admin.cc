@@ -94,6 +94,8 @@ extern "C" {
 #include "rgw_bucket_logging.h"
 #include "rgw_dedup_cluster.h"
 #include "rgw_dedup_filter.h"
+#include "rgw_ite.h"
+#include "rgw_ite_admin.h"
 #include "services/svc_sync_modules.h"
 #include "services/svc_cls.h"
 #include "services/svc_bilog_rados.h"
@@ -388,6 +390,15 @@ void usage()
   cout << "  restore status                   shows restoration status of object in a bucket\n";
   cout << "  restore list                     list restore status of each object in the bucket\n";
   cout << "                                   can be filtered with help of --restore-status which shows objects with specified status\n";
+  cout << "  ite bucket enable                enable intelligent tiering on a bucket\n";
+  cout << "  ite bucket disable               disable intelligent tiering on a bucket\n";
+  cout << "  ite bucket list                  list the intelligent tiering buckets and their progress\n";
+  cout << "  ite bucket stats                 show a bucket's intelligent tiering config and its objects by tier\n";
+  cout << "  ite object stat                  show an object's intelligent tiering state and placement\n";
+  cout << "  ite counts list                  list a bucket's aggregated access counts\n";
+  cout << "  ite log status                   show the access events waiting to be aggregated\n";
+  cout << "  ite move list                    list the queued intelligent tiering moves\n";
+  cout << "  ite process                      run one cycle of the intelligent tiering workers\n";
   cout << "options:\n";
   cout << "   --tenant=<tenant>                 tenant name\n";
   cout << "   --user_ns=<namespace>             namespace of user (oidc in case of users authenticated with oidc provider)\n";
@@ -597,6 +608,12 @@ void usage()
   cout << "                                 use together with --marker to paginate through versioned buckets\n";
   cout << "                                 example: --marker=obj1 --object-version=abc123def456\n";
   cout << "   --show-restore-stats          if the flag is in present it will show restores stats in the bucket stats command\n";
+  cout << "\nIntelligent tiering options:\n";
+  cout << "   --infile                      ite bucket enable: a JSON knob set that replaces the bucket's own\n";
+  cout << "   --worker                      ite process: agg, temp, fft, decide, move, or all of them in that\n";
+  cout << "                                 order (default)\n";
+  cout << "   --max-entries                 ite counts list: windows; ite log status, ite move list: entries\n";
+  cout << "                                 per shard (default 1000)\n";
   cout << "\n";
   generic_client_usage();
 }
@@ -1023,6 +1040,15 @@ enum class OPT {
   RESTORE_STATUS,
   RESTORE_LIST,
   GLOBAL_CORS_GET,
+  ITE_BUCKET_ENABLE,
+  ITE_BUCKET_DISABLE,
+  ITE_BUCKET_LIST,
+  ITE_BUCKET_STATS,
+  ITE_OBJECT_STAT,
+  ITE_COUNTS_LIST,
+  ITE_LOG_STATUS,
+  ITE_MOVE_LIST,
+  ITE_PROCESS,
 };
 
 }
@@ -1333,6 +1359,15 @@ static SimpleCmd::Commands all_cmds = {
   { "restore status", OPT::RESTORE_STATUS },
   { "restore list", OPT::RESTORE_LIST },
   { "global-cors get", OPT::GLOBAL_CORS_GET},
+  { "ite bucket enable", OPT::ITE_BUCKET_ENABLE },
+  { "ite bucket disable", OPT::ITE_BUCKET_DISABLE },
+  { "ite bucket list", OPT::ITE_BUCKET_LIST },
+  { "ite bucket stats", OPT::ITE_BUCKET_STATS },
+  { "ite object stat", OPT::ITE_OBJECT_STAT },
+  { "ite counts list", OPT::ITE_COUNTS_LIST },
+  { "ite log status", OPT::ITE_LOG_STATUS },
+  { "ite move list", OPT::ITE_MOVE_LIST },
+  { "ite process", OPT::ITE_PROCESS },
 };
 
 static SimpleCmd::Aliases cmd_aliases = {
@@ -3908,6 +3943,7 @@ int main(int argc, const char **argv)
   string ratelimit_scope;
   std::string objects_file;
   string object_version;
+  std::string ite_worker = "all";
   string placement_id;
   std::optional<string> opt_storage_class;
   list<string> tags;
@@ -4158,6 +4194,8 @@ int main(int argc, const char **argv)
       objects_file = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--object-version", (char*)NULL)) {
       object_version = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--worker", (char*)NULL)) {
+      ite_worker = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--client-id", (char*)NULL)) {
       client_id = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--op-id", (char*)NULL)) {
@@ -4940,6 +4978,12 @@ int main(int argc, const char **argv)
 			 OPT::SCRIPT_GET,
        OPT::RESTORE_STATUS,
        OPT::RESTORE_LIST,
+       OPT::ITE_BUCKET_LIST,
+       OPT::ITE_BUCKET_STATS,
+       OPT::ITE_OBJECT_STAT,
+       OPT::ITE_COUNTS_LIST,
+       OPT::ITE_LOG_STATUS,
+       OPT::ITE_MOVE_LIST,
     };
 
     std::set<OPT> gc_ops_list = {
@@ -4952,6 +4996,7 @@ int main(int argc, const char **argv)
 			 OPT::USER_RM,    // --purge-data
 			 OPT::OBJECTS_EXPIRE,
 			 OPT::OBJECTS_EXPIRE_STALE_RM,
+			 OPT::ITE_PROCESS, // a move hands the copy it replaces to gc
 #ifdef WITH_RADOSGW_RADOS
 			 OPT::LC_PROCESS,
        OPT::BUCKET_SYNC_RUN,
@@ -13111,6 +13156,105 @@ next:
                                             err_msg, stream_flusher, null_yield);
     }
   }
+  if (opt_cmd == OPT::ITE_BUCKET_ENABLE ||
+      opt_cmd == OPT::ITE_BUCKET_DISABLE ||
+      opt_cmd == OPT::ITE_BUCKET_LIST ||
+      opt_cmd == OPT::ITE_BUCKET_STATS ||
+      opt_cmd == OPT::ITE_OBJECT_STAT ||
+      opt_cmd == OPT::ITE_COUNTS_LIST ||
+      opt_cmd == OPT::ITE_LOG_STATUS ||
+      opt_cmd == OPT::ITE_MOVE_LIST ||
+      opt_cmd == OPT::ITE_PROCESS) {
+    const bool needs_bucket = (opt_cmd == OPT::ITE_BUCKET_ENABLE ||
+                               opt_cmd == OPT::ITE_BUCKET_DISABLE ||
+                               opt_cmd == OPT::ITE_BUCKET_STATS ||
+                               opt_cmd == OPT::ITE_OBJECT_STAT ||
+                               opt_cmd == OPT::ITE_COUNTS_LIST);
+    if (needs_bucket && bucket_name.empty()) {
+      cerr << "ERROR: bucket name not specified (--bucket)" << std::endl;
+      return EINVAL;
+    }
+    if (opt_cmd == OPT::ITE_OBJECT_STAT && object.empty()) {
+      cerr << "ERROR: object name not specified (--object)" << std::endl;
+      return EINVAL;
+    }
+    std::optional<rgw::ite::BucketConfig> ite_knobs;
+    if (opt_cmd == OPT::ITE_BUCKET_ENABLE && !infile.empty()) {
+      ite_knobs.emplace();
+      ret = read_decode_json(infile, *ite_knobs);
+      if (ret < 0) {
+        return -ret;
+      }
+    }
+    if (needs_bucket) {
+      ret = init_bucket(tenant, bucket_name, bucket_id, &bucket);
+      if (ret < 0) {
+        cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
+        return -ret;
+      }
+    }
+    rgw::ite::Context ite_ctx;
+    ret = ite_ctx.init(dpp(), g_ceph_context, driver, null_yield);
+    if (ret < 0) {
+      cerr << "ERROR: intelligent tiering is not available on this zone: "
+           << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+    // nothing here appends to the write buffer, so there is nothing to flush
+    namespace ite_admin = rgw::ite::admin;
+    const auto now = ceph::real_clock::now();
+    const uint32_t ite_max = max_entries > 0 ? max_entries : 0;
+    Formatter* f = formatter.get();
+    switch (opt_cmd) {
+    case OPT::ITE_BUCKET_ENABLE:
+      ret = ite_admin::bucket_enable(dpp(), ite_ctx, bucket.get(), ite_knobs, now, f, null_yield);
+      break;
+    case OPT::ITE_BUCKET_DISABLE:
+      ret = ite_admin::bucket_disable(dpp(), ite_ctx, bucket.get(), f, null_yield);
+      break;
+    case OPT::ITE_BUCKET_LIST:
+      ret = ite_admin::bucket_list(dpp(), ite_ctx, marker, ite_max, f, null_yield);
+      break;
+    case OPT::ITE_BUCKET_STATS:
+      ret = ite_admin::bucket_stats(dpp(), ite_ctx, bucket.get(), f, null_yield);
+      break;
+    case OPT::ITE_OBJECT_STAT:
+      ret = ite_admin::object_stat(dpp(), ite_ctx, bucket.get(),
+                                   rgw_obj_key(object, object_version), now, f, null_yield);
+      break;
+    case OPT::ITE_COUNTS_LIST:
+      ret = ite_admin::counts_list(dpp(), ite_ctx, bucket->get_key(), object, ite_max, now,
+                                   f, null_yield);
+      break;
+    case OPT::ITE_LOG_STATUS:
+      ret = ite_admin::log_status(dpp(), ite_ctx, ite_max, f, null_yield);
+      break;
+    case OPT::ITE_MOVE_LIST:
+      if (specified_shard_id && shard_id < 0) {
+        cerr << "ERROR: invalid shard id " << shard_id << std::endl;
+        return EINVAL;
+      }
+      ret = ite_admin::move_list(dpp(), ite_ctx,
+                                 specified_shard_id ? std::optional<uint32_t>(shard_id)
+                                                    : std::nullopt,
+                                 ite_max, f, null_yield);
+      break;
+    case OPT::ITE_PROCESS:
+      ret = ite_admin::process(dpp(), ite_ctx, ite_worker, f, null_yield);
+      break;
+    default:
+      break;
+    }
+    // what each worker did is worth showing even when one of them failed
+    if (ret >= 0 || opt_cmd == OPT::ITE_PROCESS) {
+      formatter->flush(cout);
+    }
+    if (ret < 0) {
+      cerr << "ERROR: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+  }
+
   if (opt_cmd == OPT::GLOBAL_CORS_GET) {
     string allow_origins, allow_headers, allow_methods, expose_headers;
     ret = g_conf().get_val("rgw_gcors_allow_origins", &allow_origins);

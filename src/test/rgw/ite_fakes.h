@@ -546,20 +546,38 @@ public:
   }
 };
 
-/* a bucket whose objects keep their placements in a MemPlacements */
+/* a bucket that stores its attributes in memory, and whose objects, given
+ * placements, keep theirs in a MemPlacements */
 class MemBucket : public rgw::sal::RadosBucket {
   MemPlacements* p;
 
 public:
+  int store_ret = 0;
+  int stores = 0;
+
   MemBucket(MemPlacements* p, const RGWBucketInfo& info)
     : RadosBucket(nullptr, info), p(p) {}
 
   std::unique_ptr<rgw::sal::Object> get_object(const rgw_obj_key& k) override {
+    if (!p) {
+      return RadosBucket::get_object(k);
+    }
     return std::make_unique<MemObject>(p, k, this);
+  }
+  int merge_and_store_attrs(const DoutPrefixProvider*, rgw::sal::Attrs& new_attrs,
+                            optional_yield) override {
+    if (store_ret < 0) {
+      return store_ret;
+    }
+    for (const auto& [k, v] : new_attrs) {
+      get_attrs()[k] = v;
+    }
+    ++stores;
+    return 0;
   }
 };
 
-/* a plain bucket carrying info and attributes, for the bucket loader; with
+/* a bucket carrying info and attributes, for the bucket loader; with
  * placements, one whose objects move between them */
 inline std::unique_ptr<rgw::sal::Bucket> make_bucket(const rgw_bucket& b, bool enabled,
                                                      std::optional<double> half_life = {},
@@ -567,12 +585,7 @@ inline std::unique_ptr<rgw::sal::Bucket> make_bucket(const rgw_bucket& b, bool e
 {
   RGWBucketInfo info;
   info.bucket = b;
-  std::unique_ptr<rgw::sal::Bucket> bucket;
-  if (placements) {
-    bucket = std::make_unique<MemBucket>(placements, info);
-  } else {
-    bucket = std::make_unique<rgw::sal::RadosBucket>(nullptr, info);
-  }
+  auto bucket = std::make_unique<MemBucket>(placements, info);
   BucketConfig c;
   c.enabled = enabled;
   c.half_life_days = half_life;

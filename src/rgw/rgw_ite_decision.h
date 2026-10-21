@@ -64,6 +64,9 @@ struct Verdict {
   std::string_view reason;
 };
 
+/* the zone's inputs for a bucket with these knobs, as of now */
+DecisionInputs decision_inputs(const Context& ctx, const Knobs& knobs, ceph::real_time now);
+
 /* the state machine for one instance, as of in.now */
 Verdict decide(const ObjectEntry& e, const DecisionInputs& in);
 

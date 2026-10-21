@@ -40,6 +40,19 @@ bool access_predicted(const ObjectEntry& e, const DecisionInputs& in)
   return ahead >= 0 && ahead <= in.knobs.prewarm_lead_days;
 }
 
+DecisionInputs decision_inputs(const Context& ctx, const Knobs& knobs, ceph::real_time now)
+{
+  const auto& conf = ctx.cct->_conf;
+  DecisionInputs in;
+  in.knobs = knobs;
+  in.now = now;
+  in.ts = ctx.timescale();
+  in.storage_class = conf.get_val<std::string>("rgw_ite_storage_class");
+  in.demotion_enabled = conf.get_val<bool>("rgw_ite_demotion_enabled");
+  in.max_age_days = conf.get_val<int64_t>("rgw_ite_max_age");
+  return in;
+}
+
 Verdict decide(const ObjectEntry& e, const DecisionInputs& in)
 {
   if (!e.exists || e.delete_marker) {
@@ -190,14 +203,7 @@ int DecisionEngine::decide_bucket(const DoutPrefixProvider* dpp,
   }
   ++st.buckets;
 
-  const auto& conf = ctx.cct->_conf;
-  DecisionInputs in;
-  in.knobs = knobs;
-  in.now = now;
-  in.ts = ctx.timescale();
-  in.storage_class = conf.get_val<std::string>("rgw_ite_storage_class");
-  in.demotion_enabled = conf.get_val<bool>("rgw_ite_demotion_enabled");
-  in.max_age_days = conf.get_val<int64_t>("rgw_ite_max_age");
+  const DecisionInputs in = decision_inputs(ctx, knobs, now);
 
   rgw_obj_key marker;
   bool truncated = true;

@@ -178,6 +178,46 @@ TEST(ITETypes, BucketConfigAttr)
   EXPECT_FALSE(get_bucket_config(attrs));
 }
 
+TEST(ITETypes, BucketConfigJson)
+{
+  // as an admin hands a knob set to radosgw-admin ite bucket enable
+  BucketConfig c;
+  c.enabled = true;
+  c.half_life_days = 2.5;
+  c.cold_after_days = 10;
+  c.prewarm = false;
+  c.min_tier_size = 65536;
+  JSONFormatter f;
+  f.open_object_section("config");
+  c.dump(&f);
+  f.close_section();
+  std::stringstream ss;
+  f.flush(ss);
+  JSONParser parser;
+  ASSERT_TRUE(parser.parse(ss.str().c_str(), ss.str().size()));
+  BucketConfig d;
+  d.decode_json(&parser);
+  EXPECT_TRUE(d.enabled);
+  EXPECT_DOUBLE_EQ(2.5, *d.half_life_days);
+  EXPECT_EQ(10u, *d.cold_after_days);
+  EXPECT_FALSE(*d.prewarm);
+  EXPECT_EQ(65536u, *d.min_tier_size);
+  // what is not given stays unset, and falls back to the zone defaults
+  EXPECT_FALSE(d.warm_threshold);
+  EXPECT_FALSE(d.cool_threshold);
+  EXPECT_FALSE(d.prewarm_lead_days);
+  EXPECT_FALSE(d.min_fft_confidence);
+
+  const std::string partial = R"({"warm_threshold": 0.5})";
+  JSONParser p2;
+  ASSERT_TRUE(p2.parse(partial.c_str(), partial.size()));
+  BucketConfig e;
+  e.decode_json(&p2);
+  EXPECT_FALSE(e.enabled);
+  EXPECT_DOUBLE_EQ(0.5, *e.warm_threshold);
+  EXPECT_FALSE(e.half_life_days);
+}
+
 TEST(ITETypes, EventAndActionEncoding)
 {
   for (const auto& e : AccessEvent::generate_test_instances()) {

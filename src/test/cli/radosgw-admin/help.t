@@ -232,6 +232,15 @@
     restore status                   shows restoration status of object in a bucket
     restore list                     list restore status of each object in the bucket
                                      can be filtered with help of --restore-status which shows objects with specified status
+    ite bucket enable                enable intelligent tiering on a bucket
+    ite bucket disable               disable intelligent tiering on a bucket
+    ite bucket list                  list the intelligent tiering buckets and their progress
+    ite bucket stats                 show a bucket's intelligent tiering config and its objects by tier
+    ite object stat                  show an object's intelligent tiering state and placement
+    ite counts list                  list a bucket's aggregated access counts
+    ite log status                   show the access events waiting to be aggregated
+    ite move list                    list the queued intelligent tiering moves
+    ite process                      run one cycle of the intelligent tiering workers
   options:
      --tenant=<tenant>                 tenant name
      --user_ns=<namespace>             namespace of user (oidc in case of users authenticated with oidc provider)
@@ -453,6 +462,13 @@
                                    use together with --marker to paginate through versioned buckets
                                    example: --marker=obj1 --object-version=abc123def456
      --show-restore-stats          if the flag is in present it will show restores stats in the bucket stats command
+  
+  Intelligent tiering options:
+     --infile                      ite bucket enable: a JSON knob set that replaces the bucket's own
+     --worker                      ite process: agg, temp, fft, decide, move, or all of them in that
+                                   order (default)
+     --max-entries                 ite counts list: windows; ite log status, ite move list: entries
+                                   per shard (default 1000)
   
     --conf/-c FILE    read configuration from the given configuration file
     --id ID           set ID portion of my name

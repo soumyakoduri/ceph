@@ -13,10 +13,12 @@
 #include "cls/rgw/cls_rgw_client.h"
 #include "common/async/context_pool.h"
 #include "common/ceph_argparse.h"
+#include "common/ceph_json.h"
 #include "global/global_init.h"
 #include "include/scope_guard.h"
 #include "rgw_common.h"
 #include "rgw_ite.h"
+#include "rgw_ite_admin.h"
 #include "rgw_ite_aggregator.h"
 #include "rgw_ite_decision.h"
 #include "rgw_ite_fft_detector.h"
@@ -1116,6 +1118,76 @@ TEST_F(ITERados, MoverCommitsAndRestores)
   bool truncated;
   ASSERT_EQ(0, ctx.moves->list(dpp, shard, "", 100, entries, &next, &truncated, null_yield));
   EXPECT_TRUE(entries.empty());
+}
+
+TEST_F(ITERados, AdminEnablesABucket)
+{
+  TieredPlacement tiered;
+  TestBucket tb;
+  ASSERT_EQ(0, tb.create("ite-admin", 1, false));
+  Context ctx;
+  ASSERT_EQ(0, ctx.init(dpp, g_ceph_context, driver, null_yield));
+
+  // enabled with a knob: the config is stored with the bucket, and the
+  // bucket joins the directory
+  BucketConfig knobs;
+  knobs.half_life_days = 3;
+  const auto now = ceph::real_clock::now();
+  JSONFormattable f;
+  ASSERT_EQ(0, admin::bucket_enable(dpp, ctx, tb.bucket.get(), knobs, now, &f, null_yield));
+  std::unique_ptr<sal::Bucket> loaded;
+  ASSERT_EQ(0, driver->load_bucket(dpp, tb.bucket->get_key(), &loaded, null_yield));
+  auto config = get_bucket_config(loaded->get_attrs());
+  ASSERT_TRUE(config);
+  EXPECT_TRUE(config->enabled);
+  EXPECT_DOUBLE_EQ(3, *config->half_life_days);
+  tb.bucket = std::move(loaded);
+  BucketProgress p;
+  ASSERT_EQ(0, ctx.agg->get_bucket(dpp, tb.bucket->get_key(), &p, null_yield));
+  EXPECT_EQ(now, p.enabled_at);
+  // the directory is shared with the other tests' buckets
+  bool listed = false;
+  std::string marker;
+  for (bool more = true; more && !listed;) {
+    JSONFormattable g;
+    ASSERT_EQ(0, admin::bucket_list(dpp, ctx, marker, 0, &g, null_yield));
+    for (const auto& b : g["buckets"].array()) {
+      listed = listed || b["bucket"]["name"].val() == tb.bucket->get_name();
+    }
+    more = g["truncated"].val_bool();
+    marker = g["next_marker"].val();
+  }
+  EXPECT_TRUE(listed);
+
+  // a PUT from now on takes the class, and the inspectors see the object
+  ceph::real_time mtime;
+  ASSERT_EQ(0, put_object(tb.bucket.get(), "obj", std::string(65536, 'x'), &mtime));
+  auto cleanup = make_scope_guard([&] { delete_object(tb.bucket.get(), "obj"); });
+  JSONFormattable h;
+  ASSERT_EQ(0, admin::object_stat(dpp, ctx, tb.bucket.get(), rgw_obj_key("obj"),
+                                  ceph::real_clock::now(), &h, null_yield));
+  EXPECT_EQ("INTELLIGENT_TIER", h["storage_class"].val());
+  EXPECT_EQ("hot", h["placement"].val());
+  EXPECT_EQ("hold", h["decision"]["decision"].val());
+  EXPECT_EQ("younger than cold-after", h["decision"]["reason"].val());
+  JSONFormattable i;
+  ASSERT_EQ(0, admin::bucket_stats(dpp, ctx, tb.bucket.get(), &i, null_yield));
+  EXPECT_EQ(1, i["objects"]["hot"]["objects"].val_long_long());
+  EXPECT_EQ(65536, i["objects"]["hot"]["bytes"].val_long_long());
+
+  // disabled: the next PUT keeps the class it asks for
+  JSONFormattable j;
+  ASSERT_EQ(0, admin::bucket_disable(dpp, ctx, tb.bucket.get(), &j, null_yield));
+  ASSERT_EQ(0, driver->load_bucket(dpp, tb.bucket->get_key(), &loaded, null_yield));
+  config = get_bucket_config(loaded->get_attrs());
+  ASSERT_TRUE(config);
+  EXPECT_FALSE(config->enabled);
+  EXPECT_DOUBLE_EQ(3, *config->half_life_days);
+  rgw_placement_rule rule = loaded->get_placement_rule();
+  select_placement(g_ceph_context, driver, loaded->get_attrs(), &rule);
+  EXPECT_EQ(loaded->get_placement_rule(), rule);
+  tb.bucket = std::move(loaded);
+  ctx.reset(dpp);
 }
 
 int main(int argc, const char** argv)

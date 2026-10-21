@@ -284,6 +284,8 @@ struct BucketConfig {
     DECODE_FINISH(bl);
   }
   void dump(ceph::Formatter* f) const;
+  /* the fields dump() writes; the ones missing stay unset */
+  void decode_json(JSONObj* obj);
   static std::list<BucketConfig> generate_test_instances();
 };
 WRITE_CLASS_ENCODER(BucketConfig)

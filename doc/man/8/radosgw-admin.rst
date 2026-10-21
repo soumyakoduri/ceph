@@ -539,6 +539,41 @@ as follows:
 :command:`restore status`
   Show restoration status of an object in the bucket
 
+:command:`ite bucket enable`
+  Enable intelligent tiering on a bucket. Its objects written from then on
+  take the intelligent tiering storage class. With :option:`--infile`, a
+  JSON knob set replaces the bucket's own.
+
+:command:`ite bucket disable`
+  Disable intelligent tiering on a bucket. Its objects keep their placement
+  and state; its knobs are kept for when it is enabled again.
+
+:command:`ite bucket list`
+  List the intelligent tiering buckets, with the progress of each worker.
+
+:command:`ite bucket stats`
+  Show a bucket's intelligent tiering config and knobs, and count its
+  objects by tier state.
+
+:command:`ite object stat`
+  Show an object's intelligent tiering state, where its data is, and what
+  the next decision pass would make of it.
+
+:command:`ite counts list`
+  List a bucket's aggregated access counts per window, of one object with
+  :option:`--object`.
+
+:command:`ite log status`
+  Show the access events waiting in the write buffer to be aggregated.
+
+:command:`ite move list`
+  List the moves queued for the intelligent tiering mover, of one shard
+  with :option:`--shard-id`.
+
+:command:`ite process`
+  Run one cycle of the intelligent tiering workers, or of one of them with
+  :option:`--worker`.
+
 Options
 =======
 
@@ -947,6 +982,11 @@ Options
 .. option:: --show-restore-stats
 
    Shows restore stats in a bucket stat command. Here the bucket name need be provided.
+
+.. option:: --worker=<worker>
+
+   The intelligent tiering worker 'ite process' runs: agg, temp, fft, decide,
+   move, or all of them in that order (the default).
 
 Quota Options
 =============
