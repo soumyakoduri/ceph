@@ -1622,6 +1622,178 @@ TEST_P(TestClsRgw, bi_put_entries)
 }
 
 
+static rgw_bucket_dir_entry read_plain_entry(librados::IoCtx& ioctx,
+                                             const string& oid,
+                                             const cls_rgw_obj_key& key)
+{
+  rgw_cls_bi_entry bi;
+  rgw_bucket_dir_entry entry;
+  if (cls_rgw_bi_get(ioctx, oid, BIIndexType::Plain, key, &bi) == 0) {
+    auto p = bi.data.cbegin();
+    decode(entry, p);
+  }
+  return entry;
+}
+
+static int ite_set(librados::IoCtx& ioctx, const string& oid,
+                   const cls_rgw_obj_key& key, const rgw_bucket_ite_state& st,
+                   uint32_t mask, uint64_t expected_gen = 0)
+{
+  ObjectWriteOperation op;
+  cls_rgw_bucket_ite_set_state(op, key, st, mask, expected_gen);
+  return ioctx.operate(oid, &op);
+}
+
+TEST_P(TestClsRgw, ite_set_state_masks)
+{
+  const string bucket_oid = "ite_masks";
+  ObjectWriteOperation op;
+  cls_rgw_bucket_init_index(op);
+  ASSERT_EQ(0, ioctx.operate(bucket_oid, &op));
+
+  cls_rgw_obj_key obj("obj");
+  rgw_bucket_ite_state st;
+  // no entry yet
+  ASSERT_EQ(-ENOENT, ite_set(ioctx, bucket_oid, obj, st,
+                             rgw_bucket_ite_state::MASK_ALL));
+
+  index_prepare(ioctx, bucket_oid, CLS_RGW_OP_ADD, "tag1", obj, "");
+  rgw_bucket_dir_entry_meta meta;
+  meta.size = 8192;
+  index_complete(ioctx, bucket_oid, CLS_RGW_OP_ADD, "tag1", 5, obj, meta);
+
+  // a fresh instance starts cold, stamped with its generation
+  auto e = read_plain_entry(ioctx, bucket_oid, obj);
+  EXPECT_EQ(0.0, e.ite.temperature);
+  EXPECT_EQ(5u, e.ite.base_gen);
+  EXPECT_EQ(RGWITETierState::Hot, e.ite.tier_state);
+
+  st.temperature = 0.6;
+  st.temp_updated_at = 100;
+  st.fft_periodic = true; // not in mask, must be ignored
+  ASSERT_EQ(0, ite_set(ioctx, bucket_oid, obj, st,
+                       rgw_bucket_ite_state::MASK_TEMPERATURE, 5));
+  st = rgw_bucket_ite_state();
+  st.tier_state = RGWITETierState::Pseudo;
+  st.pseudo_since = 200;
+  st.temperature = 0.99; // not in mask
+  ASSERT_EQ(0, ite_set(ioctx, bucket_oid, obj, st,
+                       rgw_bucket_ite_state::MASK_TIER, 5));
+
+  e = read_plain_entry(ioctx, bucket_oid, obj);
+  EXPECT_DOUBLE_EQ(0.6, e.ite.temperature);
+  EXPECT_EQ(100u, e.ite.temp_updated_at);
+  EXPECT_FALSE(e.ite.fft_periodic);
+  EXPECT_EQ(RGWITETierState::Pseudo, e.ite.tier_state);
+  EXPECT_EQ(200u, e.ite.pseudo_since);
+
+  // a stale generation is refused
+  ASSERT_EQ(-ECANCELED, ite_set(ioctx, bucket_oid, obj, st,
+                                rgw_bucket_ite_state::MASK_TIER, 4));
+  // setter is not a data modification: stats unchanged
+  test_stats(ioctx, bucket_oid, RGWObjCategory::None, 1, 8192);
+}
+
+TEST_P(TestClsRgw, ite_preserve_or_reset)
+{
+  const string bucket_oid = "ite_reset";
+  ObjectWriteOperation op;
+  cls_rgw_bucket_init_index(op);
+  ASSERT_EQ(0, ioctx.operate(bucket_oid, &op));
+
+  cls_rgw_obj_key obj("obj");
+  rgw_bucket_dir_entry_meta meta;
+  meta.size = 8192;
+  index_prepare(ioctx, bucket_oid, CLS_RGW_OP_ADD, "t1", obj, "");
+  index_complete(ioctx, bucket_oid, CLS_RGW_OP_ADD, "t1", 1, obj, meta);
+
+  rgw_bucket_ite_state st;
+  st.temperature = 0.4;
+  st.temp_updated_at = 10;
+  st.tier_state = RGWITETierState::Committed;
+  st.commit_count = 1;
+  ASSERT_EQ(0, ite_set(ioctx, bucket_oid, obj, st,
+                       rgw_bucket_ite_state::MASK_ALL, 1));
+
+  // same-instance rewrite (tier move / metadata-only): carried through
+  index_prepare(ioctx, bucket_oid, CLS_RGW_OP_ADD, "t2", obj, "");
+  index_complete(ioctx, bucket_oid, CLS_RGW_OP_ADD, "t2", 2, obj, meta,
+                 RGW_BILOG_FLAG_ITE_PRESERVE);
+  auto e = read_plain_entry(ioctx, bucket_oid, obj);
+  EXPECT_DOUBLE_EQ(0.4, e.ite.temperature);
+  EXPECT_EQ(RGWITETierState::Committed, e.ite.tier_state);
+  EXPECT_EQ(1u, e.ite.base_gen); // still the original instance
+
+  // the hint never reaches the bilog
+  {
+    cls_rgw_bi_log_list_ret bilog;
+    ASSERT_EQ(0, bilog_list(ioctx, bucket_oid, &bilog));
+    ASSERT_FALSE(bilog.entries.empty());
+    for (const auto& le : bilog.entries) {
+      EXPECT_EQ(0, le.bilog_flags & RGW_BILOG_FLAG_ITE_PRESERVE);
+    }
+  }
+
+  // a reshard copies the entry verbatim: carried through
+  {
+    rgw_cls_bi_entry bi;
+    ASSERT_EQ(0, cls_rgw_bi_get(ioctx, bucket_oid, BIIndexType::Plain, obj, &bi));
+    const string dst_oid = "ite_reset_dst";
+    ObjectWriteOperation op2;
+    cls_rgw_bucket_init_index(op2);
+    ASSERT_EQ(0, ioctx.operate(dst_oid, &op2));
+    ASSERT_EQ(0, cls_rgw_bi_put(ioctx, dst_oid, bi));
+    auto moved = read_plain_entry(ioctx, dst_oid, obj);
+    EXPECT_DOUBLE_EQ(0.4, moved.ite.temperature);
+    EXPECT_EQ(RGWITETierState::Committed, moved.ite.tier_state);
+  }
+
+  // an overwrite is a new instance: starts cold at its own generation
+  index_prepare(ioctx, bucket_oid, CLS_RGW_OP_ADD, "t3", obj, "");
+  index_complete(ioctx, bucket_oid, CLS_RGW_OP_ADD, "t3", 3, obj, meta);
+  e = read_plain_entry(ioctx, bucket_oid, obj);
+  EXPECT_EQ(0.0, e.ite.temperature);
+  EXPECT_EQ(RGWITETierState::Hot, e.ite.tier_state);
+  EXPECT_EQ(0u, e.ite.commit_count);
+  EXPECT_EQ(3u, e.ite.base_gen);
+
+  // the scorer's numbers for the replaced instance are refused
+  ASSERT_EQ(-ECANCELED, ite_set(ioctx, bucket_oid, obj, st,
+                                rgw_bucket_ite_state::MASK_TEMPERATURE, 1));
+}
+
+TEST(cls_rgw, ite_state_encoding_compat)
+{
+  // an entry written before ITE (struct v8) decodes with an empty block
+  rgw_bucket_dir_entry e;
+  e.key.name = "x";
+  e.ite.temperature = 0.5;
+  bufferlist bl;
+  encode(e, bl);
+  rgw_bucket_dir_entry d;
+  auto p = bl.cbegin();
+  decode(d, p);
+  EXPECT_DOUBLE_EQ(0.5, d.ite.temperature);
+
+  for (auto& s : rgw_bucket_ite_state::generate_test_instances()) {
+    bufferlist sbl;
+    encode(s, sbl);
+    rgw_bucket_ite_state r;
+    auto sp = sbl.cbegin();
+    decode(r, sp);
+    EXPECT_EQ(s.base_gen, r.base_gen);
+    EXPECT_EQ(s.tier_state, r.tier_state);
+    EXPECT_EQ(s.move_pending, r.move_pending);
+    EXPECT_DOUBLE_EQ(s.fft_confidence, r.fft_confidence);
+  }
+  rgw_bucket_ite_state a, b;
+  b.temperature = 0.7;
+  b.commit_count = 3;
+  a.apply(b, rgw_bucket_ite_state::MASK_COUNTERS);
+  EXPECT_EQ(0.0, a.temperature);
+  EXPECT_EQ(3u, a.commit_count);
+}
+
 INSTANTIATE_TEST_SUITE_P(, TestClsRgw,
   ::testing::Values(PoolType::REPLICATED, PoolType::FAST_EC),
   [](const ::testing::TestParamInfo<PoolType>& info) {

@@ -181,6 +181,13 @@ void cls_rgw_get_olh_log(librados::ObjectReadOperation& op, const cls_rgw_obj_ke
 void cls_rgw_trim_olh_log(librados::ObjectWriteOperation& op, const cls_rgw_obj_key& olh, uint64_t ver, const std::string& olh_tag);
 void cls_rgw_clear_olh(librados::ObjectWriteOperation& op, const cls_rgw_obj_key& olh, const std::string& olh_tag);
 void cls_rgw_bucket_refresh_instance(librados::ObjectWriteOperation& op, const cls_rgw_obj_key& key);
+/* write the ITE field groups in mask onto the index entry for key; with a
+ * nonzero expected_gen the write is refused (-ECANCELED) if a new data
+ * instance has replaced the one the caller scored */
+void cls_rgw_bucket_ite_set_state(librados::ObjectWriteOperation& op,
+                                  const cls_rgw_obj_key& key,
+                                  const rgw_bucket_ite_state& state,
+                                  uint32_t mask, uint64_t expected_gen = 0);
 
 // these overloads which call io_ctx.operate() should not be called in the rgw.
 // rgw_rados_operate() should be called after the overloads w/o calls to io_ctx.operate()

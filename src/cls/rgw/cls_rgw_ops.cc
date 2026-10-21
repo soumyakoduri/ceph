@@ -232,6 +232,27 @@ void rgw_cls_refresh_instance_op::dump(Formatter *f) const
   encode_json("key", key, f);
 }
 
+list<rgw_cls_ite_set_state_op> rgw_cls_ite_set_state_op::generate_test_instances()
+{
+  list<rgw_cls_ite_set_state_op> o;
+  rgw_cls_ite_set_state_op op;
+  op.key.name = "name";
+  op.state = rgw_bucket_ite_state::generate_test_instances().back();
+  op.mask = rgw_bucket_ite_state::MASK_TEMPERATURE;
+  op.expected_gen = 42;
+  o.push_back(std::move(op));
+  o.emplace_back();
+  return o;
+}
+
+void rgw_cls_ite_set_state_op::dump(Formatter *f) const
+{
+  encode_json("key", key, f);
+  encode_json("state", state, f);
+  encode_json("mask", mask, f);
+  encode_json("expected_gen", expected_gen, f);
+}
+
 list<rgw_cls_unlink_instance_op> rgw_cls_unlink_instance_op::generate_test_instances()
 {
   list<rgw_cls_unlink_instance_op> o;

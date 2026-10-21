@@ -238,6 +238,103 @@ void rgw_bucket_dir_entry_meta::decode_json(JSONObj *obj) {
   JSONDecoder::decode_json("restore_expiry_date", restore_expiry_date, obj);
 }
 
+std::string_view to_string(RGWITETierState s)
+{
+  switch (s) {
+  case RGWITETierState::Hot: return "hot";
+  case RGWITETierState::Pseudo: return "pseudo";
+  case RGWITETierState::Committed: return "committed";
+  }
+  return "unknown";
+}
+
+std::string_view to_string(RGWITEMovePending m)
+{
+  switch (m) {
+  case RGWITEMovePending::None: return "none";
+  case RGWITEMovePending::Commit: return "commit";
+  case RGWITEMovePending::PreWarm: return "pre-warm";
+  case RGWITEMovePending::Restore: return "restore";
+  }
+  return "unknown";
+}
+
+void rgw_bucket_ite_state::dump(Formatter *f) const
+{
+  f->dump_float("temperature", temperature);
+  encode_json("temp_updated_at", temp_updated_at, f);
+  encode_json("fft_periodic", fft_periodic, f);
+  encode_json("fft_period_days", fft_period_days, f);
+  encode_json("fft_next_access", fft_next_access, f);
+  f->dump_float("fft_confidence", fft_confidence);
+  encode_json("tier_state", to_string(tier_state), f);
+  encode_json("pseudo_since", pseudo_since, f);
+  encode_json("commit_count", commit_count, f);
+  encode_json("restore_count", restore_count, f);
+  encode_json("move_pending", to_string(move_pending), f);
+  encode_json("cluster_id", cluster_id, f);
+  encode_json("base_gen", base_gen, f);
+}
+
+void rgw_bucket_ite_state::decode_json(JSONObj *obj)
+{
+  string s;
+  JSONDecoder::decode_json("temperature", s, obj);
+  temperature = s.empty() ? 0.0 : std::stod(s);
+  JSONDecoder::decode_json("temp_updated_at", temp_updated_at, obj);
+  JSONDecoder::decode_json("fft_periodic", fft_periodic, obj);
+  JSONDecoder::decode_json("fft_period_days", fft_period_days, obj);
+  JSONDecoder::decode_json("fft_next_access", fft_next_access, obj);
+  s.clear();
+  JSONDecoder::decode_json("fft_confidence", s, obj);
+  fft_confidence = s.empty() ? 0.0 : std::stod(s);
+  s.clear();
+  JSONDecoder::decode_json("tier_state", s, obj);
+  if (s == "pseudo") {
+    tier_state = RGWITETierState::Pseudo;
+  } else if (s == "committed") {
+    tier_state = RGWITETierState::Committed;
+  } else {
+    tier_state = RGWITETierState::Hot;
+  }
+  JSONDecoder::decode_json("pseudo_since", pseudo_since, obj);
+  JSONDecoder::decode_json("commit_count", commit_count, obj);
+  JSONDecoder::decode_json("restore_count", restore_count, obj);
+  s.clear();
+  JSONDecoder::decode_json("move_pending", s, obj);
+  if (s == "commit") {
+    move_pending = RGWITEMovePending::Commit;
+  } else if (s == "pre-warm") {
+    move_pending = RGWITEMovePending::PreWarm;
+  } else if (s == "restore") {
+    move_pending = RGWITEMovePending::Restore;
+  } else {
+    move_pending = RGWITEMovePending::None;
+  }
+  JSONDecoder::decode_json("cluster_id", cluster_id, obj);
+  JSONDecoder::decode_json("base_gen", base_gen, obj);
+}
+
+list<rgw_bucket_ite_state> rgw_bucket_ite_state::generate_test_instances()
+{
+  list<rgw_bucket_ite_state> o;
+  o.emplace_back();
+  auto& s = o.emplace_back();
+  s.temperature = 0.25;
+  s.temp_updated_at = 1700000000;
+  s.fft_periodic = true;
+  s.fft_period_days = 7;
+  s.fft_next_access = 1700600000;
+  s.fft_confidence = 0.75;
+  s.tier_state = RGWITETierState::Pseudo;
+  s.pseudo_since = 1700000000;
+  s.commit_count = 1;
+  s.restore_count = 1;
+  s.move_pending = RGWITEMovePending::Commit;
+  s.base_gen = 42;
+  return o;
+}
+
 list<rgw_bucket_dir_entry> rgw_bucket_dir_entry::generate_test_instances()
 {
   list<rgw_bucket_dir_entry> o;
@@ -251,6 +348,7 @@ list<rgw_bucket_dir_entry> rgw_bucket_dir_entry::generate_test_instances()
     e.exists = true;
     e.meta = m;
     e.tag = "tag";
+    e.ite = rgw_bucket_ite_state::generate_test_instances().back();
 
     o.push_back(std::move(e));
   }
@@ -292,6 +390,9 @@ void rgw_bucket_dir_entry::dump(Formatter *f) const
   encode_json("flags", (int)flags , f);
   encode_json("pending_map", pending_map, f);
   encode_json("versioned_epoch", versioned_epoch , f);
+  if (!ite.empty()) {
+    encode_json("ite", ite, f);
+  }
 }
 
 void rgw_bucket_dir_entry::decode_json(JSONObj *obj) {
@@ -307,6 +408,7 @@ void rgw_bucket_dir_entry::decode_json(JSONObj *obj) {
   flags = (uint16_t)val;
   JSONDecoder::decode_json("pending_map", pending_map, obj);
   JSONDecoder::decode_json("versioned_epoch", versioned_epoch, obj);
+  JSONDecoder::decode_json("ite", ite, obj);
 }
 
 static void dump_bi_entry(bufferlist bl, BIIndexType index_type, Formatter *formatter)

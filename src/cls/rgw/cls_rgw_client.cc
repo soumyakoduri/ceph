@@ -368,6 +368,21 @@ void cls_rgw_bucket_refresh_instance(librados::ObjectWriteOperation& op, const c
   op.exec(method::bucket_refresh_instance, in);
 }
 
+void cls_rgw_bucket_ite_set_state(librados::ObjectWriteOperation& op,
+                                  const cls_rgw_obj_key& key,
+                                  const rgw_bucket_ite_state& state,
+                                  uint32_t mask, uint64_t expected_gen)
+{
+  bufferlist in;
+  rgw_cls_ite_set_state_op call;
+  call.key = key;
+  call.state = state;
+  call.mask = mask;
+  call.expected_gen = expected_gen;
+  encode(call, in);
+  op.exec(method::bucket_ite_set_state, in);
+}
+
 int cls_rgw_bucket_unlink_instance(librados::IoCtx& io_ctx, const string& oid,
                                    const cls_rgw_obj_key& key, const string& op_tag,
                                    const string& olh_tag, uint64_t olh_epoch, bool log_op,

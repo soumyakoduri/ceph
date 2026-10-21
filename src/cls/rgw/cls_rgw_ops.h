@@ -253,6 +253,39 @@ struct rgw_cls_refresh_instance_op {
 };
 WRITE_CLASS_ENCODER(rgw_cls_refresh_instance_op)
 
+/* the dedicated ITE state setter; the only cls call that writes an entry's
+ * ITE fields deliberately */
+struct rgw_cls_ite_set_state_op {
+  cls_rgw_obj_key key;
+  rgw_bucket_ite_state state;
+  uint32_t mask = 0; // rgw_bucket_ite_state::MASK_*
+  /* when nonzero, fail with -ECANCELED unless the entry still holds the data
+   * instance that began at this generation */
+  uint64_t expected_gen = 0;
+
+  void encode(ceph::buffer::list& bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(key, bl);
+    encode(state, bl);
+    encode(mask, bl);
+    encode(expected_gen, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(ceph::buffer::list::const_iterator& bl) {
+    DECODE_START(1, bl);
+    decode(key, bl);
+    decode(state, bl);
+    decode(mask, bl);
+    decode(expected_gen, bl);
+    DECODE_FINISH(bl);
+  }
+
+  static std::list<rgw_cls_ite_set_state_op> generate_test_instances();
+  void dump(ceph::Formatter *f) const;
+};
+WRITE_CLASS_ENCODER(rgw_cls_ite_set_state_op)
+
 struct rgw_cls_unlink_instance_op : cls_rgw_bi_log_related_op {
   // this represents a remote epoch during multisite sync
   uint64_t olh_epoch{0};
@@ -1925,6 +1958,7 @@ constexpr auto bucket_read_olh_log = ClsMethod<RdTag, ClassId>(RGW_BUCKET_READ_O
 constexpr auto bucket_trim_olh_log = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_TRIM_OLH_LOG);
 constexpr auto bucket_clear_olh = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_CLEAR_OLH);
 constexpr auto bucket_refresh_instance = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_REFRESH_INSTANCE);
+constexpr auto bucket_ite_set_state = ClsMethod<RdWrTag, ClassId>(RGW_BUCKET_ITE_SET_STATE);
 
 // Object
 constexpr auto obj_remove = ClsMethod<RdWrTag, ClassId>(RGW_OBJ_REMOVE);

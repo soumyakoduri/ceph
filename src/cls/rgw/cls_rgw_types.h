@@ -119,6 +119,10 @@ inline std::ostream& operator<<(std::ostream& out, RGWModifyOp op) {
 enum RGWBILogFlags {
   RGW_BILOG_FLAG_VERSIONED_OP = 0x1,
   RGW_BILOG_NULL_VERSION = 0X2,
+  /* index-only hint: the write rewrites the same data instance (tier move,
+   * metadata-only update), so the entry's ITE state must be carried through.
+   * cls_rgw strips it before logging, it never reaches the bilog. */
+  RGW_BILOG_FLAG_ITE_PRESERVE = 0x4,
 };
 
 enum RGWCheckMTimeType {
@@ -379,6 +383,131 @@ inline std::ostream& operator<<(std::ostream& out, const cls_rgw_obj_key& o) {
   return out;
 }
 
+/* Intelligent Tiering Engine (ITE) per-object state, packed on the bucket
+ * index entry so a bucket's whole state is enumerated by an index walk. */
+enum class RGWITETierState : uint8_t {
+  Hot = 0,       // bytes in the hot placement
+  Pseudo = 1,    // marked cold, bytes still in the hot placement
+  Committed = 2, // bytes relocated to the cold placement
+};
+
+enum class RGWITEMovePending : uint8_t {
+  None = 0,
+  Commit = 1,
+  PreWarm = 2,
+  Restore = 3,
+};
+
+struct rgw_bucket_ite_state {
+  /* field groups for a partial update by cls_rgw_bucket_ite_set_state(); each
+   * worker only owns its own group so concurrent workers never clobber */
+  static constexpr uint32_t MASK_TEMPERATURE = 0x01; // temperature, temp_updated_at
+  static constexpr uint32_t MASK_FFT =         0x02; // fft_*
+  static constexpr uint32_t MASK_TIER =        0x04; // tier_state, pseudo_since
+  static constexpr uint32_t MASK_COUNTERS =    0x08; // commit_count, restore_count
+  static constexpr uint32_t MASK_MOVE =        0x10; // move_pending
+  static constexpr uint32_t MASK_CLUSTER =     0x20; // cluster_id
+  static constexpr uint32_t MASK_ALL =         0x3f;
+
+  double temperature = 0.0;
+  uint64_t temp_updated_at = 0; // epoch seconds
+  bool fft_periodic = false;
+  uint32_t fft_period_days = 0;
+  uint64_t fft_next_access = 0; // epoch seconds
+  double fft_confidence = 0.0;
+  RGWITETierState tier_state = RGWITETierState::Hot;
+  uint64_t pseudo_since = 0; // epoch seconds
+  uint32_t commit_count = 0;
+  uint32_t restore_count = 0;
+  RGWITEMovePending move_pending = RGWITEMovePending::None;
+  std::string cluster_id; // reserved for behavioral clustering
+  /* generation (ver.epoch) at which this data instance began; accesses
+   * recorded against an older generation belong to a replaced instance */
+  uint64_t base_gen = 0;
+
+  bool empty() const {
+    return temperature == 0.0 && temp_updated_at == 0 && !fft_periodic &&
+           fft_period_days == 0 && fft_next_access == 0 &&
+           fft_confidence == 0.0 && tier_state == RGWITETierState::Hot &&
+           pseudo_since == 0 && commit_count == 0 && restore_count == 0 &&
+           move_pending == RGWITEMovePending::None && cluster_id.empty() &&
+           base_gen == 0;
+  }
+
+  /* copy the field groups selected by mask from src */
+  void apply(const rgw_bucket_ite_state& src, uint32_t mask) {
+    if (mask & MASK_TEMPERATURE) {
+      temperature = src.temperature;
+      temp_updated_at = src.temp_updated_at;
+    }
+    if (mask & MASK_FFT) {
+      fft_periodic = src.fft_periodic;
+      fft_period_days = src.fft_period_days;
+      fft_next_access = src.fft_next_access;
+      fft_confidence = src.fft_confidence;
+    }
+    if (mask & MASK_TIER) {
+      tier_state = src.tier_state;
+      pseudo_since = src.pseudo_since;
+    }
+    if (mask & MASK_COUNTERS) {
+      commit_count = src.commit_count;
+      restore_count = src.restore_count;
+    }
+    if (mask & MASK_MOVE) {
+      move_pending = src.move_pending;
+    }
+    if (mask & MASK_CLUSTER) {
+      cluster_id = src.cluster_id;
+    }
+  }
+
+  void encode(ceph::buffer::list &bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(temperature, bl);
+    encode(temp_updated_at, bl);
+    encode(fft_periodic, bl);
+    encode(fft_period_days, bl);
+    encode(fft_next_access, bl);
+    encode(fft_confidence, bl);
+    encode(static_cast<uint8_t>(tier_state), bl);
+    encode(pseudo_since, bl);
+    encode(commit_count, bl);
+    encode(restore_count, bl);
+    encode(static_cast<uint8_t>(move_pending), bl);
+    encode(cluster_id, bl);
+    encode(base_gen, bl);
+    ENCODE_FINISH(bl);
+  }
+  void decode(ceph::buffer::list::const_iterator &bl) {
+    DECODE_START(1, bl);
+    decode(temperature, bl);
+    decode(temp_updated_at, bl);
+    decode(fft_periodic, bl);
+    decode(fft_period_days, bl);
+    decode(fft_next_access, bl);
+    decode(fft_confidence, bl);
+    uint8_t v;
+    decode(v, bl);
+    tier_state = static_cast<RGWITETierState>(v);
+    decode(pseudo_since, bl);
+    decode(commit_count, bl);
+    decode(restore_count, bl);
+    decode(v, bl);
+    move_pending = static_cast<RGWITEMovePending>(v);
+    decode(cluster_id, bl);
+    decode(base_gen, bl);
+    DECODE_FINISH(bl);
+  }
+  void dump(ceph::Formatter *f) const;
+  void decode_json(JSONObj *obj);
+  static std::list<rgw_bucket_ite_state> generate_test_instances();
+};
+WRITE_CLASS_ENCODER(rgw_bucket_ite_state)
+
+std::string_view to_string(RGWITETierState s);
+std::string_view to_string(RGWITEMovePending m);
+
 struct rgw_bucket_dir_entry {
   /* a versioned object instance */
   static constexpr uint16_t FLAG_VER =                0x1;
@@ -405,12 +534,13 @@ struct rgw_bucket_dir_entry {
   std::string tag;
   uint16_t flags;
   uint64_t versioned_epoch;
+  rgw_bucket_ite_state ite;
 
   rgw_bucket_dir_entry() :
     exists(false), index_ver(0), flags(0), versioned_epoch(0) {}
 
   void encode(ceph::buffer::list &bl) const {
-    ENCODE_START(8, 3, bl);
+    ENCODE_START(9, 3, bl);
     encode(key.name, bl);
     encode(ver.epoch, bl);
     encode(exists, bl);
@@ -423,10 +553,11 @@ struct rgw_bucket_dir_entry {
     encode(key.instance, bl);
     encode(flags, bl);
     encode(versioned_epoch, bl);
+    encode(ite, bl);
     ENCODE_FINISH(bl);
   }
   void decode(ceph::buffer::list::const_iterator &bl) {
-    DECODE_START_LEGACY_COMPAT_LEN(8, 3, 3, bl);
+    DECODE_START_LEGACY_COMPAT_LEN(9, 3, 3, bl);
     decode(key.name, bl);
     decode(ver.epoch, bl);
     decode(exists, bl);
@@ -452,6 +583,9 @@ struct rgw_bucket_dir_entry {
     }
     if (struct_v >= 8) {
       decode(versioned_epoch, bl);
+    }
+    if (struct_v >= 9) {
+      decode(ite, bl);
     }
     DECODE_FINISH(bl);
   }

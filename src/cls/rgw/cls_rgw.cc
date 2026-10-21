@@ -1172,6 +1172,7 @@ int rgw_bucket_complete_op(cls_method_context_t hctx, bufferlist *in, bufferlist
 	       modify_op_str(op.op).c_str(), op.key.to_string().c_str(),
 	       (unsigned long)op.ver.pool, (unsigned long long)op.ver.epoch,
 	       op.op_tag.c_str());
+  const uint16_t op_flags_in = op.bilog_flags;
 
   rgw_bucket_dir_header header;
   int rc = read_bucket_header(hctx, &header);
@@ -1231,6 +1232,9 @@ int rgw_bucket_complete_op(cls_method_context_t hctx, bufferlist *in, bufferlist
 		 "INFO: %s: skipping request, old epoch", __func__);
     op.op = CLS_RGW_OP_CANCEL;
   }
+
+  op.bilog_flags &= ~RGW_BILOG_FLAG_ITE_PRESERVE; // index-only hint
+  const bool ite_preserve = (op_flags_in & RGW_BILOG_FLAG_ITE_PRESERVE);
 
   // controls whether remove_objs deletions are logged
   const bool default_log_op = op.log_op && !header.syncstopped;
@@ -1318,6 +1322,12 @@ int rgw_bucket_complete_op(cls_method_context_t hctx, bufferlist *in, bufferlist
 
     rgw_bucket_dir_entry_meta& meta = op.meta;
     rgw_bucket_category_stats& stats = header.stats[meta.category];
+    // ITE state belongs to a data instance: carry it through a same-instance
+    // rewrite, start a new instance cold
+    if (!ite_preserve || !ondisk || !entry.exists) {
+      entry.ite = rgw_bucket_ite_state();
+      entry.ite.base_gen = op.ver.epoch;
+    }
     entry.meta = meta;
     entry.key = op.key;
     entry.exists = true;
@@ -2117,6 +2127,93 @@ static int rgw_bucket_refresh_instance(cls_method_context_t hctx, bufferlist *in
   }
 
   return write_bucket_header(hctx, &header); /* updates header version */
+}
+
+static int rgw_bucket_ite_set_state(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+{
+  CLS_LOG(10, "entered %s", __func__);
+
+  rgw_cls_ite_set_state_op op;
+  auto iter = in->cbegin();
+  try {
+    decode(op, iter);
+  } catch (ceph::buffer::error& err) {
+    CLS_LOG(1, "ERROR: %s: failed to decode request", __func__);
+    return -EINVAL;
+  }
+
+  rgw_bucket_dir_header header;
+  int rc = read_bucket_header(hctx, &header);
+  if (rc < 0) {
+    CLS_LOG(1, "ERROR: %s: failed to read header", __func__);
+    return rc;
+  }
+
+  rc = guard_bucket_resharding(hctx, header);
+  if (rc < 0) {
+    return rc;
+  }
+
+  rgw_bucket_dir_entry entry;
+  string idx;
+  rc = read_key_entry(hctx, op.key, &idx, &entry);
+  if (rc < 0) {
+    CLS_LOG(10, "%s: read_key_entry key=%s rc=%d",
+            __func__, op.key.to_string().c_str(), rc);
+    return rc;
+  }
+  if (!entry.exists) {
+    return -ENOENT;
+  }
+
+  /* refuse to score a new instance with the previous instance's numbers;
+   * entries written before ITE existed carry no generation yet */
+  if (op.expected_gen && entry.ite.base_gen &&
+      entry.ite.base_gen != op.expected_gen) {
+    CLS_LOG(10, "%s: key=%s instance gen=%llu, expected=%llu",
+            __func__, op.key.to_string().c_str(),
+            (unsigned long long)entry.ite.base_gen,
+            (unsigned long long)op.expected_gen);
+    return -ECANCELED;
+  }
+
+  entry.ite.apply(op.state, op.mask);
+  if (!entry.ite.base_gen) {
+    entry.ite.base_gen = op.expected_gen ? op.expected_gen : entry.ver.epoch;
+  }
+
+  rc = write_entry(hctx, entry, idx, header);
+  if (rc < 0) {
+    CLS_LOG(0, "ERROR: %s: write_entry key=%s rc=%d",
+            __func__, op.key.to_string().c_str(), rc);
+    return rc;
+  }
+
+  /* a versioned instance also has a list entry that bucket listing reads;
+   * keep its ITE block in step with the data entry */
+  if (entry.flags & rgw_bucket_dir_entry::FLAG_VER) {
+    string list_idx;
+    get_list_index_key(entry, &list_idx);
+    if (idx != list_idx) {
+      rgw_bucket_dir_entry list_entry;
+      rc = read_index_entry(hctx, list_idx, &list_entry);
+      if (rc == 0) {
+        list_entry.ite = entry.ite;
+        rc = write_entry(hctx, list_entry, list_idx, header);
+      } else if (rc == -ENOENT) {
+        rc = 0;
+      }
+      if (rc < 0) {
+        CLS_LOG(0, "ERROR: %s: list entry update key=%s rc=%d",
+                __func__, op.key.to_string().c_str(), rc);
+        return rc;
+      }
+    }
+  }
+
+  /* not a modification of object data or stats; no bilog entry, and the
+   * header is only rewritten while a reshard is logging */
+  return write_header_while_logrecord(hctx, header);
 }
 
 static int rgw_bucket_unlink_instance(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
@@ -5387,6 +5484,7 @@ CLS_INIT(rgw)
   cls_method_handle_t h_rgw_bucket_trim_olh_log;
   cls_method_handle_t h_rgw_bucket_clear_olh;
   cls_method_handle_t h_rgw_bucket_refresh_instance;
+  cls_method_handle_t h_rgw_bucket_ite_set_state;
   cls_method_handle_t h_rgw_obj_remove;
   cls_method_handle_t h_rgw_obj_store_pg_ver;
   cls_method_handle_t h_rgw_obj_check_attrs_prefix;
@@ -5451,6 +5549,7 @@ CLS_INIT(rgw)
   cls.register_cxx_method(bucket_trim_olh_log, rgw_bucket_trim_olh_log, &h_rgw_bucket_trim_olh_log);
   cls.register_cxx_method(bucket_clear_olh, rgw_bucket_clear_olh, &h_rgw_bucket_clear_olh);
   cls.register_cxx_method(bucket_refresh_instance, rgw_bucket_refresh_instance, &h_rgw_bucket_refresh_instance);
+  cls.register_cxx_method(bucket_ite_set_state, rgw_bucket_ite_set_state, &h_rgw_bucket_ite_set_state);
 
   // Object
   cls.register_cxx_method(obj_remove, rgw_obj_remove, &h_rgw_obj_remove);
