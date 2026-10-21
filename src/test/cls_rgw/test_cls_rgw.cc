@@ -1831,8 +1831,11 @@ static map<string, uint64_t> ite_agg_counts(librados::IoCtx& ioctx, const string
   EXPECT_EQ(0, ioctx.omap_get_vals2(oid, "", 1000, &vals, &more));
   map<string, uint64_t> counts;
   for (auto& [k, bl] : vals) {
-    if (k == "__mkr__:3") {
-      *marker = bl.to_str();
+    // every buffer shard has its own marker key; the test's is shard 3's
+    if (k.starts_with("__mkr__:")) {
+      if (k == "__mkr__:3") {
+        *marker = bl.to_str();
+      }
       continue;
     }
     uint64_t v;

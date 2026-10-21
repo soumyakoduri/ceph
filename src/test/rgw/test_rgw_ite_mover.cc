@@ -64,6 +64,8 @@ struct MoverTest : public ::testing::Test {
     std::string old;
     ASSERT_EQ(0, g_conf().get_val(key, &old));
     saved.try_emplace(key, old);
+    // most ITE options are not runtime options; tests change them anyway
+    g_conf()._clear_safe_to_start_threads();
     g_conf().set_val_or_die(key, val);
   }
 

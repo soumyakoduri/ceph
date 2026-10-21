@@ -30,11 +30,13 @@
 #include "rgw_sal_config.h"
 #include "rgw_sal_rados.h"
 #include "rgw_sal_rados_ite.h"
+#include "ite_output.h"
 
 #define dout_subsys ceph_subsys_rgw
 
 using namespace rgw::ite;
 namespace sal = rgw::sal;
+using rgw::ite::test::Output;
 
 namespace {
 
@@ -49,6 +51,7 @@ struct ITERados : public ::testing::Test {
   void SetUp() override {
     // a private pool per test run keeps reruns independent
     saved_pool = g_conf().get_val<std::string>("rgw_ite_pool");
+    g_conf()._clear_safe_to_start_threads(); // rgw_ite_pool is not a runtime option
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
     g_conf().set_val_or_die("rgw_ite_pool", fmt::format(
         "ite-test.{}.{}", info->name(), ceph::real_clock::now().time_since_epoch().count()));
@@ -66,6 +69,8 @@ struct ITERados : public ::testing::Test {
     std::string old;
     ASSERT_EQ(0, g_conf().get_val(key, &old));
     saved.try_emplace(key, old);
+    // most ITE options are not runtime options; tests change them anyway
+    g_conf()._clear_safe_to_start_threads();
     g_conf().set_val_or_die(key, val);
   }
 };
@@ -1133,7 +1138,7 @@ TEST_F(ITERados, AdminEnablesABucket)
   BucketConfig knobs;
   knobs.half_life_days = 3;
   const auto now = ceph::real_clock::now();
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::bucket_enable(dpp, ctx, tb.bucket.get(), knobs, now, &f, null_yield));
   std::unique_ptr<sal::Bucket> loaded;
   ASSERT_EQ(0, driver->load_bucket(dpp, tb.bucket->get_key(), &loaded, null_yield));
@@ -1149,7 +1154,7 @@ TEST_F(ITERados, AdminEnablesABucket)
   bool listed = false;
   std::string marker;
   for (bool more = true; more && !listed;) {
-    JSONFormattable g;
+    Output g;
     ASSERT_EQ(0, admin::bucket_list(dpp, ctx, marker, 0, &g, null_yield));
     for (const auto& b : g["buckets"].array()) {
       listed = listed || b["bucket"]["name"].val() == tb.bucket->get_name();
@@ -1163,20 +1168,20 @@ TEST_F(ITERados, AdminEnablesABucket)
   ceph::real_time mtime;
   ASSERT_EQ(0, put_object(tb.bucket.get(), "obj", std::string(65536, 'x'), &mtime));
   auto cleanup = make_scope_guard([&] { delete_object(tb.bucket.get(), "obj"); });
-  JSONFormattable h;
+  Output h;
   ASSERT_EQ(0, admin::object_stat(dpp, ctx, tb.bucket.get(), rgw_obj_key("obj"),
                                   ceph::real_clock::now(), &h, null_yield));
   EXPECT_EQ("INTELLIGENT_TIER", h["storage_class"].val());
   EXPECT_EQ("hot", h["placement"].val());
   EXPECT_EQ("hold", h["decision"]["decision"].val());
   EXPECT_EQ("younger than cold-after", h["decision"]["reason"].val());
-  JSONFormattable i;
+  Output i;
   ASSERT_EQ(0, admin::bucket_stats(dpp, ctx, tb.bucket.get(), &i, null_yield));
   EXPECT_EQ(1, i["objects"]["hot"]["objects"].val_long_long());
   EXPECT_EQ(65536, i["objects"]["hot"]["bytes"].val_long_long());
 
   // disabled: the next PUT keeps the class it asks for
-  JSONFormattable j;
+  Output j;
   ASSERT_EQ(0, admin::bucket_disable(dpp, ctx, tb.bucket.get(), &j, null_yield));
   ASSERT_EQ(0, driver->load_bucket(dpp, tb.bucket->get_key(), &loaded, null_yield));
   config = get_bucket_config(loaded->get_attrs());

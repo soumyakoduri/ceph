@@ -3,7 +3,7 @@
 
 /* What radosgw-admin's "ite" commands do, over in-memory contracts: the
  * bucket opt-in and opt-out, the read-only inspectors, and a one-shot run
- * of the workers. The output is read back through JSONFormattable. */
+ * of the workers. The output is read back as radosgw-admin prints it. */
 
 #include "rgw_ite_admin.h"
 
@@ -21,6 +21,7 @@
 #include "global/global_context.h"
 #include "rgw_ite.h"
 #include "ite_fakes.h"
+#include "ite_output.h"
 
 using namespace rgw::ite;
 using namespace rgw::ite::test;
@@ -84,7 +85,7 @@ struct AdminTest : public ::testing::Test {
 TEST_F(AdminTest, EnableJoinsTheDirectory)
 {
   auto bucket = fresh_bucket(b1);
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::bucket_enable(&dpp, ctx, bucket.get(), std::nullopt, now, &f, null_yield));
   EXPECT_EQ(1, bucket->stores);
   auto config = get_bucket_config(bucket->get_attrs());
@@ -100,7 +101,7 @@ TEST_F(AdminTest, EnableJoinsTheDirectory)
   BucketConfig knobs;
   knobs.half_life_days = 3;
   knobs.cold_after_days = 10;
-  JSONFormattable g;
+  Output g;
   ASSERT_EQ(0, admin::bucket_enable(&dpp, ctx, bucket.get(), knobs,
                                     now + std::chrono::hours(1), &g, null_yield));
   config = get_bucket_config(bucket->get_attrs());
@@ -117,11 +118,11 @@ TEST_F(AdminTest, DisableKeepsTheKnobsAndTheRecord)
   auto bucket = fresh_bucket(b1);
   BucketConfig knobs;
   knobs.half_life_days = 3;
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::bucket_enable(&dpp, ctx, bucket.get(), knobs, now, &f, null_yield));
   agg->dir.begin()->second.last_decision = now;
 
-  JSONFormattable g;
+  Output g;
   ASSERT_EQ(0, admin::bucket_disable(&dpp, ctx, bucket.get(), &g, null_yield));
   auto config = get_bucket_config(bucket->get_attrs());
   ASSERT_TRUE(config);
@@ -132,13 +133,13 @@ TEST_F(AdminTest, DisableKeepsTheKnobsAndTheRecord)
   ASSERT_EQ(1u, agg->dir.size());
 
   // disabled twice: nothing to store
-  JSONFormattable h;
+  Output h;
   ASSERT_EQ(0, admin::bucket_disable(&dpp, ctx, bucket.get(), &h, null_yield));
   EXPECT_EQ(2, bucket->stores);
 
   // back on after the pause: the knobs return, and the history restarts
   const auto later = now + std::chrono::hours(48);
-  JSONFormattable i;
+  Output i;
   ASSERT_EQ(0, admin::bucket_enable(&dpp, ctx, bucket.get(), std::nullopt, later, &i,
                                     null_yield));
   config = get_bucket_config(bucket->get_attrs());
@@ -152,7 +153,7 @@ TEST_F(AdminTest, DisableKeepsTheKnobsAndTheRecord)
 TEST_F(AdminTest, DisablingANeverEnabledBucketStoresNothing)
 {
   auto bucket = fresh_bucket(b2);
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::bucket_disable(&dpp, ctx, bucket.get(), &f, null_yield));
   EXPECT_EQ(0, bucket->stores);
   EXPECT_FALSE(f["config"]["enabled"].val_bool());
@@ -164,7 +165,7 @@ TEST_F(AdminTest, EnableRefusesKnobsThatMakeNoSense)
   auto bucket = fresh_bucket(b1);
   BucketConfig knobs;
   knobs.warm_threshold = 0.05; // below the default cool threshold
-  JSONFormattable f;
+  Output f;
   EXPECT_EQ(-EINVAL, admin::bucket_enable(&dpp, ctx, bucket.get(), knobs, now, &f, null_yield));
   knobs = BucketConfig();
   knobs.half_life_days = 0;
@@ -183,7 +184,7 @@ TEST_F(AdminTest, FailedStoreLeavesTheBucketDisabled)
 {
   auto bucket = fresh_bucket(b1);
   bucket->store_ret = -EIO;
-  JSONFormattable f;
+  Output f;
   EXPECT_EQ(-EIO, admin::bucket_enable(&dpp, ctx, bucket.get(), std::nullopt, now, &f,
                                        null_yield));
   EXPECT_FALSE(get_bucket_config(bucket->get_attrs()));
@@ -199,7 +200,7 @@ TEST_F(AdminTest, BucketListPages)
     p.enabled_at = now;
     agg->dir[p.bucket.get_key()] = p;
   }
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::bucket_list(&dpp, ctx, "", 2, &f, null_yield));
   ASSERT_EQ(2u, f["buckets"].array().size());
   EXPECT_EQ("a", f["buckets"][0]["bucket"]["name"].val());
@@ -207,7 +208,7 @@ TEST_F(AdminTest, BucketListPages)
   const std::string next = f["next_marker"].val();
   EXPECT_FALSE(next.empty());
 
-  JSONFormattable g;
+  Output g;
   ASSERT_EQ(0, admin::bucket_list(&dpp, ctx, next, 2, &g, null_yield));
   ASSERT_EQ(1u, g["buckets"].array().size());
   EXPECT_EQ("c", g["buckets"][0]["bucket"]["name"].val());
@@ -230,7 +231,7 @@ TEST_F(AdminTest, BucketStatsCountsWhatITETiers)
   state->put(b1, "marker", 5).delete_marker = true;
   auto bucket = this->bucket(b1, true);
 
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::bucket_stats(&dpp, ctx, bucket.get(), &f, null_yield));
   EXPECT_TRUE(f["enabled"].val_bool());
   EXPECT_FALSE(f.exists("directory"));
@@ -256,7 +257,7 @@ TEST_F(AdminTest, BucketStatsWalksEveryPage)
   }
   agg->dir[b1.get_key()] = BucketProgress{b1, now};
   auto bucket = this->bucket(b1, true);
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::bucket_stats(&dpp, ctx, bucket.get(), &f, null_yield));
   EXPECT_EQ(2500, num(f["objects"]["entries"]));
   EXPECT_EQ(2500, num(f["objects"]["hot"]["objects"]));
@@ -272,7 +273,7 @@ TEST_F(AdminTest, ObjectStatShowsStatePlacementAndDecision)
   placements->set(b1, "obj", Placement::Hot);
   auto bucket = this->bucket(b1, true);
 
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::object_stat(&dpp, ctx, bucket.get(), rgw_obj_key("obj"), now, &f,
                                   null_yield));
   EXPECT_EQ("obj", f["name"].val());
@@ -287,20 +288,20 @@ TEST_F(AdminTest, ObjectStatShowsStatePlacementAndDecision)
 
   // cooled off, it would be marked
   e.ite.temperature = 0.01;
-  JSONFormattable g;
+  Output g;
   ASSERT_EQ(0, admin::object_stat(&dpp, ctx, bucket.get(), rgw_obj_key("obj"), now, &g,
                                   null_yield));
   EXPECT_EQ("pseudo", g["decision"]["decision"].val());
 
   // a disabled bucket is not decided
   auto plain = this->bucket(b1, false);
-  JSONFormattable h;
+  Output h;
   ASSERT_EQ(0, admin::object_stat(&dpp, ctx, plain.get(), rgw_obj_key("obj"), now, &h,
                                   null_yield));
   EXPECT_FALSE(h.exists("decision"));
   EXPECT_EQ("hot", h["placement"].val());
 
-  JSONFormattable i;
+  Output i;
   EXPECT_EQ(-ENOENT, admin::object_stat(&dpp, ctx, bucket.get(), rgw_obj_key("missing"),
                                         now, &i, null_yield));
 }
@@ -316,7 +317,7 @@ TEST_F(AdminTest, CountsListNewestWindowFirst)
   // another bucket's counts stay out
   add_count(*agg, b2, d2, "a", 5, Op::Get, 9);
 
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::counts_list(&dpp, ctx, b1, "", 0, now, &f, null_yield));
   const auto& windows = f["windows"].array();
   ASSERT_EQ(3u, windows.size());
@@ -337,7 +338,7 @@ TEST_F(AdminTest, CountsListNewestWindowFirst)
     ADD_FAILURE() << "no window " << w.stamp(ts);
     return r;
   };
-  const auto& w = window(f, d2);
+  const auto& w = window(f.get(), d2);
   EXPECT_EQ("day", w["granularity"].val());
   ASSERT_EQ(2u, w["counts"].array().size());
   for (const auto& c : w["counts"].array()) {
@@ -351,21 +352,21 @@ TEST_F(AdminTest, CountsListNewestWindowFirst)
       EXPECT_EQ(1, num(c["count"]));
     }
   }
-  EXPECT_EQ("week", window(f, w1)["granularity"].val());
+  EXPECT_EQ("week", window(f.get(), w1)["granularity"].val());
 
   // one object's counts only
-  JSONFormattable g;
+  Output g;
   ASSERT_EQ(0, admin::counts_list(&dpp, ctx, b1, "a", 0, now, &g, null_yield));
   for (const auto& x : g["windows"].array()) {
     for (const auto& c : x["counts"].array()) {
       EXPECT_EQ("a", c["name"].val());
     }
   }
-  EXPECT_EQ(3, num(window(g, d1)["counts"][0]["count"]));
-  EXPECT_TRUE(window(g, w1)["counts"].array().empty());
+  EXPECT_EQ(3, num(window(g.get(), d1)["counts"][0]["count"]));
+  EXPECT_TRUE(window(g.get(), w1)["counts"].array().empty());
 
   // the newest window only
-  JSONFormattable h;
+  Output h;
   ASSERT_EQ(0, admin::counts_list(&dpp, ctx, b1, "", 1, now, &h, null_yield));
   ASSERT_EQ(1u, h["windows"].array().size());
   EXPECT_EQ(expected[0].stamp(ts), h["windows"][0]["window"].val());
@@ -389,7 +390,7 @@ TEST_F(AdminTest, LogStatusCountsWaitingEvents)
   ASSERT_EQ(0, buffer->append(&dpp, event("b", now), null_yield));
   const uint32_t a_shard = buffer_shard_of(b1, "a", buffer->num_shards());
 
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::log_status(&dpp, ctx, 0, &f, null_yield));
   EXPECT_EQ(4, num(f["num_shards"]));
   EXPECT_EQ(4, num(f["events"]));
@@ -406,7 +407,7 @@ TEST_F(AdminTest, LogStatusCountsWaitingEvents)
   EXPECT_TRUE(seen);
 
   // counted up to a bound per shard
-  JSONFormattable g;
+  Output g;
   ASSERT_EQ(0, admin::log_status(&dpp, ctx, 2, &g, null_yield));
   EXPECT_TRUE(g["truncated"].val_bool());
   for (const auto& s : g["shards"].array()) {
@@ -417,7 +418,7 @@ TEST_F(AdminTest, LogStatusCountsWaitingEvents)
   for (uint32_t shard = 0; shard < buffer->num_shards(); ++shard) {
     buffer->data[shard].clear();
   }
-  JSONFormattable h;
+  Output h;
   ASSERT_EQ(0, admin::log_status(&dpp, ctx, 0, &h, null_yield));
   EXPECT_EQ(0, num(h["events"]));
   EXPECT_TRUE(h["shards"].array().empty());
@@ -439,7 +440,7 @@ TEST_F(AdminTest, MoveListShowsQueuedActions)
            {"a", MoveKind::Commit}, {"b", MoveKind::Restore}, {"c", MoveKind::PreWarm}}) {
     ASSERT_EQ(0, moves->append(&dpp, action(name, kind), null_yield));
   }
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::move_list(&dpp, ctx, std::nullopt, 0, &f, null_yield));
   EXPECT_EQ(3, num(f["actions"]));
   size_t listed = 0;
@@ -454,13 +455,13 @@ TEST_F(AdminTest, MoveListShowsQueuedActions)
 
   // one shard, listed even when it is empty
   const uint32_t shard = move_shard_of(action("a", MoveKind::Commit), moves->num_shards());
-  JSONFormattable g;
+  Output g;
   ASSERT_EQ(0, admin::move_list(&dpp, ctx, shard, 0, &g, null_yield));
   ASSERT_EQ(1u, g["shards"].array().size());
   EXPECT_EQ(static_cast<long long>(shard), num(g["shards"][0]["shard"]));
   EXPECT_EQ(moves->data[shard].size(), g["shards"][0]["actions"].array().size());
 
-  JSONFormattable h;
+  Output h;
   EXPECT_EQ(-EINVAL, admin::move_list(&dpp, ctx, moves->num_shards(), 0, &h, null_yield));
 }
 
@@ -479,7 +480,7 @@ TEST_F(AdminTest, ProcessRunsTheNamedWorkers)
   a.queued_at = now - std::chrono::hours(1);
   ASSERT_EQ(0, moves->append(&dpp, a, null_yield));
 
-  JSONFormattable f;
+  Output f;
   ASSERT_EQ(0, admin::process(&dpp, ctx, "move", &f, null_yield));
   EXPECT_TRUE(f.exists("move"));
   EXPECT_FALSE(f.exists("agg"));
@@ -488,7 +489,7 @@ TEST_F(AdminTest, ProcessRunsTheNamedWorkers)
   EXPECT_EQ(Placement::Cold, placements->at(b1, "obj"));
   EXPECT_EQ(RGWITETierState::Committed, state->find(b1, rgw_obj_key("obj"))->ite.tier_state);
 
-  JSONFormattable g;
+  Output g;
   ASSERT_EQ(0, admin::process(&dpp, ctx, "all", &g, null_yield));
   for (auto w : admin::WORKERS) {
     EXPECT_TRUE(g.exists(std::string(w))) << w;
@@ -497,11 +498,11 @@ TEST_F(AdminTest, ProcessRunsTheNamedWorkers)
 
   // a failing worker is reported, and the rest still run
   moves->list_ret = -EIO;
-  JSONFormattable h;
+  Output h;
   EXPECT_EQ(-EIO, admin::process(&dpp, ctx, "all", &h, null_yield));
   EXPECT_EQ(-EIO, num(h["move"]["ret"]));
   EXPECT_EQ(0, num(h["agg"]["ret"]));
 
-  JSONFormattable i;
+  Output i;
   EXPECT_EQ(-EINVAL, admin::process(&dpp, ctx, "bogus", &i, null_yield));
 }
