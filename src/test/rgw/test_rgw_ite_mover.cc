@@ -390,12 +390,13 @@ TEST_F(MoverTest, BatchCapBoundsTheMovesOfACycle)
 TEST_F(MoverTest, DrainsEveryShardFromAnyStart)
 {
   std::set<uint32_t> shards;
-  for (int i = 0; shards.size() < 3; ++i) {
+  for (int i = 0; shards.size() < 3 && i < 1000; ++i) {
     auto name = fmt::format("o{}", i);
     if (shards.insert(move_shard_of(action(name, MoveKind::Commit), 4)).second) {
       pending(name, MoveKind::Commit);
     }
   }
+  ASSERT_EQ(3u, shards.size());
   Mover mover(ctx);
   ASSERT_EQ(0, mover.process(&dpp, null_yield, 3));
   EXPECT_EQ(3u, mover.stats().commits);

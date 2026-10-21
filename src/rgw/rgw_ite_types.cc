@@ -101,9 +101,11 @@ std::list<AccessEvent> AccessEvent::generate_test_instances()
   return o;
 }
 
+/* rjenkins, not the linux hash: the shard counts are powers of two, and the
+ * linux hash spreads sequential names over few of them */
 static uint32_t hash_str(std::string_view s)
 {
-  return ceph_str_hash_linux(s.data(), s.size());
+  return ceph_str_hash_rjenkins(s.data(), s.size());
 }
 
 uint32_t buffer_shard_of(const rgw_bucket& bucket, std::string_view obj_name,
