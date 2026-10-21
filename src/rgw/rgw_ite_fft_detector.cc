@@ -87,14 +87,17 @@ Periodicity detect_period(const std::vector<double>& series, uint32_t min_cycles
     return p; // a constant series: accessed every window alike
   }
 
-  std::vector<double> s(max_lag + 2);
-  for (uint32_t lag = 1; lag <= max_lag + 1; ++lag) {
+  std::vector<double> s(max_lag + 1);
+  for (uint32_t lag = 1; lag <= max_lag; ++lag) {
     s[lag] = score(r, lag);
   }
-  // the best local peak: a burst decays from lag 0 without one
+  // the best local peak: a burst decays from lag 0 without one. The last
+  // lag is a peak while the score still rises into it: a period at the end
+  // of the range, as a month is in 90 windows, may have its jittered top
+  // just past it
   uint32_t best = 0;
   for (uint32_t lag = 2; lag <= max_lag; ++lag) {
-    const bool peak = s[lag] > s[lag - 1] && s[lag] >= s[lag + 1];
+    const bool peak = s[lag] > s[lag - 1] && (lag == max_lag || s[lag] >= s[lag + 1]);
     if (peak && (!best || s[lag] > s[best])) {
       best = lag;
     }
