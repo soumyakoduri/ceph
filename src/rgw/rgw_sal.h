@@ -26,6 +26,7 @@
 #include "rgw_lua.h"
 #include "rgw_notify_event_type.h"
 #include "rgw_req_context.h"
+#include "rgw_ite_types.h"
 #include "include/random.h"
 #include "include/function2.hpp"
 
@@ -156,6 +157,10 @@ struct MPSerializer;
 class GCChain;
 class RGWRole;
 class VectorBucket;
+class ITEWriteBuffer;
+class ITEAggStore;
+class ITEStateStore;
+class ITEMoveQueue;
 
 enum AttrsMod {
   ATTRSMOD_NONE    = 0,
@@ -516,6 +521,15 @@ class Driver {
     virtual std::unique_ptr<Lifecycle> get_lifecycle(void) = 0;
     /** Get a @a Restore object. Used to manage/run restore objects */
     virtual std::unique_ptr<Restore> get_restore(void) = 0;
+    /** ITE contract one: the access-event write buffer, or nullptr if the
+     * backend is not ITE-capable */
+    virtual std::unique_ptr<ITEWriteBuffer> get_ite_write_buffer(void) = 0;
+    /** ITE contract two: the aggregated count store */
+    virtual std::unique_ptr<ITEAggStore> get_ite_agg_store(void) = 0;
+    /** ITE contract three: batch-enumerable per-object ITE state */
+    virtual std::unique_ptr<ITEStateStore> get_ite_state_store(void) = 0;
+    /** ITE contract four: the move queue */
+    virtual std::unique_ptr<ITEMoveQueue> get_ite_move_queue(void) = 0;
     /** Reset the temporarily restored objects which are expired */
     virtual bool process_expired_objects(const DoutPrefixProvider *dpp, optional_yield y) = 0;
 
@@ -1345,6 +1359,21 @@ class Object {
 			   uint64_t& size,
 			   const DoutPrefixProvider* dpp,
 			   optional_yield y) = 0;
+    /** ITE: the generation of the loaded data instance (in RADOS the head
+     * object's write version), or 0 if it is not known */
+    virtual uint64_t get_ite_generation() const = 0;
+    /** ITE: which placement of its two-placement storage class currently
+     * holds this instance's bytes */
+    virtual int ite_get_placement(const DoutPrefixProvider* dpp,
+                                  rgw::ite::Placement* placement,
+                                  optional_yield y) = 0;
+    /** ITE: move this instance's bytes to the target placement of its
+     * two-placement storage class. The advertised storage class and the
+     * instance's ITE state are left unchanged. Copies, verifies, then
+     * removes the source; a no-op if the bytes are already there. */
+    virtual int ite_move_placement(const DoutPrefixProvider* dpp,
+                                   rgw::ite::Placement target,
+                                   optional_yield y) = 0;
     /** Check to see if two placement rules match */
     virtual bool placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2) = 0;
     /** Dump driver-specific object layout info in JSON */
@@ -1790,6 +1819,168 @@ public:
 						const std::string& cookie) = 0;
 };
   
+/** @brief Abstraction of a serializer for ITE per-shard processing
+ */
+class ITESerializer : public Serializer {
+public:
+  ITESerializer() {}
+  virtual ~ITESerializer() = default;
+};
+
+/**
+ * @brief ITE contract one: the access-event write buffer
+ *
+ * An append-only event queue with a fixed number of shards shared by all
+ * buckets. An event lands on the shard chosen by hashing its bucket and
+ * object, so all events of one object are on one shard. Readers consume a
+ * shard after a cursor and trim it only up to a cursor they have durably
+ * committed; nothing is ever deleted on a timer.
+ */
+class ITEWriteBuffer {
+public:
+  ITEWriteBuffer() = default;
+  virtual ~ITEWriteBuffer() = default;
+
+  /** Open the shards, creating them if needed */
+  virtual int initialize(const DoutPrefixProvider* dpp, optional_yield y) = 0;
+  /** Number of shards */
+  virtual uint32_t num_shards() const = 0;
+  /** Append one event. Must be cheap: this runs for every recorded
+   * request. */
+  virtual int append(const DoutPrefixProvider* dpp,
+                     const rgw::ite::AccessEvent& event, optional_yield y) = 0;
+  /** Read up to max entries of a shard after cursor ("" for the start) */
+  virtual int list(const DoutPrefixProvider* dpp, uint32_t shard,
+                   const std::string& cursor, uint32_t max,
+                   std::vector<rgw::ite::AccessEventEntry>& entries,
+                   bool* truncated, optional_yield y) = 0;
+  /** Trim a shard up to and including cursor */
+  virtual int trim(const DoutPrefixProvider* dpp, uint32_t shard,
+                   const std::string& cursor, optional_yield y) = 0;
+  /** Get a serializer for exclusive processing of one shard */
+  virtual std::unique_ptr<ITESerializer> get_serializer(uint32_t shard,
+                                                        const std::string& cookie) = 0;
+};
+
+/**
+ * @brief ITE contract two: the aggregated count store
+ *
+ * A windowed counter store addressed by bucket and window (a day or a week),
+ * each window split into hash shards. Counts are keyed by
+ * rgw::ite::CountKey. Applying deltas is idempotent: each window shard keeps
+ * a progress marker per write-buffer shard and only applies a batch whose
+ * expected marker still matches, advancing it in the same atomic update.
+ * Also holds the directory of ITE buckets and each worker's progress.
+ */
+class ITEAggStore {
+public:
+  ITEAggStore() = default;
+  virtual ~ITEAggStore() = default;
+
+  virtual int initialize(const DoutPrefixProvider* dpp, optional_yield y) = 0;
+  /** Number of hash shards per bucket window */
+  virtual uint32_t num_shards() const = 0;
+  /** Read the progress marker of a write-buffer shard in a window shard;
+   * "" if that buffer shard never contributed */
+  virtual int get_marker(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                         const rgw::ite::Window& window, uint32_t agg_shard,
+                         uint32_t buffer_shard, std::string* marker,
+                         optional_yield y) = 0;
+  /** Add deltas (count key -> increment) to a window shard and advance the
+   * buffer shard's marker from expected_marker to new_marker, atomically.
+   * Returns -ECANCELED and changes nothing if the stored marker is not
+   * expected_marker. */
+  virtual int add_counts(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                         const rgw::ite::Window& window, uint32_t agg_shard,
+                         uint32_t buffer_shard, const std::string& expected_marker,
+                         const std::string& new_marker,
+                         const std::map<std::string, uint64_t>& deltas,
+                         optional_yield y) = 0;
+  /** Read all counts of a bucket window, across its shards */
+  virtual int read_counts(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                          const rgw::ite::Window& window,
+                          std::map<std::string, uint64_t>& counts,
+                          optional_yield y) = 0;
+  /** List the windows that exist for a bucket in [from, to], in order */
+  virtual int list_windows(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                           const rgw::ite::Window& from, const rgw::ite::Window& to,
+                           std::vector<rgw::ite::Window>& windows,
+                           optional_yield y) = 0;
+  /** Drop a whole window of a bucket */
+  virtual int remove_window(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                            const rgw::ite::Window& window, optional_yield y) = 0;
+
+  /** Bucket directory: add or update an ITE bucket's progress record */
+  virtual int put_bucket(const DoutPrefixProvider* dpp,
+                         const rgw::ite::BucketProgress& progress,
+                         optional_yield y) = 0;
+  virtual int get_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                         rgw::ite::BucketProgress* progress, optional_yield y) = 0;
+  virtual int remove_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                            optional_yield y) = 0;
+  virtual int list_buckets(const DoutPrefixProvider* dpp, const std::string& marker,
+                           uint32_t max,
+                           std::vector<rgw::ite::BucketProgress>& buckets,
+                           std::string* next_marker, bool* truncated,
+                           optional_yield y) = 0;
+};
+
+/**
+ * @brief ITE contract three: per-object ITE state
+ *
+ * Read or write one object's ITE fields, and enumerate the fields of every
+ * object in a bucket. Enumeration must be one sequential pass, not a lookup
+ * per object: the scorers and the decision engine are batch scans.
+ */
+class ITEStateStore {
+public:
+  ITEStateStore() = default;
+  virtual ~ITEStateStore() = default;
+
+  virtual int get_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                        const rgw_obj_key& key, rgw::ite::ObjectEntry* entry,
+                        optional_yield y) = 0;
+  /** Write the field groups in mask (rgw_bucket_ite_state::MASK_*). With a
+   * nonzero expected_gen, -ECANCELED if a new data instance has replaced the
+   * one that began at that generation. */
+  virtual int set_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                        const rgw_obj_key& key, const rgw_bucket_ite_state& state,
+                        uint32_t mask, uint64_t expected_gen, optional_yield y) = 0;
+  /** Enumerate up to max objects after marker, every version included */
+  virtual int list_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                         const rgw_obj_key& marker, uint32_t max,
+                         std::vector<rgw::ite::ObjectEntry>& entries,
+                         rgw_obj_key* next_marker, bool* truncated,
+                         optional_yield y) = 0;
+};
+
+/**
+ * @brief ITE contract four: the move queue
+ *
+ * An append-only, sharded queue of byte-moving actions with the same shape
+ * as contract one. Actions are acknowledged (trimmed) only once the mover
+ * has durably completed them. Per zone; nothing on it is replicated.
+ */
+class ITEMoveQueue {
+public:
+  ITEMoveQueue() = default;
+  virtual ~ITEMoveQueue() = default;
+
+  virtual int initialize(const DoutPrefixProvider* dpp, optional_yield y) = 0;
+  virtual uint32_t num_shards() const = 0;
+  virtual int append(const DoutPrefixProvider* dpp,
+                     const rgw::ite::MoveAction& action, optional_yield y) = 0;
+  virtual int list(const DoutPrefixProvider* dpp, uint32_t shard,
+                   const std::string& cursor, uint32_t max,
+                   std::vector<rgw::ite::MoveActionEntry>& entries,
+                   bool* truncated, optional_yield y) = 0;
+  /** Acknowledge (trim) actions up to and including cursor */
+  virtual int ack(const DoutPrefixProvider* dpp, uint32_t shard,
+                  const std::string& cursor, optional_yield y) = 0;
+  virtual std::unique_ptr<ITESerializer> get_serializer(uint32_t shard,
+                                                        const std::string& cookie) = 0;
+};
+
 /**
  * @brief Abstraction for a Notification event
  *

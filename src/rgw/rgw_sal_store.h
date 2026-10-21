@@ -102,6 +102,12 @@ class StoreDriver : public Driver {
       return ceph::util::generate_random_number<uint64_t>();
     }
 
+    /* a backend becomes ITE-capable by implementing the four contracts */
+    std::unique_ptr<ITEWriteBuffer> get_ite_write_buffer(void) override { return nullptr; }
+    std::unique_ptr<ITEAggStore> get_ite_agg_store(void) override { return nullptr; }
+    std::unique_ptr<ITEStateStore> get_ite_state_store(void) override { return nullptr; }
+    std::unique_ptr<ITEMoveQueue> get_ite_move_queue(void) override { return nullptr; }
+
     int read_topics(const std::string& tenant, rgw_pubsub_topics& topics, RGWObjVersionTracker* objv_tracker,
         optional_yield y, const DoutPrefixProvider *dpp) override {return -EOPNOTSUPP;}
     int stat_topics_v1(const std::string& tenant, optional_yield y, const DoutPrefixProvider *dpp) override {return -EOPNOTSUPP;}
@@ -425,6 +431,17 @@ class StoreObject : public Object {
 			   optional_yield y) override {
       return -1;
     }
+    virtual uint64_t get_ite_generation() const override { return state.epoch; }
+    virtual int ite_get_placement(const DoutPrefixProvider* dpp,
+                                  rgw::ite::Placement* placement,
+                                  optional_yield y) override {
+      return -EOPNOTSUPP;
+    }
+    virtual int ite_move_placement(const DoutPrefixProvider* dpp,
+                                   rgw::ite::Placement target,
+                                   optional_yield y) override {
+      return -EOPNOTSUPP;
+    }
     jspan_context& get_trace() override { return trace_ctx; }
     void set_trace (jspan_context&& _trace_ctx) override { trace_ctx = std::move(_trace_ctx); }
 
@@ -523,6 +540,43 @@ class StoreRestore : public Restore {
 public:
   StoreRestore() = default;
   virtual ~StoreRestore() = default;
+};
+
+class StoreITESerializer : public ITESerializer {
+
+protected:
+  std::string oid;
+
+public:
+  StoreITESerializer() {}
+  StoreITESerializer(std::string _oid) : oid(std::move(_oid)) {}
+
+  virtual ~StoreITESerializer() = default;
+  virtual void print(std::ostream& out) const override { out << oid; }
+};
+
+class StoreITEWriteBuffer : public ITEWriteBuffer {
+public:
+  StoreITEWriteBuffer() = default;
+  virtual ~StoreITEWriteBuffer() = default;
+};
+
+class StoreITEAggStore : public ITEAggStore {
+public:
+  StoreITEAggStore() = default;
+  virtual ~StoreITEAggStore() = default;
+};
+
+class StoreITEStateStore : public ITEStateStore {
+public:
+  StoreITEStateStore() = default;
+  virtual ~StoreITEStateStore() = default;
+};
+
+class StoreITEMoveQueue : public ITEMoveQueue {
+public:
+  StoreITEMoveQueue() = default;
+  virtual ~StoreITEMoveQueue() = default;
 };
 
 class StoreNotification : public Notification {

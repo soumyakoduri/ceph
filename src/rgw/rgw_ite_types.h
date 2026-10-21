@@ -327,6 +327,25 @@ struct BucketProgress {
 };
 WRITE_CLASS_ENCODER(BucketProgress)
 
+/* one object's ITE state as contract three enumerates it, together with
+ * the index fields the scorers and the decision engine need */
+struct ObjectEntry {
+  rgw_obj_key key;
+  uint64_t gen = 0; // current generation of the stored instance
+  uint64_t size = 0;
+  ceph::real_time mtime;
+  std::string storage_class;
+  bool exists = true;
+  bool current = true; // false for a non-current version
+  bool delete_marker = false;
+  rgw_bucket_ite_state ite;
+
+  /* the instance identity accesses are attributed to */
+  InstanceId instance() const {
+    return InstanceId(key.name, key.instance, ite.base_gen ? ite.base_gen : gen);
+  }
+};
+
 /* the two physical placements of a two-placement storage class */
 enum class Placement : uint8_t {
   Hot = 0,

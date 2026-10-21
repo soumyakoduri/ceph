@@ -157,6 +157,11 @@ add_executable(unittest_rgw_ite_types
 add_ceph_unittest(unittest_rgw_ite_types)
 target_link_libraries(unittest_rgw_ite_types ${rgw_libs})
 
+# unittest_rgw_ite_sal
+add_executable(unittest_rgw_ite_sal test_rgw_ite_sal.cc)
+add_ceph_unittest(unittest_rgw_ite_sal)
+target_link_libraries(unittest_rgw_ite_sal ${rgw_libs})
+
 # unittest_rgw_compression
 add_executable(unittest_rgw_compression
   test_rgw_compression.cc

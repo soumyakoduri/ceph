@@ -435,6 +435,66 @@ std::unique_ptr<Lifecycle> FilterDriver::get_lifecycle(void)
   return std::make_unique<FilterLifecycle>(std::move(lc));
 }
 
+std::unique_ptr<ITEWriteBuffer> FilterDriver::get_ite_write_buffer()
+{
+  auto n = next->get_ite_write_buffer();
+  if (!n) {
+    return nullptr;
+  }
+  return std::make_unique<FilterITEWriteBuffer>(std::move(n));
+}
+
+std::unique_ptr<ITEAggStore> FilterDriver::get_ite_agg_store()
+{
+  auto n = next->get_ite_agg_store();
+  if (!n) {
+    return nullptr;
+  }
+  return std::make_unique<FilterITEAggStore>(std::move(n));
+}
+
+std::unique_ptr<ITEStateStore> FilterDriver::get_ite_state_store()
+{
+  auto n = next->get_ite_state_store();
+  if (!n) {
+    return nullptr;
+  }
+  return std::make_unique<FilterITEStateStore>(std::move(n));
+}
+
+std::unique_ptr<ITEMoveQueue> FilterDriver::get_ite_move_queue()
+{
+  auto n = next->get_ite_move_queue();
+  if (!n) {
+    return nullptr;
+  }
+  return std::make_unique<FilterITEMoveQueue>(std::move(n));
+}
+
+int FilterITEStateStore::get_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                                   const rgw_obj_key& key, rgw::ite::ObjectEntry* entry,
+                                   optional_yield y)
+{
+  return next->get_state(dpp, nextBucket(bucket), key, entry, y);
+}
+
+int FilterITEStateStore::set_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                                   const rgw_obj_key& key, const rgw_bucket_ite_state& state,
+                                   uint32_t mask, uint64_t expected_gen, optional_yield y)
+{
+  return next->set_state(dpp, nextBucket(bucket), key, state, mask, expected_gen, y);
+}
+
+int FilterITEStateStore::list_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                                    const rgw_obj_key& marker, uint32_t max,
+                                    std::vector<rgw::ite::ObjectEntry>& entries,
+                                    rgw_obj_key* next_marker, bool* truncated,
+                                    optional_yield y)
+{
+  return next->list_state(dpp, nextBucket(bucket), marker, max, entries,
+                          next_marker, truncated, y);
+}
+
 bool FilterDriver::process_expired_objects(const DoutPrefixProvider *dpp,
 	       			           optional_yield y) {
   return next->process_expired_objects(dpp, y);

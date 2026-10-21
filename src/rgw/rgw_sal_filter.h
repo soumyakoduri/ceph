@@ -294,6 +294,10 @@ public:
   virtual int cluster_stat(RGWClusterStat& stats) override;
   virtual std::unique_ptr<Lifecycle> get_lifecycle(void) override;
   virtual std::unique_ptr<Restore> get_restore(void) override;
+  virtual std::unique_ptr<ITEWriteBuffer> get_ite_write_buffer(void) override;
+  virtual std::unique_ptr<ITEAggStore> get_ite_agg_store(void) override;
+  virtual std::unique_ptr<ITEStateStore> get_ite_state_store(void) override;
+  virtual std::unique_ptr<ITEMoveQueue> get_ite_move_queue(void) override;
   virtual bool process_expired_objects(const DoutPrefixProvider *dpp, optional_yield y) override;
 
   virtual std::unique_ptr<Notification> get_notification(rgw::sal::Object* obj,
@@ -862,6 +866,19 @@ public:
 			   uint64_t& size,
 			   const DoutPrefixProvider* dpp,
 			   optional_yield y) override;
+  virtual uint64_t get_ite_generation() const override {
+    return next->get_ite_generation();
+  }
+  virtual int ite_get_placement(const DoutPrefixProvider* dpp,
+                                rgw::ite::Placement* placement,
+                                optional_yield y) override {
+    return next->ite_get_placement(dpp, placement, y);
+  }
+  virtual int ite_move_placement(const DoutPrefixProvider* dpp,
+                                 rgw::ite::Placement target,
+                                 optional_yield y) override {
+    return next->ite_move_placement(dpp, target, y);
+  }
   virtual bool placement_rules_match(rgw_placement_rule& r1, rgw_placement_rule& r2) override;
   virtual int dump_obj_layout(const DoutPrefixProvider *dpp, optional_yield y,
 			      Formatter* f) override;
@@ -1130,6 +1147,178 @@ public:
 				const std::string& cookie) override;
 };
   
+class FilterITESerializer : public ITESerializer {
+
+protected:
+  std::unique_ptr<ITESerializer> next;
+
+public:
+  FilterITESerializer(std::unique_ptr<ITESerializer> _next) : next(std::move(_next)) {}
+  virtual ~FilterITESerializer() = default;
+  virtual int try_lock(const DoutPrefixProvider *dpp, ceph::timespan dur,
+                       optional_yield y) override {
+    return next->try_lock(dpp, dur, y);
+  }
+  virtual int unlock(const DoutPrefixProvider* dpp, optional_yield y) override {
+    return next->unlock(dpp, y);
+  }
+  virtual void print(std::ostream& out) const override { return next->print(out); }
+};
+
+class FilterITEWriteBuffer : public ITEWriteBuffer {
+
+protected:
+  std::unique_ptr<ITEWriteBuffer> next;
+
+public:
+  FilterITEWriteBuffer(std::unique_ptr<ITEWriteBuffer> _next) : next(std::move(_next)) {}
+  ~FilterITEWriteBuffer() override = default;
+
+  virtual int initialize(const DoutPrefixProvider* dpp, optional_yield y) override {
+    return next->initialize(dpp, y);
+  }
+  virtual uint32_t num_shards() const override { return next->num_shards(); }
+  virtual int append(const DoutPrefixProvider* dpp,
+                     const rgw::ite::AccessEvent& event, optional_yield y) override {
+    return next->append(dpp, event, y);
+  }
+  virtual int list(const DoutPrefixProvider* dpp, uint32_t shard,
+                   const std::string& cursor, uint32_t max,
+                   std::vector<rgw::ite::AccessEventEntry>& entries,
+                   bool* truncated, optional_yield y) override {
+    return next->list(dpp, shard, cursor, max, entries, truncated, y);
+  }
+  virtual int trim(const DoutPrefixProvider* dpp, uint32_t shard,
+                   const std::string& cursor, optional_yield y) override {
+    return next->trim(dpp, shard, cursor, y);
+  }
+  virtual std::unique_ptr<ITESerializer> get_serializer(uint32_t shard,
+                                                        const std::string& cookie) override {
+    return std::make_unique<FilterITESerializer>(next->get_serializer(shard, cookie));
+  }
+};
+
+class FilterITEAggStore : public ITEAggStore {
+
+protected:
+  std::unique_ptr<ITEAggStore> next;
+
+public:
+  FilterITEAggStore(std::unique_ptr<ITEAggStore> _next) : next(std::move(_next)) {}
+  ~FilterITEAggStore() override = default;
+
+  virtual int initialize(const DoutPrefixProvider* dpp, optional_yield y) override {
+    return next->initialize(dpp, y);
+  }
+  virtual uint32_t num_shards() const override { return next->num_shards(); }
+  virtual int get_marker(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                         const rgw::ite::Window& window, uint32_t agg_shard,
+                         uint32_t buffer_shard, std::string* marker,
+                         optional_yield y) override {
+    return next->get_marker(dpp, bucket, window, agg_shard, buffer_shard, marker, y);
+  }
+  virtual int add_counts(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                         const rgw::ite::Window& window, uint32_t agg_shard,
+                         uint32_t buffer_shard, const std::string& expected_marker,
+                         const std::string& new_marker,
+                         const std::map<std::string, uint64_t>& deltas,
+                         optional_yield y) override {
+    return next->add_counts(dpp, bucket, window, agg_shard, buffer_shard,
+                            expected_marker, new_marker, deltas, y);
+  }
+  virtual int read_counts(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                          const rgw::ite::Window& window,
+                          std::map<std::string, uint64_t>& counts,
+                          optional_yield y) override {
+    return next->read_counts(dpp, bucket, window, counts, y);
+  }
+  virtual int list_windows(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                           const rgw::ite::Window& from, const rgw::ite::Window& to,
+                           std::vector<rgw::ite::Window>& windows,
+                           optional_yield y) override {
+    return next->list_windows(dpp, bucket, from, to, windows, y);
+  }
+  virtual int remove_window(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                            const rgw::ite::Window& window, optional_yield y) override {
+    return next->remove_window(dpp, bucket, window, y);
+  }
+  virtual int put_bucket(const DoutPrefixProvider* dpp,
+                         const rgw::ite::BucketProgress& progress,
+                         optional_yield y) override {
+    return next->put_bucket(dpp, progress, y);
+  }
+  virtual int get_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                         rgw::ite::BucketProgress* progress, optional_yield y) override {
+    return next->get_bucket(dpp, bucket, progress, y);
+  }
+  virtual int remove_bucket(const DoutPrefixProvider* dpp, const rgw_bucket& bucket,
+                            optional_yield y) override {
+    return next->remove_bucket(dpp, bucket, y);
+  }
+  virtual int list_buckets(const DoutPrefixProvider* dpp, const std::string& marker,
+                           uint32_t max,
+                           std::vector<rgw::ite::BucketProgress>& buckets,
+                           std::string* next_marker, bool* truncated,
+                           optional_yield y) override {
+    return next->list_buckets(dpp, marker, max, buckets, next_marker, truncated, y);
+  }
+};
+
+class FilterITEStateStore : public ITEStateStore {
+
+protected:
+  std::unique_ptr<ITEStateStore> next;
+
+public:
+  FilterITEStateStore(std::unique_ptr<ITEStateStore> _next) : next(std::move(_next)) {}
+  ~FilterITEStateStore() override = default;
+
+  virtual int get_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                        const rgw_obj_key& key, rgw::ite::ObjectEntry* entry,
+                        optional_yield y) override;
+  virtual int set_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                        const rgw_obj_key& key, const rgw_bucket_ite_state& state,
+                        uint32_t mask, uint64_t expected_gen, optional_yield y) override;
+  virtual int list_state(const DoutPrefixProvider* dpp, Bucket* bucket,
+                         const rgw_obj_key& marker, uint32_t max,
+                         std::vector<rgw::ite::ObjectEntry>& entries,
+                         rgw_obj_key* next_marker, bool* truncated,
+                         optional_yield y) override;
+};
+
+class FilterITEMoveQueue : public ITEMoveQueue {
+
+protected:
+  std::unique_ptr<ITEMoveQueue> next;
+
+public:
+  FilterITEMoveQueue(std::unique_ptr<ITEMoveQueue> _next) : next(std::move(_next)) {}
+  ~FilterITEMoveQueue() override = default;
+
+  virtual int initialize(const DoutPrefixProvider* dpp, optional_yield y) override {
+    return next->initialize(dpp, y);
+  }
+  virtual uint32_t num_shards() const override { return next->num_shards(); }
+  virtual int append(const DoutPrefixProvider* dpp,
+                     const rgw::ite::MoveAction& action, optional_yield y) override {
+    return next->append(dpp, action, y);
+  }
+  virtual int list(const DoutPrefixProvider* dpp, uint32_t shard,
+                   const std::string& cursor, uint32_t max,
+                   std::vector<rgw::ite::MoveActionEntry>& entries,
+                   bool* truncated, optional_yield y) override {
+    return next->list(dpp, shard, cursor, max, entries, truncated, y);
+  }
+  virtual int ack(const DoutPrefixProvider* dpp, uint32_t shard,
+                  const std::string& cursor, optional_yield y) override {
+    return next->ack(dpp, shard, cursor, y);
+  }
+  virtual std::unique_ptr<ITESerializer> get_serializer(uint32_t shard,
+                                                        const std::string& cookie) override {
+    return std::make_unique<FilterITESerializer>(next->get_serializer(shard, cookie));
+  }
+};
+
 class FilterNotification : public Notification {
 protected:
   std::unique_ptr<Notification> next;
