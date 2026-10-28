@@ -30,6 +30,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -52,6 +53,7 @@ struct TestEnv {
   // right entrypoint namespace on removal/teardown.
   std::mutex buckets_lock;
   std::map<std::pair<std::string, std::string>, bool> buckets;
+  std::map<std::string, std::unique_ptr<rgw::sal::User>> users;
 };
 
 TestEnv g_env;
@@ -78,6 +80,23 @@ int create_tracked_bucket(const char* name, const char* tenant, bool is_vector)
   }
   const std::string tenant_str = tenant ? tenant : "";
 
+  // Wrapper writes load the owner's quota metadata. Keep a real, isolated test
+  // user for each tenant, shared by the concurrent Rust tests.
+  const rgw_user uid{tenant_str,
+      "lancedb-object-store-test-user-" + std::to_string(getpid())};
+  {
+    std::lock_guard l{g_env.buckets_lock};
+    if (!g_env.users.contains(tenant_str)) {
+      auto user = g_env.driver->get_user(uid);
+      user->get_info().display_name = "LanceDB object store test";
+      int ret = user->store_user(g_env.dpp.get(), null_yield, true);
+      if (ret < 0) {
+        return ret;
+      }
+      g_env.users.emplace(tenant_str, std::move(user));
+    }
+  }
+
   rgw_bucket b;
   b.name = name;
   b.tenant = tenant_str;
@@ -91,7 +110,7 @@ int create_tracked_bucket(const char* name, const char* tenant, bool is_vector)
   }
 
   rgw::sal::Bucket::CreateParams params;
-  params.owner = rgw_user{tenant_str, "lancedb-object-store-test-user"};
+  params.owner = uid;
   params.zonegroup_id = g_env.site.get_zonegroup().get_id();
   params.placement_rule = g_env.site.get_zonegroup().default_placement;
   // a vector bucket carries a real bucket index (like an ordinary bucket) so that
@@ -208,6 +227,11 @@ void env_teardown()
       bucket->remove(g_env.dpp.get(), true, null_yield);
     }
   }
+
+  for (auto& [tenant, user] : g_env.users) {
+    user->remove_user(g_env.dpp.get(), null_yield);
+  }
+  g_env.users.clear();
 
   g_env.driver->shutdown();
   DriverManager::close_storage(g_env.driver);

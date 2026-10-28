@@ -4,10 +4,14 @@
 #include "gtest/gtest.h"
 
 #include "rgw/rgw_sal_wrapper.h"
+#include "rgw/rgw_s3vector.h"
 #include "rgw/rgw_sal.h"
 #include "rgw/rgw_sal_config.h"
 #include "rgw/rgw_bucket.h"
 #include "rgw/rgw_zone.h"
+#include "rgw/rgw_acl.h"
+#include "rgw/rgw_account.h"
+#include "rgw/driver/rados/rgw_user.h"
 #include "common/ceph_argparse.h"
 #include "common/dout.h"
 #include "common/async/context_pool.h"
@@ -20,6 +24,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstring>
+#include <future>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -38,7 +43,7 @@ struct TestEnv {
   rgw::sal::Driver* driver = nullptr;
   const DoutPrefixProvider* dpp = nullptr;
   std::unique_ptr<rgw::sal::ConfigStore> cfgstore;
-  std::array<std::unique_ptr<rgw::sal::Bucket>, 2> buckets; // S3, Vector
+  const rgw::SiteConfig* site = nullptr;
   std::string backend;  // "rados", "dbstore", "posix", etc.
 };
 
@@ -166,13 +171,95 @@ protected:
     if (!g_env || !g_env->driver) {
       GTEST_SKIP() << "SAL driver not initialized";
     }
-    const auto& bucket = g_env->buckets[GetParam()];
-    ASSERT_NE(nullptr, bucket);
-    ASSERT_EQ(GetParam(), bucket->get_info().is_vector());
-    if (GetParam()) {
-      ASSERT_FALSE(bucket->get_info().is_indexless());
+    static uint64_t sequence = 0;
+    bucket_name_ = "sal-wrapper-test-" + std::to_string(getpid()) + "-" +
+        std::to_string(sequence++);
+    ASSERT_EQ(0, create_user(bucket_name_ + "-owner", &owner_));
+    ASSERT_EQ(0, create_bucket(bucket_name_, GetParam(), owner_->get_id(),
+                              &sal_bucket_))
+        << "backend=" << g_env->backend
+        << ", bucket_type=" << (GetParam() ? "Vector" : "S3");
+    bucket_ = {bucket_name_.c_str(), nullptr, GetParam()};
+  }
+
+  int create_user(const std::string& name, rgw::sal::User** result) {
+    auto user = g_env->driver->get_user(rgw_user{"", name});
+    user->get_info().display_name = name;
+    int ret = user->store_user(g_env->dpp, null_yield, true);
+    if (ret < 0) {
+      return ret;
     }
-    bucket_ = {bucket->get_name().c_str(), nullptr, GetParam()};
+    *result = user.get();
+    users_.push_back(std::move(user));
+    return 0;
+  }
+
+  int load_bucket(const std::string& name, bool is_vector,
+                  std::unique_ptr<rgw::sal::Bucket>* result) {
+    const rgw_bucket key("", name);
+    return is_vector
+        ? g_env->driver->load_vector_bucket(g_env->dpp, key, result, null_yield)
+        : g_env->driver->load_bucket(g_env->dpp, key, result, null_yield);
+  }
+
+  int create_bucket(const std::string& name, bool is_vector,
+                    const rgw_owner& owner, rgw::sal::Bucket** result) {
+    std::unique_ptr<rgw::sal::Bucket> bucket;
+    const auto* account_id = std::get_if<rgw_account_id>(&owner);
+    const rgw_bucket key(is_vector && account_id ? *account_id : "", name);
+    int ret = is_vector
+        ? g_env->driver->load_vector_bucket(g_env->dpp, key, &bucket, null_yield)
+        : g_env->driver->load_bucket(g_env->dpp, key, &bucket, null_yield);
+    if (ret != -ENOENT) {
+      return ret < 0 ? ret : -EEXIST;
+    }
+    if (!bucket) {
+      return -EIO;
+    }
+    rgw::sal::Bucket::CreateParams params;
+    params.owner = owner;
+    params.zonegroup_id = g_env->site->get_zonegroup().get_id();
+    params.placement_rule = g_env->site->get_zonegroup().default_placement;
+    params.zone_placement = rgw::find_zone_placement(
+        g_env->dpp, g_env->site->get_zone_params(), params.placement_rule);
+    if (is_vector) {
+      params.attrs[RGW_ATTR_S3VECTOR_STORAGE].append("vector_bucket");
+    }
+    RGWAccessControlPolicy acl;
+    acl.create_default(owner, "SAL wrapper test");
+    encode(acl, params.attrs[RGW_ATTR_ACL]);
+    ret = bucket->create(g_env->dpp, params, null_yield);
+    if (ret < 0) {
+      return ret;
+    }
+    *result = bucket.get();
+    buckets_.push_back(std::move(bucket));
+    // create() persists attributes without populating the Bucket's attrs map.
+    // Load them before quota/chown tests write the instance metadata back.
+    return (*result)->load_bucket(g_env->dpp, null_yield);
+  }
+
+  int put_to(const CRgwBucket& bucket, const char* key,
+             const std::string& data) {
+    CRgwObject obj{key, nullptr};
+    CRgwBuffer buf{reinterpret_cast<uint8_t*>(const_cast<char*>(data.data())),
+                   data.size()};
+    return rgw_put_object(driver(), dpp(), nullptr, &bucket, &obj, &buf, nullptr, nullptr, 0);
+  }
+
+  int load_owner_stats(const rgw_owner& owner, RGWStorageStats& stats) {
+    ceph::real_time synced, updated;
+    return g_env->driver->load_stats(g_env->dpp, null_yield, owner, stats,
+                                     synced, updated);
+  }
+
+  int set_bucket_quota(int64_t max_size, int64_t max_objects) {
+    auto& quota = sal_bucket_->get_info().quota;
+    quota.enabled = true;
+    quota.check_on_raw = true;
+    quota.max_size = max_size;
+    quota.max_objects = max_objects;
+    return sal_bucket_->put_info(g_env->dpp, false, ceph::real_clock::now(), null_yield);
   }
 
   int put(const char* key, const uint8_t* data, size_t len) {
@@ -203,12 +290,27 @@ protected:
   }
 
   CRgwBucket bucket_{};
+  std::string bucket_name_;
+  rgw::sal::Bucket* sal_bucket_ = nullptr;
+  rgw::sal::User* owner_ = nullptr;
+  std::vector<std::unique_ptr<rgw::sal::Bucket>> buckets_;
+  std::vector<std::unique_ptr<rgw::sal::User>> users_;
+  std::vector<std::pair<RGWAccountInfo, RGWObjVersionTracker>> accounts_;
   std::vector<std::string> created_keys_;
 
   void TearDown() override {
     if (!g_env || !g_env->driver) return;
     for (auto& k : created_keys_) {
       del(k.c_str());
+    }
+    for (auto& bucket : buckets_) {
+      EXPECT_EQ(0, bucket->remove(g_env->dpp, true, null_yield));
+    }
+    for (auto& user : users_) {
+      EXPECT_EQ(0, user->remove_user(g_env->dpp, null_yield));
+    }
+    for (auto& [account, objv] : accounts_) {
+      EXPECT_EQ(0, g_env->driver->delete_account(g_env->dpp, null_yield, account, objv));
     }
   }
 
@@ -1379,11 +1481,382 @@ TEST_P(SALWrapperTest, MultipartWithCustomMetadata) {
 }
 
 
-INSTANTIATE_TEST_SUITE_P(
-    BucketTypes, SALWrapperTest, ::testing::Values(false, true),
-    [](const ::testing::TestParamInfo<bool>& info) {
-      return info.param ? "Vector" : "S3";
-    });
+// Quota, owner statistics, and namespace checks for both bucket types.
+class SALWrapperAccountingTest : public SALWrapperTest {
+protected:
+  int sync_stats(const rgw_owner& owner) {
+    return rgw_sync_all_stats(g_env->dpp, null_yield, g_env->driver, owner, "");
+  }
+
+  int list_owner(const rgw_owner& owner, rgw::sal::BucketList& listing) {
+    return GetParam()
+        ? g_env->driver->list_vector_buckets(g_env->dpp, owner, "", "", "",
+                                             100, true, listing, null_yield)
+        : g_env->driver->list_buckets(g_env->dpp, owner, "", "", "",
+                                      100, true, listing, null_yield);
+  }
+
+  // Quota is enforced at the S3-Vectors op boundary, not in the SAL wrapper.
+  // Exercise that op-level helper directly: VECTOR_BUCKET storage maps to the
+  // native vector bucket, S3_BUCKET storage to the backing regular S3 bucket.
+  int op_check_quota(const rgw::s3vector::bucket_namespace_t& ns,
+                     const std::string& name, bool is_vector) {
+    rgw::s3vector::BackendConfig cfg{
+        rgw::s3vector::BackendType::RGW,
+        is_vector ? rgw::s3vector::StorageMode::VECTOR_BUCKET
+                  : rgw::s3vector::StorageMode::S3_BUCKET};
+    return rgw::s3vector::check_bucket_quota(g_env->dpp, g_env->driver, ns, name,
+                                             cfg, null_yield);
+  }
+
+  // Common case: the fixture's primary user-owned bucket (tenant/account empty).
+  int op_check_quota() {
+    return op_check_quota(rgw::s3vector::bucket_namespace_t{"", ""},
+                          bucket_name_, GetParam());
+  }
+
+  // Quota enforcement and owner-stats aggregation depend on a real quota handler
+  // and vector-bucket loading, which only the rados backend provides (dbstore's
+  // check_quota is a no-op stub; dbstore/posix load_vector_bucket is -ENOTSUP).
+  void skip_if_not_rados() {
+    if (g_env->backend != "rados") {
+      GTEST_SKIP() << "test requires the rados backend (backend="
+                   << g_env->backend << ")";
+    }
+  }
+};
+
+// known fail: dbstore, posix — load_vector_bucket returns -ENOTSUP
+TEST_P(SALWrapperAccountingTest, SameNameBucketsAreIsolated) {
+  rgw::sal::Bucket* other = nullptr;
+  ASSERT_EQ(0, create_bucket(bucket_name_, !GetParam(), owner_->get_id(), &other));
+  ASSERT_NE(sal_bucket_->get_bucket_id(), other->get_bucket_id());
+  CRgwBucket opposite{bucket_name_.c_str(), nullptr, !GetParam()};
+  ASSERT_EQ(0, put_to(bucket_, "same-key", "first"));
+  ASSERT_EQ(0, put_to(opposite, "same-key", "second namespace"));
+
+  CRgwObject obj{"same-key", nullptr};
+  CRgwBuffer data{};
+  ASSERT_EQ(0, get(obj.key, &data));
+  EXPECT_EQ("first", std::string(reinterpret_cast<char*>(data.data), data.len));
+  rgw_free_buffer(&data);
+  ASSERT_EQ(0, rgw_get_object(driver(), dpp(), nullptr, &opposite, &obj,
+                              0, UINT64_MAX, &data));
+  EXPECT_EQ("second namespace", std::string(reinterpret_cast<char*>(data.data), data.len));
+  rgw_free_buffer(&data);
+
+  ASSERT_EQ(0, del(obj.key));
+  CRgwObjectMeta meta{};
+  EXPECT_EQ(-ENOENT, head(obj.key, &meta));
+  ASSERT_EQ(0, rgw_head_object(driver(), dpp(), nullptr, &opposite, &obj, &meta));
+  EXPECT_EQ(16u, meta.size);
+  rgw_free_object_meta(&meta);
+}
+
+// known fail: dbstore, posix — load_vector_bucket returns -ENOTSUP;
+// dbstore also leaves copy_object unimplemented
+TEST_P(SALWrapperAccountingTest, CopyBetweenBucketTypes) {
+  rgw::sal::Bucket* other = nullptr;
+  ASSERT_EQ(0, create_bucket(bucket_name_, !GetParam(), owner_->get_id(), &other));
+  CRgwBucket opposite{bucket_name_.c_str(), nullptr, !GetParam()};
+  ASSERT_EQ(0, put_to(opposite, "source", "copy across namespaces"));
+  CRgwObject src{"source", nullptr};
+  CRgwObject dst{"destination", nullptr};
+  ASSERT_EQ(0, rgw_copy_object(driver(), dpp(), nullptr,
+                                &opposite, &src, &bucket_, &dst));
+  CRgwBuffer data{};
+  ASSERT_EQ(0, get(dst.key, &data));
+  EXPECT_EQ("copy across namespaces",
+            std::string(reinterpret_cast<char*>(data.data), data.len));
+  rgw_free_buffer(&data);
+  CRgwObject conditional{"conditional", nullptr};
+  ASSERT_EQ(0, rgw_copy_object_conditional(driver(), dpp(), nullptr,
+                                           &opposite, &src, &bucket_, &conditional,
+                                           nullptr, "*"));
+  ASSERT_EQ(0, get(conditional.key, &data));
+  EXPECT_EQ("copy across namespaces",
+            std::string(reinterpret_cast<char*>(data.data), data.len));
+  rgw_free_buffer(&data);
+}
+
+// Quota is enforced at the S3-Vectors op boundary (check_bucket_quota), not in
+// the SAL wrapper. Writes through the wrapper (put_str) are no longer checked;
+// they are used here only to fill the bucket.
+TEST_P(SALWrapperAccountingTest, BucketQuotaRejectsWhenAlreadyOver) {
+  skip_if_not_rados();
+  ASSERT_EQ(0, set_bucket_quota(4, -1));
+  // Fill 5 bytes, exceeding the 4-byte quota. The op-level check then rejects.
+  ASSERT_EQ(0, put_str("filler", "12345"));
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, op_check_quota());
+  // Raising the quota above current usage lets the next operation through.
+  ASSERT_EQ(0, set_bucket_quota(100, -1));
+  EXPECT_EQ(0, op_check_quota());
+}
+
+// A non-rgw backend stores its data outside ceph, so there is no ceph quota to
+// enforce and the op-level check is a no-op even when the bucket is over quota.
+TEST_P(SALWrapperAccountingTest, NonRgwBackendQuotaIsNoOp) {
+  skip_if_not_rados();
+  ASSERT_EQ(0, set_bucket_quota(4, -1));
+  ASSERT_EQ(0, put_str("filler", "12345"));
+  rgw::s3vector::BackendConfig local{rgw::s3vector::BackendType::LOCAL,
+                                     rgw::s3vector::StorageMode::VECTOR_BUCKET};
+  EXPECT_EQ(0, rgw::s3vector::check_bucket_quota(
+      g_env->dpp, g_env->driver, rgw::s3vector::bucket_namespace_t{"", ""},
+      bucket_name_, local, null_yield));
+}
+
+// The owner's bucket quota applies when the bucket has none of its own; a
+// bucket-level quota overrides it. Checked at the op boundary.
+TEST_P(SALWrapperAccountingTest, OwnerBucketQuotaAndBucketOverride) {
+  skip_if_not_rados();
+  auto& quota = owner_->get_info().quota.bucket_quota;
+  quota.enabled = true;
+  quota.check_on_raw = true;
+  quota.max_size = 4;
+  ASSERT_EQ(0, owner_->store_user(g_env->dpp, null_yield, false));
+  ASSERT_EQ(0, put_str("filler", "12345"));  // 5 bytes > owner's 4-byte bucket quota
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, op_check_quota());
+  // A larger bucket-level quota overrides the owner's bucket quota.
+  ASSERT_EQ(0, set_bucket_quota(100, -1));
+  EXPECT_EQ(0, op_check_quota());
+}
+
+// The bucket object-count quota is enforced the same way (reject when already at
+// or over the object limit).
+TEST_P(SALWrapperAccountingTest, BucketObjectCountQuota) {
+  skip_if_not_rados();
+  ASSERT_EQ(0, set_bucket_quota(-1, 1));  // at most one object
+  ASSERT_EQ(0, put_str("first", "one"));
+  ASSERT_EQ(0, put_str("second", "two"));  // two objects now, over the limit of 1
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, op_check_quota());
+  // Deleting back under the limit lets operations through again.
+  ASSERT_EQ(0, del("second"));
+  EXPECT_EQ(0, op_check_quota());
+}
+
+class TestOwnerStatsCB : public rgw::sal::ReadStatsCB {
+public:
+  std::promise<std::pair<int, RGWStorageStats>> result;
+
+  void handle_response(int ret, const RGWStorageStats& stats) override {
+    result.set_value({ret, stats});
+  }
+};
+
+// known fail: dbstore, posix — owner stats sync/load are no-op stubs and
+// load_stats_async returns -ENOTSUP
+TEST_P(SALWrapperAccountingTest, OwnerStatsWithOneBucketType) {
+  ASSERT_EQ(0, put_str("object", "12345"));
+  // Sync only this namespace, leaving the other owner-stats object absent.
+  ASSERT_EQ(0, sal_bucket_->sync_owner_stats(g_env->dpp, null_yield, nullptr));
+  RGWStorageStats stats;
+  ASSERT_EQ(0, load_owner_stats(owner_->get_id(), stats));
+  EXPECT_EQ(5u, stats.size);
+  EXPECT_EQ(1u, stats.num_objects);
+
+  boost::intrusive_ptr<TestOwnerStatsCB> cb{new TestOwnerStatsCB};
+  auto result = cb->result.get_future();
+  ASSERT_EQ(0, g_env->driver->load_stats_async(g_env->dpp, owner_->get_id(), cb));
+  ASSERT_EQ(std::future_status::ready, result.wait_for(std::chrono::seconds(30)));
+  const auto [ret, async_stats] = result.get();
+  ASSERT_EQ(0, ret);
+  EXPECT_EQ(stats.size, async_stats.size);
+  EXPECT_EQ(stats.num_objects, async_stats.num_objects);
+
+  // A full sync must tolerate an absent stats object for the other namespace.
+  ASSERT_EQ(0, sync_stats(owner_->get_id()));
+  ceph::real_time synced, updated;
+  ASSERT_EQ(0, g_env->driver->load_stats(g_env->dpp, null_yield,
+                                         owner_->get_id(), stats, synced, updated));
+  EXPECT_EQ(5u, stats.size);
+  EXPECT_EQ(1u, stats.num_objects);
+  EXPECT_GT(synced, ceph::real_time{});
+  EXPECT_LE(updated, synced);
+}
+
+TEST_P(SALWrapperAccountingTest, OwnerStatsAndQuotaIncludeBothBucketTypes) {
+  skip_if_not_rados();
+  rgw::sal::Bucket* other = nullptr;
+  ASSERT_EQ(0, create_bucket(bucket_name_, !GetParam(), owner_->get_id(), &other));
+  CRgwBucket opposite{bucket_name_.c_str(), nullptr, !GetParam()};
+  ASSERT_EQ(0, put_str("object", "123"));
+  ASSERT_EQ(0, put_to(opposite, "object", "12345"));
+  ASSERT_EQ(0, sync_stats(owner_->get_id()));
+  RGWStorageStats stats;
+  ASSERT_EQ(0, load_owner_stats(owner_->get_id(), stats));
+  EXPECT_EQ(8u, stats.size);
+  EXPECT_EQ(2u, stats.num_objects);
+
+  boost::intrusive_ptr<TestOwnerStatsCB> cb{new TestOwnerStatsCB};
+  auto result = cb->result.get_future();
+  ASSERT_EQ(0, g_env->driver->load_stats_async(g_env->dpp, owner_->get_id(), cb));
+  ASSERT_EQ(std::future_status::ready, result.wait_for(std::chrono::seconds(30)));
+  const auto [ret, async_stats] = result.get();
+  ASSERT_EQ(0, ret);
+  EXPECT_EQ(8u, async_stats.size);
+  EXPECT_EQ(2u, async_stats.num_objects);
+
+  auto& quota = owner_->get_info().quota.user_quota;
+  quota.enabled = true;
+  quota.check_on_raw = true;
+  // Usage already totals 8 bytes across both namespaces, so a 7-byte user quota
+  // is already exceeded for operations in either namespace.
+  quota.max_size = 7;
+  ASSERT_EQ(0, owner_->store_user(g_env->dpp, null_yield, false));
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, op_check_quota());
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED,
+            op_check_quota(rgw::s3vector::bucket_namespace_t{"", ""},
+                           bucket_name_, !GetParam()));
+  // Raising the quota up to current usage (8) is no longer "over".
+  quota.max_size = 8;
+  ASSERT_EQ(0, owner_->store_user(g_env->dpp, null_yield, false));
+  EXPECT_EQ(0, op_check_quota());
+}
+
+TEST_P(SALWrapperAccountingTest, ChownKeepsOtherNamespaceAndUsesNewOwnerQuota) {
+  skip_if_not_rados();
+  rgw::sal::Bucket* other = nullptr;
+  ASSERT_EQ(0, create_bucket(bucket_name_, !GetParam(), owner_->get_id(), &other));
+  CRgwBucket opposite{bucket_name_.c_str(), nullptr, !GetParam()};
+  ASSERT_EQ(0, put_str("object", "123"));
+  ASSERT_EQ(0, put_to(opposite, "object", "12345"));
+  // The wrapper writes internal objects without ACLs. Admin chown of an S3
+  // bucket expects the object ACL normally supplied by the REST layer.
+  RGWAccessControlPolicy acl;
+  acl.create_default(owner_->get_id(), owner_->get_display_name());
+  rgw::sal::Attrs attrs;
+  encode(acl, attrs[RGW_ATTR_ACL]);
+  auto object = sal_bucket_->get_object(rgw_obj_key{"object"});
+  if (!GetParam()) {
+    ASSERT_EQ(0, object->set_obj_attrs(g_env->dpp, &attrs, nullptr, null_yield, 0));
+  }
+  ASSERT_EQ(0, sync_stats(owner_->get_id()));
+  rgw::sal::User* new_owner = nullptr;
+  ASSERT_EQ(0, create_user(bucket_name_ + "-new-owner", &new_owner));
+  std::string error;
+  ASSERT_EQ(0, rgw_chown_bucket_and_objects(
+      g_env->driver, sal_bucket_, new_owner->get_id(), new_owner->get_display_name(),
+      "", &error, g_env->dpp, null_yield)) << error;
+
+  std::unique_ptr<rgw::sal::Bucket> loaded;
+  ASSERT_EQ(0, load_bucket(bucket_name_, GetParam(), &loaded));
+  EXPECT_EQ(rgw_owner{new_owner->get_id()}, loaded->get_info().owner);
+  ASSERT_EQ(0, load_bucket(bucket_name_, !GetParam(), &loaded));
+  EXPECT_EQ(rgw_owner{owner_->get_id()}, loaded->get_info().owner);
+
+  rgw::sal::BucketList listing;
+  ASSERT_EQ(0, list_owner(new_owner->get_id(), listing));
+  ASSERT_EQ(1u, listing.buckets.size());
+  EXPECT_EQ(bucket_name_, listing.buckets.front().bucket.name);
+  EXPECT_EQ(3u, listing.buckets.front().size);
+  listing = {};
+  ASSERT_EQ(0, list_owner(owner_->get_id(), listing));
+  EXPECT_TRUE(listing.buckets.empty());
+
+  // Chown has the regular bucket semantics: explicitly sync before checking totals.
+  ASSERT_EQ(0, sync_stats(owner_->get_id()));
+  ASSERT_EQ(0, sync_stats(new_owner->get_id()));
+  RGWStorageStats stats;
+  ASSERT_EQ(0, load_owner_stats(owner_->get_id(), stats));
+  EXPECT_EQ(5u, stats.size);
+  EXPECT_EQ(1u, stats.num_objects);
+  ASSERT_EQ(0, load_owner_stats(new_owner->get_id(), stats));
+  EXPECT_EQ(3u, stats.size);
+  EXPECT_EQ(1u, stats.num_objects);
+  auto& quota = new_owner->get_info().quota.user_quota;
+  quota.enabled = true;
+  quota.check_on_raw = true;
+  // The new owner already holds 3 bytes, so a 2-byte quota is already exceeded.
+  quota.max_size = 2;
+  ASSERT_EQ(0, new_owner->store_user(g_env->dpp, null_yield, false));
+  // The primary bucket now belongs to new_owner, so its op-level check uses the
+  // new owner's quota; the opposite namespace is still the old owner's (no quota).
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED, op_check_quota());
+  EXPECT_EQ(0, op_check_quota(rgw::s3vector::bucket_namespace_t{"", ""},
+                             bucket_name_, !GetParam()));
+}
+
+TEST_P(SALWrapperAccountingTest, AccountQuotaIncludesBothBucketTypes) {
+  skip_if_not_rados();
+  RGWAccountInfo account;
+  account.id = rgw::account::generate_id(g_env->driver->ctx());
+  account.name = bucket_name_ + "-account";
+  RGWObjVersionTracker objv;
+  objv.generate_new_write_ver(g_env->driver->ctx());
+  ASSERT_EQ(0, g_env->driver->store_account(g_env->dpp, null_yield, true,
+                                            account, nullptr, {}, objv));
+  accounts_.emplace_back(account, objv);
+  auto& [stored, version] = accounts_.back();
+
+  rgw::sal::Bucket* first = nullptr;
+  rgw::sal::Bucket* second = nullptr;
+  ASSERT_EQ(0, create_bucket(account.name, GetParam(), account.id, &first));
+  ASSERT_EQ(0, create_bucket(account.name, !GetParam(), account.id, &second));
+  CRgwBucket selected{first->get_name().c_str(), first->get_tenant().c_str(), GetParam()};
+  CRgwBucket opposite{second->get_name().c_str(), second->get_tenant().c_str(), !GetParam()};
+  ASSERT_EQ(0, put_to(selected, "first", "123"));
+  ASSERT_EQ(0, put_to(opposite, "second", "12345"));
+  ASSERT_EQ(0, sync_stats(account.id));
+  RGWStorageStats stats;
+  ASSERT_EQ(0, load_owner_stats(account.id, stats));
+  EXPECT_EQ(8u, stats.size);
+  EXPECT_EQ(2u, stats.num_objects);
+
+  boost::intrusive_ptr<TestOwnerStatsCB> cb{new TestOwnerStatsCB};
+  auto result = cb->result.get_future();
+  ASSERT_EQ(0, g_env->driver->load_stats_async(g_env->dpp, account.id, cb));
+  ASSERT_EQ(std::future_status::ready, result.wait_for(std::chrono::seconds(30)));
+  const auto [ret, async_stats] = result.get();
+  ASSERT_EQ(0, ret);
+  EXPECT_EQ(stats.size, async_stats.size);
+  EXPECT_EQ(stats.num_objects, async_stats.num_objects);
+
+  ASSERT_EQ(0, g_env->driver->reset_stats(g_env->dpp, null_yield, account.id));
+  ASSERT_EQ(0, load_owner_stats(account.id, stats));
+  EXPECT_EQ(8u, stats.size);
+  EXPECT_EQ(2u, stats.num_objects);
+
+  stored.quota.enabled = true;
+  stored.quota.check_on_raw = true;
+  // The account already holds 8 bytes across both namespaces, so a 7-byte quota
+  // is already exceeded for operations in either namespace.
+  stored.quota.max_size = 7;
+  ASSERT_EQ(0, g_env->driver->store_account(g_env->dpp, null_yield, false,
+                                            stored, &account, {}, version));
+  // Vector storage is keyed under the account id; S3 storage under its tenant.
+  auto account_ns = [&](bool is_vector) {
+    return rgw::s3vector::bucket_namespace_t{"", is_vector ? account.id : std::string()};
+  };
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED,
+            op_check_quota(account_ns(GetParam()), account.name, GetParam()));
+  EXPECT_EQ(-ERR_QUOTA_EXCEEDED,
+            op_check_quota(account_ns(!GetParam()), account.name, !GetParam()));
+}
+
+TEST_P(SALWrapperAccountingTest, VectorChownRejectsNamespaceChange) {
+  if (!GetParam()) {
+    GTEST_SKIP() << "Vector namespace restriction";
+  }
+  ASSERT_EQ(-ENOTSUP, sal_bucket_->chown(g_env->dpp,
+      rgw_user{"other-tenant", "owner"}, "owner", null_yield));
+  std::unique_ptr<rgw::sal::Bucket> loaded;
+  ASSERT_EQ(0, load_bucket(bucket_name_, true, &loaded));
+  EXPECT_EQ(rgw_owner{owner_->get_id()}, loaded->get_info().owner);
+  rgw::sal::BucketList listing;
+  ASSERT_EQ(0, list_owner(owner_->get_id(), listing));
+  ASSERT_EQ(1u, listing.buckets.size());
+  EXPECT_EQ(bucket_name_, listing.buckets.front().bucket.name);
+}
+
+static std::string bucket_type_name(const testing::TestParamInfo<bool>& info) {
+  return info.param ? "Vector" : "S3";
+}
+
+INSTANTIATE_TEST_SUITE_P(BucketTypes, SALWrapperTest,
+                         testing::Bool(), bucket_type_name);
+INSTANTIATE_TEST_SUITE_P(BucketTypes, SALWrapperAccountingTest,
+                         testing::Bool(), bucket_type_name);
 
 // ===========================================================================
 // main() — bootstrap SAL driver
@@ -1410,6 +1883,8 @@ int main(int argc, char** argv) {
   // Vector cases store objects directly in RGW. Use the same backend on removal.
   g_conf().set_val_or_die("rgw_s3vector_backend", "rgw");
 
+  // Read quota usage afresh so assertions do not depend on cache expiry.
+  g_conf().set_val_or_die("rgw_bucket_quota_ttl", "0");
   common_init_finish(g_ceph_context);
 
   static TestEnv env;
@@ -1443,6 +1918,8 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  env.site = &site;
+
   // initialize SAL driver with all background threads disabled
   env.driver = DriverManager::get_storage(env.dpp,
                                           g_ceph_context,
@@ -1466,69 +1943,8 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Create one bucket in each namespace with native object storage.
-  int ret = 0;
-  for (const bool is_vector : {false, true}) {
-    if (is_vector && env.backend != "rados") {
-      continue;
-    }
-    rgw_bucket b;
-    b.name = std::string("sal-wrapper-test-") +
-        (is_vector ? "vector-" : "s3-") + std::to_string(getpid());
+  int ret = RUN_ALL_TESTS();
 
-    std::unique_ptr<rgw::sal::Bucket> bucket;
-    r = is_vector
-        ? env.driver->load_vector_bucket(env.dpp, b, &bucket, null_yield)
-        : env.driver->load_bucket(env.dpp, b, &bucket, null_yield);
-    if ((r < 0 && r != -ENOENT) || !bucket) {
-      std::cerr << "ERROR: failed to load test bucket '" << b.name
-                << "' (r=" << r << ")" << std::endl;
-      ret = 1;
-      break;
-    }
-
-    rgw::sal::Bucket::CreateParams params;
-    params.owner = rgw_user{"", "sal-wrapper-test-user"};
-    params.zonegroup_id = site.get_zonegroup().get_id();
-    params.placement_rule = site.get_zonegroup().default_placement;
-    params.zone_placement = rgw::find_zone_placement(
-        env.dpp, site.get_zone_params(), params.placement_rule);
-    if (is_vector) {
-      if (!params.zone_placement ||
-          params.zone_placement->index_type != rgw::BucketIndexType::Normal) {
-        std::cerr << "ERROR: vector tests require indexed bucket placement" << std::endl;
-        ret = 1;
-        break;
-      }
-      params.attrs[RGW_ATTR_S3VECTOR_STORAGE].append("vector_bucket");
-    }
-
-    r = bucket->create(env.dpp, params, null_yield);
-    if (r < 0 && r != -EEXIST) {
-      std::cerr << "ERROR: failed to create test bucket '" << b.name
-                << "' (r=" << r << ")" << std::endl;
-      ret = 1;
-      break;
-    }
-    env.buckets[is_vector] = std::move(bucket);
-  }
-
-  if (ret == 0) {
-    ret = RUN_ALL_TESTS();
-  }
-
-  // Each SAL bucket removes its own namespace, including any leftover objects.
-  for (auto& bucket : env.buckets) {
-    if (bucket) {
-      r = bucket->remove(env.dpp, true, null_yield);
-      if (r < 0) {
-        std::cerr << "ERROR: failed to remove test bucket '" << bucket->get_name()
-                  << "' (r=" << r << ")" << std::endl;
-        ret = 1;
-      }
-      bucket.reset();
-    }
-  }
   env.driver->shutdown();
   DriverManager::close_storage(env.driver);
   env.driver = nullptr;

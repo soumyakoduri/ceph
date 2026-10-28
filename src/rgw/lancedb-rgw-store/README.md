@@ -51,8 +51,9 @@ ninja ceph_test_rgw_sal_wrapper
 
 The backend (rados, dbstore, posix) is read from ceph.conf.
 Each functional test runs for both regular S3 buckets and native
-vector buckets in the same invocation. The test creates and removes
-both bucket types;
+vector buckets in the same invocation. Each case creates and removes its own
+bucket and owner. The accounting cases cover write and copy quotas, multipart
+quotas, owner statistics, namespace isolation, and ownership changes.
 
 To run only one bucket type:
 
