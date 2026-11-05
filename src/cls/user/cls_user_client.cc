@@ -108,19 +108,26 @@ public:
     }
   }
   void handle_completion(int r, bufferlist& outbl) override {
-    if (r >= 0) {
-      cls_user_get_header_ret ret;
+    cls_user_get_header_ret ret;
+    if (r >= 0 && outbl.length() > 0) {
+      // A missing object completes successfully with an empty reply (the exec was
+      // not run), so only a non-empty reply is decoded. An empty reply is left as
+      // a zeroed header, matching the synchronous read path which maps a missing
+      // object to empty stats rather than an error.
       try {
         auto iter = outbl.cbegin();
         decode(ret, iter);
-        if (header)
-	  *header = ret.header;
       } catch (ceph::buffer::error& err) {
         r = -EIO;
       }
-      if (ret_ctx) {
-        ret_ctx->handle_response(r, ret.header);
-      }
+    }
+    if (r >= 0 && header) {
+      *header = ret.header;
+    }
+    // Always deliver a response (including errors) so async callers that count
+    // one response per request are not left waiting on a dropped callback.
+    if (ret_ctx) {
+      ret_ctx->handle_response(r, ret.header);
     }
     if (pret) {
       *pret = r;
